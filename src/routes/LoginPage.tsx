@@ -51,7 +51,16 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">Websky</h1>
+          <h1 className="text-3xl font-bold mb-2">
+            <a
+              href="https://github.com/mitotic/skylimit-alpha#readme"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
+            >
+              Skylimit
+            </a>
+          </h1>
           <p className="text-gray-600 dark:text-gray-400">Sign in to your Bluesky account</p>
         </div>
 
@@ -139,6 +148,17 @@ export default function LoginPage() {
             Create one in Bluesky settings
           </a>
         </p>
+
+        <div className="text-center mt-6">
+          <a
+            href="https://github.com/mitotic/skylimit-alpha#readme"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block px-4 py-2 bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 font-semibold rounded-lg hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
+          >
+            About Skylimit
+          </a>
+        </div>
       </div>
 
       <ToastContainer toasts={toasts} onRemove={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />

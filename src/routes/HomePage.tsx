@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
@@ -134,7 +134,6 @@ function filterSameUserReplies(feed: AppBskyFeedDefs.FeedViewPost[]): AppBskyFee
 }
 
 export default function HomePage() {
-  const navigate = useNavigate()
   const location = useLocation()
   const { agent, session } = useSession()
   const { rateLimitStatus, setRateLimitStatus } = useRateLimit()
@@ -2264,13 +2263,15 @@ export default function HomePage() {
       {skylimitStats && (
         <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-2 flex items-center">
           <div className="flex items-center gap-4 text-sm">
-            <button
-              onClick={() => navigate('/settings/skylimit')}
+            <a
+              href="https://github.com/mitotic/skylimit-alpha#readme"
+              target="_blank"
+              rel="noopener noreferrer"
               className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-              title="Open Skylimit settings"
+              title="About Skylimit"
             >
               Skylimit:
-            </button>
+            </a>
             <div className="text-gray-600 dark:text-gray-400">
               <span className="font-semibold">{skylimitStats.status_daily.toFixed(0)}</span> posts/day received
             </div>
