@@ -80,26 +80,37 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           // Show counter if showTime is enabled, regardless of whether curation is disabled
           // The counter is a display feature based on summaries cache, not part of curation logic
           if (settings && settings.showTime) {
+            // Check if this post has been curated (has curation data in summaries cache)
+            // Posts without curation data (empty curation object) won't have counter numbers
+            const hasCurationData = curation && Object.keys(curation).length > 0
+
             // Check if post is dropped (only relevant if curation is enabled)
             const isDropped = !settings.disabled && !!curation?.curation_dropped
-            
+
             // Get post number from summaries cache
             // IMPORTANT: Pass isDropped so dropped posts return 0 (only if curation enabled)
             // For reposts, use composite URI (reposter DID + original post URI) to match summary cache
+            // If reposter DID not available, use original author DID (matches createPostSummary fallback)
             const reposterDid = repostedBy?.did
-            const postUri = isReposted && reposterDid 
-              ? `${reposterDid}:${post.post.uri}` 
+            const postUri = isReposted
+              ? `${reposterDid || post.post.author.did}:${post.post.uri}`
               : post.post.uri
             const number = await getPostNumber(
-              postUri, 
-              postedAt, 
+              postUri,
+              postedAt,
               isReposted,
               reposterDid,
               isDropped
             )
-            setPostNumber(number)
-            setDebugMode(settings.debugMode || false)
-            setShowCounterDisplay(true)
+            // Only show counter if we got a valid number or post has curation data
+            // Posts without curation data and number 0 should not show counter
+            if (number > 0 || hasCurationData) {
+              setPostNumber(number)
+              setDebugMode(settings.debugMode || false)
+              setShowCounterDisplay(true)
+            } else {
+              setShowCounterDisplay(false)
+            }
           } else {
             setShowCounterDisplay(false)
             // Debug: log why counter is not showing (only in development)
@@ -322,6 +333,18 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                       Adjust how many posts you see from this account
                     </div>
                   </div>
+
+                  <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+                    <button
+                      onClick={() => {
+                        setShowPopup(false)
+                        navigate('/settings/skylimit')
+                      }}
+                      className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                      Skylimit Settings
+                    </button>
+                  </div>
                 </div>
               )}
             </>
@@ -428,6 +451,18 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                     Adjust how many posts you see from this account
                   </div>
+                </div>
+
+                <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+                  <button
+                    onClick={() => {
+                      setShowPopup(false)
+                      navigate('/settings/skylimit')
+                    }}
+                    className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Skylimit Settings
+                  </button>
                 </div>
               </div>
             )}
@@ -546,6 +581,18 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                       <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                         Adjust how many posts you see from this account
                       </div>
+                    </div>
+
+                    <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+                      <button
+                        onClick={() => {
+                          setShowPopup(false)
+                          navigate('/settings/skylimit')
+                        }}
+                        className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        Skylimit Settings
+                      </button>
                     </div>
                   </div>
                 )}

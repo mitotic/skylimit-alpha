@@ -171,7 +171,10 @@ export function isSelfReply(post: AppBskyFeedDefs.FeedViewPost): boolean {
  */
 export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceivedTime?: Date): PostSummary {
   const isReposted = isRepost(post)
-  
+
+  // Use single source of truth for unique ID generation
+  const uri = getPostUniqueId(post)
+
   // For reposts: username is the reposter, orig_username is the original author
   // For original posts: username is the author, orig_username is undefined
   let username: string
@@ -179,13 +182,12 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   let orig_username: string | undefined
   let tags: string[]
   let repostUri: string | undefined
-  let uri: string
   let cid: string
   let repostCount: number
   let inReplyToUri: string | undefined
   let selfReply: boolean
   let engaged: boolean
-  
+
   if (isReposted) {
     // This is a repost
     const reposter = (post.reason as any)?.by
@@ -206,10 +208,6 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     tags = getHashtags(post.post)
     // repostUri is the original post URI (the post being reposted)
     repostUri = post.post.uri
-    // uri needs to be unique per repost instance to avoid overwriting in cache
-    // Use combination of reposter DID and original post URI to create unique key
-    // This ensures each repost is tracked separately in statistics
-    uri = `${accountDid}:${post.post.uri}`
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
@@ -222,7 +220,6 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     orig_username = undefined
     tags = getHashtags(post.post)
     repostUri = undefined
-    uri = post.post.uri
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
@@ -378,6 +375,8 @@ export function getPostTimestamp(post: AppBskyFeedDefs.PostView): Date {
  * Get unique ID for a post (for looking up in summaries cache)
  * - Original posts: use post.post.uri
  * - Reposts: use `${reposterDid}:${post.post.uri}`
+ *
+ * IMPORTANT: Must match how createPostSummary generates uri
  */
 export function getPostUniqueId(post: AppBskyFeedDefs.FeedViewPost): string {
   if (isRepost(post)) {
@@ -385,8 +384,9 @@ export function getPostUniqueId(post: AppBskyFeedDefs.FeedViewPost): string {
     if (reposter?.did) {
       return `${reposter.did}:${post.post.uri}`
     }
-    // Fallback if reposter info not available
-    return post.post.uri
+    // Fallback if reposter info not available - use original author DID
+    // This matches createPostSummary which uses accountDid = post.post.author.did
+    return `${post.post.author.did}:${post.post.uri}`
   }
   return post.post.uri
 }

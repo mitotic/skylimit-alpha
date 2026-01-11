@@ -874,14 +874,21 @@ export default function HomePage() {
         }
       }
       
-      // Restore feed state (using potentially truncated feed)
-      setFeed(feedToDisplay)
-      
+      // Look up curation status for restored posts from summaries cache
+      // This ensures posts have correct curation metadata for counter display
+      const feedReceivedTime = new Date()
+      const feedWithCuration = await lookupCurationAndFilter(
+        feedToDisplay as CurationFeedViewPost[],
+        feedReceivedTime
+      )
+
+      // Restore feed state (using potentially truncated feed with curation)
+      setFeed(feedWithCuration)
+
       // Update timestamps based on displayed feed
-      if (feedToDisplay.length > 0) {
-        const feedReceivedTime = new Date()
-        const newestTimestamp = getFeedViewPostTimestamp(feedToDisplay[0], feedReceivedTime).getTime()
-        const oldestTimestamp = getFeedViewPostTimestamp(feedToDisplay[feedToDisplay.length - 1], feedReceivedTime).getTime()
+      if (feedWithCuration.length > 0) {
+        const newestTimestamp = getFeedViewPostTimestamp(feedWithCuration[0], feedReceivedTime).getTime()
+        const oldestTimestamp = getFeedViewPostTimestamp(feedWithCuration[feedWithCuration.length - 1], feedReceivedTime).getTime()
         
         setNewestDisplayedPostTimestamp(newestTimestamp)
         setOldestDisplayedPostTimestamp(oldestTimestamp)
@@ -909,7 +916,8 @@ export default function HomePage() {
       scrollRestoredRef.current = false
       
       console.log('[Redisplay] Restored feed state:', {
-        feedLength: feedToDisplay.length,
+        feedLength: feedWithCuration.length,
+        truncatedLength: feedToDisplay.length,
         originalFeedLength: savedState.feed.length,
         truncated,
         hasMorePosts: savedState.hasMorePosts,
@@ -2270,7 +2278,7 @@ export default function HomePage() {
               className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
               title="About Skylimit"
             >
-              Skylimit:
+              About Skylimit
             </a>
             <div className="text-gray-600 dark:text-gray-400">
               <span className="font-semibold">{skylimitStats.status_daily.toFixed(0)}</span> posts/day received

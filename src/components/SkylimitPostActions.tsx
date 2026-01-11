@@ -4,6 +4,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { CurationMetadata } from '../curation/types'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
@@ -15,6 +16,7 @@ interface SkylimitPostActionsProps {
 }
 
 export default function SkylimitPostActions({ post, curation, onAmpChange }: SkylimitPostActionsProps) {
+  const navigate = useNavigate()
   const [showPopup, setShowPopup] = useState(false)
   const [loading, setLoading] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
@@ -151,6 +153,18 @@ export default function SkylimitPostActions({ post, curation, onAmpChange }: Sky
             <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
               Adjust how many posts you see from this account
             </div>
+          </div>
+
+          <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => {
+                setShowPopup(false)
+                navigate('/settings/skylimit')
+              }}
+              className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              Skylimit Settings
+            </button>
           </div>
         </div>
       )}

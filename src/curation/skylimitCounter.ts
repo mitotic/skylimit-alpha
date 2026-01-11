@@ -164,11 +164,11 @@ async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void>
 /**
  * Get post number for a post based on summaries cache
  * Posts are numbered chronologically within each day (first non-dropped post after midnight = #1)
- * 
+ *
  * IMPORTANT: Counter is based on summaries cache, not displayed posts
  * Dropped posts (with curation_dropped) are not counted and return 0
  * Posts from previous days show their counter number from that day
- * 
+ *
  * @param postUri - The URI of the post (original post URI)
  * @param postedAt - The timestamp when the post was posted or reposted (used to determine which day)
  * @param isRepost - Whether this is a repost (not used, kept for compatibility)
@@ -183,20 +183,29 @@ export async function getPostNumber(
   isDropped: boolean = false
 ): Promise<number> {
   resetIfNewDay()
-  
+
   // Dropped posts should not be counted - return 0
   if (isDropped) {
     return 0
   }
-  
+
   // Determine which date this post is from (local timezone)
   const postDate = getDateString(postedAt)
-  
+
+  // First check if we already have a number for this post
+  const key = `${postDate}:${postUri}`
+  if (postCounter[key]) {
+    return postCounter[key]
+  }
+
+  // Post not found in cache - force recomputation by clearing the update timestamp
+  // This handles the case where new posts were added after the last computation
+  delete lastCounterUpdate[postDate]
+
   // Compute post numbers from summaries cache for this specific date
   await computePostNumbersFromSummaries(postedAt)
-  
+
   // Return the number for this post from its date, or 0 if not found
-  const key = `${postDate}:${postUri}`
   return postCounter[key] || 0
 }
 
