@@ -14,7 +14,6 @@ import {
 import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral } from './skylimitGeneral'
 import {
   INTERVALS_PER_DAY,
-  UPDATE_INTERVAL_MINUTES,
   MOTD_MIN_SKYLIMIT_NUMBER,
   MAX_AMP_FACTOR,
   MIN_AMP_FACTOR,
@@ -279,14 +278,13 @@ function isPriorityPost(summaryInfo: any, topics: string): boolean {
 function computeUserProbabilities(
   _currentFollows: Record<string, FollowInfo>,
   intervalCount: number,
-  finalIntervalEnd: Date,
+  _finalIntervalEnd: Date,
   _postStats: Record<string, PostStats>,
   userAccum: Record<string, UserAccumulator>,
   maxViewsPerDay: number,
   myUsername: string
 ): [GlobalStats, UserFilter] {
   let dayTotal = intervalCount / INTERVALS_PER_DAY
-  const statPeriodMS = intervalCount * UPDATE_INTERVAL_MINUTES * 60 * 1000
   
   const accumEntries = Object.entries(userAccum)
   
