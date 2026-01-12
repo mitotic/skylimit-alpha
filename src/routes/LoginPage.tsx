@@ -61,7 +61,7 @@ export default function LoginPage() {
               Skylimit
             </a>
           </h1>
-          <p className="text-gray-600 dark:text-gray-400">A curating <a href="https://bsky.app" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Bluesky</a> client</p>
+          <p className="text-gray-600 dark:text-gray-400">A curating <a href="https://bsky.app" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Bluesky</a> client (alpha version)</p>
         </div>
 
         <form onSubmit={handleSubmit} className="card space-y-4">

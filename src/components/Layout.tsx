@@ -38,18 +38,19 @@ export default function Layout({ children }: LayoutProps) {
                 </button>
               )}
             </div>
-            <div className="flex-1 flex justify-center">
+            <div className="flex-1 flex justify-center items-center gap-2">
               <button
                 onClick={() => navigate('/')}
                 className="p-1 hover:opacity-80 transition-opacity"
                 aria-label="Go to home"
               >
-                <img 
-                  src="/SkylimitLogo.png" 
-                  alt="Skylimit" 
+                <img
+                  src="/SkylimitLogo.png"
+                  alt="Skylimit"
                   className="h-9 w-9 object-contain"
                 />
               </button>
+              <span className="text-sm text-gray-500 dark:text-gray-400">Alpha version</span>
             </div>
             <div className="w-10 flex justify-end">
               {session && (
