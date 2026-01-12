@@ -432,7 +432,7 @@ export default function HomePage() {
     const settings = await getSettings()
     const curationDisabled = !settings || settings?.disabled
     const showAllStatus = settings?.showAllStatus || false
-    
+
     const filteredPosts = postsWithStatus.filter(post => {
       if (curationDisabled || showAllStatus) {
         return true
@@ -1182,13 +1182,51 @@ export default function HomePage() {
     }
   }, [loadFeed])
 
+  // Re-filter feed from cache when showAllStatus setting changes
+  // This re-reads from IndexedDB cache and re-applies curation filtering without clearing caches
+  const refilterFeedFromCache = useCallback(async () => {
+    console.log('[Refilter] refilterFeedFromCache: Starting...')
+
+    try {
+      // Get all posts from the feed cache (last 24 hours)
+      const cachedPosts = await getCachedFeed(500) // Get enough posts to cover the feed
+      console.log(`[Refilter] Got ${cachedPosts.length} posts from cache`)
+
+      if (cachedPosts.length === 0) {
+        console.log('[Refilter] No cached posts found')
+        return
+      }
+
+      // Re-apply curation filtering with current settings
+      const filteredPosts = await lookupCurationAndFilter(cachedPosts, new Date())
+      console.log(`[Refilter] After filtering: ${filteredPosts.length} posts`)
+
+      // Update timestamp boundaries
+      if (filteredPosts.length > 0) {
+        const newestTime = getFeedViewPostTimestamp(filteredPosts[0], new Date()).getTime()
+        const oldestTime = getFeedViewPostTimestamp(filteredPosts[filteredPosts.length - 1], new Date()).getTime()
+        setNewestDisplayedPostTimestamp(newestTime)
+        setOldestDisplayedPostTimestamp(oldestTime)
+      }
+
+      // Update the feed state
+      setFeed(filteredPosts)
+      console.log('[Refilter] refilterFeedFromCache: Complete!')
+
+    } catch (error) {
+      console.error('[Refilter] refilterFeedFromCache failed:', error)
+    }
+  }, [lookupCurationAndFilter])
+
   // Expose debug function globally
   useEffect(() => {
     (window as any).clearCacheAndReloadHomePage = clearCacheAndReloadHomePage
+    ;(window as any).refilterFeedFromCache = refilterFeedFromCache
     return () => {
       delete (window as any).clearCacheAndReloadHomePage
+      delete (window as any).refilterFeedFromCache
     }
-  }, [clearCacheAndReloadHomePage])
+  }, [clearCacheAndReloadHomePage, refilterFeedFromCache])
 
   useEffect(() => {
     // Only load/redisplay feed if we're on the home page
@@ -1196,9 +1234,20 @@ export default function HomePage() {
       return
     }
 
+    // Check if we need to refilter the feed (set by SkylimitSettingsPage when showAllStatus changes)
+    const needsRefilter = sessionStorage.getItem('skylimit_needs_refilter')
+    if (needsRefilter === 'true') {
+      console.log('[HomePage] Detected refilter flag, triggering refilterFeedFromCache')
+      sessionStorage.removeItem('skylimit_needs_refilter')
+      // Clear saved feed state so it doesn't interfere with refilter
+      sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+      refilterFeedFromCache()
+      return // Don't continue with shouldRedisplay - let refilter handle the feed
+    }
+
     // Reset scroll restoration flag when navigating to home page
     scrollRestoredRef.current = false
-    
+
     // Clear thread scroll position when navigating to home to prevent interference
     // Thread pages use a different key, but clearing it ensures no conflicts
     try {
@@ -1269,7 +1318,7 @@ export default function HomePage() {
     }
 
     shouldRedisplay()
-  }, [loadFeed, redisplayFeed, location.pathname, session])
+  }, [loadFeed, redisplayFeed, refilterFeedFromCache, location.pathname, session])
 
   // Restore scroll position when feed state is restored
   // Note: Scroll restoration works regardless of infinite scrolling setting

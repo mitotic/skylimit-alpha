@@ -59,10 +59,31 @@ export default function SkylimitSettingsPage() {
 
   const handleSave = async () => {
     if (!settings) return
-    
+
     setSaving(true)
     try {
+      // Get the currently stored settings to compare settings that affect filtering
+      const storedSettings = await getSettings()
+      const storedShowAllStatus = storedSettings?.showAllStatus ?? false
+      const newShowAllStatus = settings.showAllStatus ?? false
+      const storedDisabled = storedSettings?.disabled ?? false
+      const newDisabled = settings.disabled ?? false
+
       await updateSettings(settings)
+
+      // Trigger feed refilter if showAllStatus OR disabled changed
+      // Both settings affect which posts are displayed
+      if (newShowAllStatus !== storedShowAllStatus || newDisabled !== storedDisabled) {
+        console.log(`[Settings] Filter settings changed (showAllStatus: ${storedShowAllStatus}→${newShowAllStatus}, disabled: ${storedDisabled}→${newDisabled}), triggering refilter`)
+        // Set flag for HomePage to trigger refilter when it mounts/becomes active
+        // (HomePage may not be mounted while on settings page)
+        sessionStorage.setItem('skylimit_needs_refilter', 'true')
+        // Also try to call directly if HomePage is mounted
+        if ((window as any).refilterFeedFromCache) {
+          (window as any).refilterFeedFromCache()
+        }
+      }
+
       alert('Settings saved!')
     } catch (error) {
       console.error('Failed to save settings:', error)

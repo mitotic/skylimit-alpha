@@ -51,6 +51,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [popupPosition, setPopupPosition] = useState<'above' | 'below'>('below')
   const [loading, setLoading] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
+  const [curationDisabled, setCurationDisabled] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
@@ -77,15 +78,18 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       const checkSettings = async () => {
         try {
           const settings = await getSettings()
-          // Show counter if showTime is enabled, regardless of whether curation is disabled
-          // The counter is a display feature based on summaries cache, not part of curation logic
-          if (settings && settings.showTime) {
+          // Track curation disabled state for styling
+          setCurationDisabled(settings?.disabled || false)
+          // Show counter unless curation is disabled
+          // The counter (#number) should always show when curation is enabled
+          // The time (hh:mm) display is controlled separately by showTime setting
+          if (settings && !settings.disabled) {
             // Check if this post has been curated (has curation data in summaries cache)
             // Posts without curation data (empty curation object) won't have counter numbers
             const hasCurationData = curation && Object.keys(curation).length > 0
 
             // Check if post is dropped (only relevant if curation is enabled)
-            const isDropped = !settings.disabled && !!curation?.curation_dropped
+            const isDropped = !!curation?.curation_dropped
 
             // Get post number from summaries cache
             // IMPORTANT: Pass isDropped so dropped posts return 0 (only if curation enabled)
@@ -106,7 +110,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             // Posts without curation data and number 0 should not show counter
             if (number > 0 || hasCurationData) {
               setPostNumber(number)
-              setDebugMode(settings.debugMode || false)
+              // Use showTime setting to control time (hh:mm) display, not debugMode
+              setDebugMode(settings.showTime || false)
               setShowCounterDisplay(true)
             } else {
               setShowCounterDisplay(false)
@@ -247,34 +252,27 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           </span>
           {showCounterDisplay && curation && (
             <>
-              <button
-                ref={repostCounterButtonRef}
-                onClick={handleCounterClick}
-                className={`text-sm font-mono ${
-                  curation
-                    ? 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 cursor-pointer underline'
+              <span className="flex items-center gap-1">
+                {/* Time display (debug mode only) - plain text, not clickable */}
+                {debugMode && (
+                  <span className="text-gray-500 dark:text-gray-400">
+                    {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
+                  </span>
+                )}
+                {/* Counter number - clickable with blue color */}
+                <button
+                  ref={repostCounterButtonRef}
+                  onClick={handleCounterClick}
+                  className={curation
+                    ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                     : 'text-gray-500 dark:text-gray-400 cursor-default'
-                }`}
-                title={curation ? 'Click for Skylimit curation options' : 'Post number'}
-                disabled={!curation}
-              >
-                {/* Format counter: show time prefix only if debug mode is enabled */}
-                {(() => {
-                  const isDropped = !!curation?.curation_dropped
-                  const displayNumber = isDropped ? 0 : (postNumber || 0)
-                  
-                  if (debugMode) {
-                    // Debug mode: show time prefix
-                    const hours = String(postedAt.getHours()).padStart(2, '0')
-                    const minutes = String(postedAt.getMinutes()).padStart(2, '0')
-                    const timeStr = `${hours}:${minutes}`
-                    return `${timeStr}#${displayNumber}`
-                  } else {
-                    // Normal mode: show only counter number
-                    return `#${displayNumber}`
                   }
-                })()}
-              </button>
+                  title={curation ? 'Click for Skylimit curation options' : 'Post number'}
+                  disabled={!curation}
+                >
+                  #{curation?.curation_dropped ? 0 : (postNumber || 0)}
+                </button>
+              </span>
               {showPopup && curation && (
                 <div
                   ref={popupRef}
@@ -357,42 +355,35 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         <RootPost rootUri={rootUri} isDirectReply={isDirectReply} />
       )}
 
-      <div 
-        className={`flex gap-3 ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && (post as CurationFeedViewPost).curation?.curation_dropped ? 'opacity-35' : ''}`}
+      <div
+        className={`flex gap-3 ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && !curationDisabled && (post as CurationFeedViewPost).curation?.curation_dropped ? 'opacity-35' : ''}`}
         onClick={handlePostClick}
         style={{ cursor: 'pointer' }}
       >
         {/* Counter for regular posts (not replies, not reposts) - show at top right */}
         {showCounterDisplay && !isReposted && !isReply && (
           <>
-            <button
-              ref={counterButtonRef}
-              onClick={handleCounterClick}
-              className={`absolute top-4 right-4 text-sm font-mono z-10 ${
-                curation
-                  ? 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 cursor-pointer underline'
+            <div className="absolute top-4 right-4 z-10 flex items-center gap-1">
+              {/* Time display (debug mode only) - plain text, not clickable */}
+              {debugMode && (
+                <span className="text-gray-500 dark:text-gray-400">
+                  {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
+                </span>
+              )}
+              {/* Counter number - clickable with blue color */}
+              <button
+                ref={counterButtonRef}
+                onClick={handleCounterClick}
+                className={curation
+                  ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                   : 'text-gray-500 dark:text-gray-400 cursor-default'
-              }`}
-              title={curation ? 'Click for Skylimit curation options' : 'Post number'}
-              disabled={!curation}
-            >
-              {/* Format counter: show time prefix only if debug mode is enabled */}
-              {(() => {
-                const isDropped = !!curation?.curation_dropped
-                const displayNumber = isDropped ? 0 : (postNumber || 0)
-                
-                if (debugMode) {
-                  // Debug mode: show time prefix
-                  const hours = String(postedAt.getHours()).padStart(2, '0')
-                  const minutes = String(postedAt.getMinutes()).padStart(2, '0')
-                  const timeStr = `${hours}:${minutes}`
-                  return `${timeStr}#${displayNumber}`
-                } else {
-                  // Normal mode: show only counter number
-                  return `#${displayNumber}`
                 }
-              })()}
-            </button>
+                title={curation ? 'Click for Skylimit curation options' : 'Post number'}
+                disabled={!curation}
+              >
+                #{curation?.curation_dropped ? 0 : (postNumber || 0)}
+              </button>
+            </div>
 
             {showPopup && curation && (
               <div
@@ -494,34 +485,25 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             {/* Counter for replies - show on same line as author name */}
             {isReply && showCounterDisplay && !isReposted && (
               <>
-                <span className="text-gray-500 dark:text-gray-400 ml-auto">
+                <span className="ml-auto flex items-center gap-1">
+                  {/* Time display (debug mode only) - plain text, not clickable */}
+                  {debugMode && (
+                    <span className="text-gray-500 dark:text-gray-400">
+                      {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
+                    </span>
+                  )}
+                  {/* Counter number - clickable with blue color */}
                   <button
                     ref={counterButtonRef}
                     onClick={handleCounterClick}
-                    className={`text-sm font-mono ${
-                      curation
-                        ? 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 cursor-pointer underline'
-                        : 'text-gray-500 dark:text-gray-400 cursor-default'
-                    }`}
+                    className={curation
+                      ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                      : 'text-gray-500 dark:text-gray-400 cursor-default'
+                    }
                     title={curation ? 'Click for Skylimit curation options' : 'Post number'}
                     disabled={!curation}
                   >
-                    {/* Format counter: show time prefix only if debug mode is enabled */}
-                    {(() => {
-                      const isDropped = !!curation?.curation_dropped
-                      const displayNumber = isDropped ? 0 : (postNumber || 0)
-                      
-                      if (debugMode) {
-                        // Debug mode: show time prefix
-                        const hours = String(postedAt.getHours()).padStart(2, '0')
-                        const minutes = String(postedAt.getMinutes()).padStart(2, '0')
-                        const timeStr = `${hours}:${minutes}`
-                        return `${timeStr}#${displayNumber}`
-                      } else {
-                        // Normal mode: show only counter number
-                        return `#${displayNumber}`
-                      }
-                    })()}
+                    #{curation?.curation_dropped ? 0 : (postNumber || 0)}
                   </button>
                 </span>
                 {showPopup && curation && (
