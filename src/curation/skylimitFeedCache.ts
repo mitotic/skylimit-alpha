@@ -221,18 +221,50 @@ export async function savePostsToFeedCache(
   cursor?: string
 ): Promise<void> {
   try {
-    const database = await getDB()
-    const transaction = database.transaction([STORE_FEED_CACHE, 'feed_metadata'], 'readwrite')
-    const feedStore = transaction.objectStore(STORE_FEED_CACHE)
-    const metadataStore = transaction.objectStore('feed_metadata')
+    if (entries.length === 0) {
+      return
+    }
 
-    // Track newest and oldest postTimestamp from entries
+    const database = await getDB()
+
+    // Step 1: Check which entries already exist in cache (read transaction)
+    const existingUris = new Set<string>()
+    const readTransaction = database.transaction([STORE_FEED_CACHE], 'readonly')
+    const readStore = readTransaction.objectStore(STORE_FEED_CACHE)
+
+    // Check each entry's existence
+    await Promise.all(entries.map(entry => {
+      return new Promise<void>((resolve) => {
+        const request = readStore.get(entry.uri)
+        request.onsuccess = () => {
+          if (request.result) {
+            existingUris.add(entry.uri)
+          }
+          resolve()
+        }
+        request.onerror = () => resolve() // On error, assume not exists
+      })
+    }))
+
+    // Filter to only new entries (not already cached)
+    const newEntries = entries.filter(entry => !existingUris.has(entry.uri))
+
+    if (existingUris.size > 0) {
+      console.log(`[Feed Cache] Skipping ${existingUris.size} already-cached posts, saving ${newEntries.length} new posts`)
+    }
+
+    // Step 2: Write only new entries (write transaction)
+    const writeTransaction = database.transaction([STORE_FEED_CACHE, 'feed_metadata'], 'readwrite')
+    const feedStore = writeTransaction.objectStore(STORE_FEED_CACHE)
+    const metadataStore = writeTransaction.objectStore('feed_metadata')
+
+    // Track newest and oldest postTimestamp from NEW entries only
     let newestCachedPostTimestamp = 0
     let oldestCachedPostTimestamp = Infinity
 
     // Queue all put operations synchronously (IndexedDB transactions auto-commit between async ops)
-    for (const entry of entries) {
-      // Track oldest/newest postTimestamp
+    for (const entry of newEntries) {
+      // Track oldest/newest postTimestamp from new entries
       if (entry.postTimestamp < oldestCachedPostTimestamp) {
         oldestCachedPostTimestamp = entry.postTimestamp
       }
@@ -253,21 +285,23 @@ export async function savePostsToFeedCache(
       feedStore.put(cacheEntry)  // Queue synchronously, don't await
     }
 
-    // Save metadata (must be queued synchronously in the same transaction)
-    const metadata: FeedCacheMetadata = {
-      id: 'last_fetch',
-      lastCursor: cursor,
-      lastFetchTime: Date.now(),
-      newestCachedPostTimestamp: newestCachedPostTimestamp,
-      oldestCachedPostTimestamp: oldestCachedPostTimestamp === Infinity ? newestCachedPostTimestamp : oldestCachedPostTimestamp,
+    // Save metadata only if we have new entries (must be queued synchronously in the same transaction)
+    if (newEntries.length > 0) {
+      const metadata: FeedCacheMetadata = {
+        id: 'last_fetch',
+        lastCursor: cursor,
+        lastFetchTime: Date.now(),
+        newestCachedPostTimestamp: newestCachedPostTimestamp,
+        oldestCachedPostTimestamp: oldestCachedPostTimestamp === Infinity ? newestCachedPostTimestamp : oldestCachedPostTimestamp,
+      }
+      metadataStore.put(metadata)  // Queue synchronously
     }
-    metadataStore.put(metadata)  // Queue synchronously
 
     // Wait for transaction to complete
     await new Promise<void>((resolve, reject) => {
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error)
-      transaction.onabort = () => reject(new Error('Transaction aborted'))
+      writeTransaction.oncomplete = () => resolve()
+      writeTransaction.onerror = () => reject(writeTransaction.error)
+      writeTransaction.onabort = () => reject(new Error('Transaction aborted'))
     })
 
     // Clean up old cache entries asynchronously (after transaction completes)
@@ -298,8 +332,9 @@ interface FeedCacheMetadata {
 }
 
 /**
- * Save curated feed posts to cache
+ * Save curated feed posts to cache (legacy function - only used for metadata updates with empty posts)
  * Saves ALL posts (including dropped ones) - curation status is stored in summaries cache
+ * NOTE: Does not overwrite existing cache entries to preserve first curation decision
  */
 export async function saveFeedCache(
   posts: CurationFeedViewPost[],
@@ -308,35 +343,70 @@ export async function saveFeedCache(
 ): Promise<void> {
   try {
     const database = await getDB()
-    const transaction = database.transaction([STORE_FEED_CACHE, 'feed_metadata'], 'readwrite')
-    const feedStore = transaction.objectStore(STORE_FEED_CACHE)
-    const metadataStore = transaction.objectStore('feed_metadata')
-    
+
     const interval = getIntervalString(feedReceivedTime)
     const timestamp = feedReceivedTime.getTime()
     const cachedAt = Date.now()
-    
-    // Track newest and oldest postTimestamp
-    // newestCachedPostTimestamp: newest postTimestamp from batch
-    // oldestCachedPostTimestamp: oldest postTimestamp (because fetches go backward in time)
+
+    // Step 1: Build list of URIs and check which already exist (for non-empty posts)
+    const existingUris = new Set<string>()
+    if (posts.length > 0) {
+      const readTransaction = database.transaction([STORE_FEED_CACHE], 'readonly')
+      const readStore = readTransaction.objectStore(STORE_FEED_CACHE)
+
+      await Promise.all(posts.map(async (post) => {
+        // Get unique ID (includes reposter DID for reposts)
+        const uniqueId = getPostUniqueId(post)
+        return new Promise<void>((resolve) => {
+          const request = readStore.get(uniqueId)
+          request.onsuccess = () => {
+            if (request.result) {
+              existingUris.add(uniqueId)
+            }
+            resolve()
+          }
+          request.onerror = () => resolve()
+        })
+      }))
+
+      if (existingUris.size > 0) {
+        console.log(`[Feed Cache] Skipping ${existingUris.size} already-cached posts`)
+      }
+    }
+
+    // Step 2: Write transaction for new posts and metadata
+    const writeTransaction = database.transaction([STORE_FEED_CACHE, 'feed_metadata'], 'readwrite')
+    const feedStore = writeTransaction.objectStore(STORE_FEED_CACHE)
+    const metadataStore = writeTransaction.objectStore('feed_metadata')
+
+    // Track newest and oldest postTimestamp from NEW posts only
     let newestCachedPostTimestamp = 0
-    let oldestCachedPostTimestamp = Infinity  // Start with Infinity to find minimum
-    
-    // Save each post (ALL posts, including dropped ones)
+    let oldestCachedPostTimestamp = Infinity
+    let savedCount = 0
+
+    // Save each post (ALL posts, including dropped ones) - but skip existing ones
     const savePromises = posts.map(async (post) => {
+      // Get unique ID (includes reposter DID for reposts)
+      const uniqueId = getPostUniqueId(post)
+
+      // Skip if already cached
+      if (existingUris.has(uniqueId)) {
+        return
+      }
+
       // Calculate postTimestamp (actual post creation/repost time)
       const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime).getTime()
-      
+
       // Track oldest postTimestamp (fetches go backward in time)
       if (postTimestamp < oldestCachedPostTimestamp) {
         oldestCachedPostTimestamp = postTimestamp
       }
-      
+
       // Track newest postTimestamp
       if (postTimestamp > newestCachedPostTimestamp) {
         newestCachedPostTimestamp = postTimestamp
       }
-      
+
       // Get reposter DID for reposts (for unique ID construction)
       let reposterDid: string | undefined
       if (isRepost(post)) {
@@ -345,10 +415,10 @@ export async function saveFeedCache(
           reposterDid = reposter.did
         }
       }
-      
+
       // Cache ALL posts (removed curation_dropped check)
       const entry: FeedCacheEntry = {
-        uri: post.post.uri,  // Original post URI (for reposts, this is the original post URI)
+        uri: uniqueId,  // Use unique ID (includes reposter DID for reposts)
         post: {
           post: post.post,
           reason: post.reason,
@@ -360,10 +430,11 @@ export async function saveFeedCache(
         reposterDid,            // For reposts, store reposter DID
       }
       await feedStore.put(entry)
+      savedCount++
     })
-    
+
     await Promise.all(savePromises)
-    
+
     // Always read existing metadata to preserve lookback status and timestamps
     let existingMetadata: FeedCacheMetadata | null = null
     try {
@@ -376,18 +447,17 @@ export async function saveFeedCache(
       // Ignore errors when reading existing metadata
       console.warn('Failed to read existing metadata:', err)
     }
-    
+
     // Save metadata with oldestCachedPostTimestamp
-    // oldestCachedPostTimestamp is the oldest postTimestamp (fetches go backward in time)
-    // If no posts were saved, preserve existing timestamps to avoid overwriting with 0
+    // If no NEW posts were saved, preserve existing timestamps to avoid overwriting with 0
     const metadata: FeedCacheMetadata = {
       id: 'last_fetch',
       lastCursor: cursor,
       lastFetchTime: cachedAt,
-      newestCachedPostTimestamp: posts.length === 0 && existingMetadata?.newestCachedPostTimestamp
+      newestCachedPostTimestamp: savedCount === 0 && existingMetadata?.newestCachedPostTimestamp
         ? existingMetadata.newestCachedPostTimestamp
         : newestCachedPostTimestamp,
-      oldestCachedPostTimestamp: posts.length === 0 && existingMetadata?.oldestCachedPostTimestamp
+      oldestCachedPostTimestamp: savedCount === 0 && existingMetadata?.oldestCachedPostTimestamp
         ? existingMetadata.oldestCachedPostTimestamp
         : (oldestCachedPostTimestamp === Infinity ? newestCachedPostTimestamp : oldestCachedPostTimestamp),
       // Preserve lookback status from existing metadata
@@ -395,7 +465,7 @@ export async function saveFeedCache(
       lookbackCompletedAt: existingMetadata?.lookbackCompletedAt,
     }
     await metadataStore.put(metadata)
-    
+
     // Clean up old cache entries (older than 24 hours) - do this asynchronously
     setTimeout(async () => {
       try {
@@ -628,6 +698,302 @@ export async function performLookbackFetch(
 }
 
 /**
+ * Get local midnight for a given date (00:00:00 in user's timezone)
+ */
+export function getLocalMidnight(date: Date = new Date()): Date {
+  const midnight = new Date(date)
+  midnight.setHours(0, 0, 0, 0)
+  return midnight
+}
+
+/**
+ * Perform a limited lookback to fill gaps back to local midnight
+ * Used when loading new posts to ensure consistent counter numbering
+ * Stops when hitting cached posts OR reaching local midnight
+ *
+ * @param oldestFetchedTimestamp - Timestamp of the oldest post from the initial fetch
+ * @param initialCursor - Cursor from the initial fetch for pagination
+ * @param agent - BskyAgent for API calls
+ * @param myUsername - User's username
+ * @param myDid - User's DID
+ * @param pageLength - Number of posts per page (default 25)
+ * @returns Number of new posts cached during lookback
+ */
+export async function limitedLookbackToMidnight(
+  oldestFetchedTimestamp: number,
+  initialCursor: string | undefined,
+  agent: BskyAgent,
+  myUsername: string,
+  myDid: string,
+  pageLength: number = 25
+): Promise<number> {
+  const localMidnight = getLocalMidnight().getTime()
+
+  // If oldest fetched is already at or before midnight, no lookback needed
+  if (oldestFetchedTimestamp <= localMidnight) {
+    console.log('[Limited Lookback] Already at or past midnight boundary, skipping')
+    return 0
+  }
+
+  console.log(`[Limited Lookback] Starting from ${new Date(oldestFetchedTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
+
+  let currentOldestTimestamp = oldestFetchedTimestamp
+  let cursor = initialCursor
+  let totalNewPosts = 0
+  let iterations = 0
+  const maxIterations = 50  // Safety limit
+
+  // Keep fetching backward until we hit midnight OR cached posts
+  while (currentOldestTimestamp > localMidnight && iterations < maxIterations) {
+    iterations++
+
+    if (!cursor) {
+      console.log('[Limited Lookback] No cursor available, stopping')
+      break
+    }
+
+    try {
+      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
+        cursor,
+        limit: pageLength
+      })
+
+      if (feed.length === 0) {
+        console.log('[Limited Lookback] No more posts from server, stopping')
+        break
+      }
+
+      const feedReceivedTime = new Date()
+
+      // Check each post - stop if we hit a cached post
+      let hitCachedPost = false
+      const newPosts: AppBskyFeedDefs.FeedViewPost[] = []
+
+      for (const post of feed) {
+        const uniqueId = getPostUniqueId(post)
+        const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime).getTime()
+
+        // Check if already cached - if so, stop lookback
+        const existsInCache = await checkFeedCacheExists(uniqueId)
+        if (existsInCache) {
+          console.log(`[Limited Lookback] Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          hitCachedPost = true
+          break
+        }
+
+        // Stop if post is before midnight
+        if (postTimestamp < localMidnight) {
+          console.log(`[Limited Lookback] Reached midnight boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          break
+        }
+
+        // Track oldest timestamp
+        if (postTimestamp < currentOldestTimestamp) {
+          currentOldestTimestamp = postTimestamp
+        }
+
+        newPosts.push(post)
+      }
+
+      // Save new posts if any (with no-overwrite protection)
+      if (newPosts.length > 0) {
+        // Use current time as initialLastPostTime for entries
+        const initialLastPostTime = new Date()
+        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime)
+
+        // Save to feed cache and curate
+        await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
+        totalNewPosts += newPosts.length
+
+        console.log(`[Limited Lookback] Cached ${newPosts.length} new posts (total: ${totalNewPosts})`)
+      }
+
+      if (hitCachedPost) {
+        break
+      }
+
+      cursor = newCursor
+      if (!cursor) {
+        console.log('[Limited Lookback] No more cursor, stopping')
+        break
+      }
+    } catch (error) {
+      console.warn('[Limited Lookback] Error during fetch:', error)
+      break
+    }
+  }
+
+  if (iterations >= maxIterations) {
+    console.warn('[Limited Lookback] Hit max iterations limit')
+  }
+
+  console.log(`[Limited Lookback] Completed - cached ${totalNewPosts} new posts`)
+  return totalNewPosts
+}
+
+/**
+ * Detect if there's a gap in the summary cache at a given timestamp
+ * Used by Load More to determine if gap filling is needed
+ *
+ * @param beforeTimestamp - The timestamp we're trying to load posts before
+ * @returns true if a gap is detected, false otherwise
+ */
+export async function detectSummaryCacheGap(beforeTimestamp: number): Promise<boolean> {
+  try {
+    const { getSummaries } = await import('./skylimitCache')
+
+    // Get the interval for the timestamp (getIntervalString is already imported from skylimitGeneral)
+    const targetDate = new Date(beforeTimestamp)
+    const interval = getIntervalString(targetDate)
+
+    // Check if there are summaries for this interval
+    const summaries = await getSummaries(interval)
+
+    if (!summaries || summaries.length === 0) {
+      // No summaries for this interval - potential gap
+      console.log(`[Gap Detection] No summaries found for interval ${interval}`)
+      return true
+    }
+
+    // Check if the oldest summary timestamp is close to our beforeTimestamp
+    // If there's a large gap (more than 2 hours = one interval), return true
+    const summaryTimestamps = summaries.map(s =>
+      s.timestamp instanceof Date ? s.timestamp.getTime() : new Date(s.timestamp).getTime()
+    )
+    const oldestSummaryTimestamp = Math.min(...summaryTimestamps)
+    const GAP_THRESHOLD = 2 * 60 * 60 * 1000  // 2 hours (one interval)
+
+    const hasGap = (beforeTimestamp - oldestSummaryTimestamp) > GAP_THRESHOLD
+    if (hasGap) {
+      console.log(`[Gap Detection] Gap detected: ${new Date(oldestSummaryTimestamp).toLocaleTimeString()} to ${new Date(beforeTimestamp).toLocaleTimeString()}`)
+    }
+
+    return hasGap
+  } catch (error) {
+    console.warn('[Gap Detection] Error checking for gap:', error)
+    return false
+  }
+}
+
+/**
+ * Fill a gap in the cache back to local midnight
+ * Used by Load More when a gap is detected
+ * Stops when hitting cached posts OR reaching local midnight of the target date
+ *
+ * @param fromTimestamp - The timestamp where the gap starts (Load More's beforeTimestamp)
+ * @param agent - BskyAgent for API calls
+ * @param myUsername - User's username
+ * @param myDid - User's DID
+ * @param pageLength - Number of posts per page (default 25)
+ * @returns Number of new posts cached during gap fill
+ */
+export async function fillGapToMidnight(
+  fromTimestamp: number,
+  agent: BskyAgent,
+  myUsername: string,
+  myDid: string,
+  pageLength: number = 25
+): Promise<number> {
+  // Use local midnight of the day containing fromTimestamp as the stop boundary
+  const targetDate = new Date(fromTimestamp)
+  const localMidnight = getLocalMidnight(targetDate).getTime()
+
+  // If fromTimestamp is already at or before midnight, no gap fill needed
+  if (fromTimestamp <= localMidnight) {
+    console.log('[Gap Fill] Already at or past midnight boundary, skipping')
+    return 0
+  }
+
+  console.log(`[Gap Fill] Filling gap from ${new Date(fromTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
+
+  let currentOldestTimestamp = fromTimestamp
+  let cursor: string | undefined
+  let totalNewPosts = 0
+  let iterations = 0
+  const maxIterations = 50  // Safety limit
+
+  // Keep fetching backward until we hit midnight OR cached posts
+  while (currentOldestTimestamp > localMidnight && iterations < maxIterations) {
+    iterations++
+
+    try {
+      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
+        cursor,
+        limit: pageLength
+      })
+
+      if (feed.length === 0) {
+        console.log('[Gap Fill] No more posts from server, stopping')
+        break
+      }
+
+      const feedReceivedTime = new Date()
+
+      // Check each post - stop if we hit a cached post
+      let hitCachedPost = false
+      const newPosts: AppBskyFeedDefs.FeedViewPost[] = []
+
+      for (const post of feed) {
+        const uniqueId = getPostUniqueId(post)
+        const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime).getTime()
+
+        // Check if already cached - if so, stop gap fill
+        const existsInCache = await checkFeedCacheExists(uniqueId)
+        if (existsInCache) {
+          console.log(`[Gap Fill] Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          hitCachedPost = true
+          break
+        }
+
+        // Stop if post is before midnight
+        if (postTimestamp < localMidnight) {
+          console.log(`[Gap Fill] Reached midnight boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          break
+        }
+
+        // Track oldest timestamp
+        if (postTimestamp < currentOldestTimestamp) {
+          currentOldestTimestamp = postTimestamp
+        }
+
+        newPosts.push(post)
+      }
+
+      // Save new posts if any (with no-overwrite protection)
+      if (newPosts.length > 0) {
+        const initialLastPostTime = new Date()
+        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime)
+
+        await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
+        totalNewPosts += newPosts.length
+
+        console.log(`[Gap Fill] Cached ${newPosts.length} new posts (total: ${totalNewPosts})`)
+      }
+
+      if (hitCachedPost) {
+        break
+      }
+
+      cursor = newCursor
+      if (!cursor) {
+        console.log('[Gap Fill] No more cursor, stopping')
+        break
+      }
+    } catch (error) {
+      console.warn('[Gap Fill] Error during fetch:', error)
+      break
+    }
+  }
+
+  if (iterations >= maxIterations) {
+    console.warn('[Gap Fill] Hit max iterations limit')
+  }
+
+  console.log(`[Gap Fill] Completed - cached ${totalNewPosts} new posts`)
+  return totalNewPosts
+}
+
+/**
  * Get last fetch metadata (cursor and timestamp)
  */
 export async function getLastFetchMetadata(): Promise<FeedCacheMetadata | null> {
@@ -825,9 +1191,33 @@ export async function getCachedPostUniqueIds(): Promise<Set<string>> {
 }
 
 /**
+ * Check if a post with the given unique ID exists in the feed cache
+ * Used by limited lookback to stop when hitting cached posts
+ *
+ * @param uniqueId - The unique ID of the post (from getPostUniqueId)
+ * @returns true if the post exists in cache, false otherwise
+ */
+export async function checkFeedCacheExists(uniqueId: string): Promise<boolean> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(STORE_FEED_CACHE, 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE)
+
+    return new Promise((resolve) => {
+      const request = store.get(uniqueId)
+      request.onsuccess = () => resolve(!!request.result)
+      request.onerror = () => resolve(false)
+    })
+  } catch (error) {
+    console.warn('Failed to check feed cache existence:', error)
+    return false
+  }
+}
+
+/**
  * Get cached feed posts older than a given timestamp
  * Used for pagination - gets posts before oldestCachedPostTimestamp
- * 
+ *
  * @param beforeTimestamp - Get posts with postTimestamp < beforeTimestamp
  * @param limit - Maximum number of posts to return
  * @returns Array of posts sorted by postTimestamp (newest first)
@@ -1138,6 +1528,9 @@ export async function clearFeedCache(): Promise<void> {
     const transaction = database.transaction([STORE_FEED_CACHE], 'readwrite')
     const store = transaction.objectStore(STORE_FEED_CACHE)
     await store.clear()
+    // Clear sessionStorage feed state to maintain consistency
+    sessionStorage.removeItem('websky9_home_feed_state')
+    sessionStorage.removeItem('websky9_home_scroll_state')
   } catch (error) {
     console.warn('Failed to clear feed cache:', error)
   }

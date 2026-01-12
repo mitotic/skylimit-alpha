@@ -21,7 +21,7 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationStatus } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost } from '../curation/types'
-import { getCachedFeed, clearFeedCache, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, extendFeedCache, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, extendFeedCache, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, detectSummaryCacheGap, fillGapToMidnight } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { clearCounters } from '../curation/skylimitCounter'
@@ -1150,7 +1150,11 @@ export default function HomePage() {
       })
       console.log('[Debug] Cleared feed_metadata')
 
-      // 3. Reset React state
+      // 3. Clear in-memory counter cache
+      clearCounters()
+      console.log('[Debug] Cleared counter cache')
+
+      // 4. Reset React state
       setFeed([])
       setCursor(undefined)
       setHasMorePosts(false)
@@ -1621,6 +1625,17 @@ export default function HomePage() {
         await insertEditionPosts(curatedFeed)
         console.log(`[Periodic Fetch] Saved ${entries.length} new posts to cache`)
 
+        // Perform limited lookback to fill gaps back to local midnight for consistent counter numbering
+        // Only if we have entries and a cursor for pagination
+        if (entries.length > 0 && newCursor) {
+          const oldestEntryTimestamp = Math.min(...entries.map(e => e.postTimestamp))
+          const localMidnight = getLocalMidnight().getTime()
+          if (oldestEntryTimestamp > localMidnight) {
+            console.log(`[Periodic Fetch] Starting limited lookback from ${new Date(oldestEntryTimestamp).toLocaleTimeString()} to midnight`)
+            await limitedLookbackToMidnight(oldestEntryTimestamp, newCursor, agent, myUsername, myDid, periodicPageLength)
+          }
+        }
+
         // Step 4: Check for new posts in cache (only for standard mode)
         // Paged updates mode manages button state via its own probing effect
         if (!pagedUpdatesEnabled) {
@@ -1811,8 +1826,8 @@ export default function HomePage() {
 
         console.log(`[Paged Updates] Fetching ${pageRaw} posts (filterFrac=${currentFilterFrac.toFixed(2)})`)
 
-        // Fetch fresh posts from server
-        const { feed: serverFeed } = await getHomeFeed(agent, { limit: pageRaw })
+        // Fetch fresh posts from server (capture cursor for potential limited lookback)
+        const { feed: serverFeed, cursor: fetchCursor } = await getHomeFeed(agent, { limit: pageRaw })
 
         if (serverFeed.length === 0) {
           setNewPostsCount(0)
@@ -1914,6 +1929,18 @@ export default function HomePage() {
         setPartialPageCount(0)
 
         console.log(`[Paged Updates] Successfully loaded ${newPostsToAdd.length} new posts`)
+
+        // Perform limited lookback to fill gaps back to local midnight for consistent counter numbering
+        if (allCuratedPosts.length > 0 && fetchCursor) {
+          const oldestCuratedTimestamp = Math.min(
+            ...allCuratedPosts.map(p => getFeedViewPostTimestamp(p, feedReceivedTime).getTime())
+          )
+          const localMidnight = getLocalMidnight().getTime()
+          if (oldestCuratedTimestamp > localMidnight) {
+            console.log(`[Paged Updates] Starting limited lookback from ${new Date(oldestCuratedTimestamp).toLocaleTimeString()} to midnight`)
+            await limitedLookbackToMidnight(oldestCuratedTimestamp, fetchCursor, agent, session.handle, session.did, pageLength)
+          }
+        }
       } else {
         // Standard mode: load from cache
         console.log('[New Posts] Loading new posts from cache...')
@@ -2033,29 +2060,44 @@ export default function HomePage() {
       let postTimestamps = cacheResult.postTimestamps
       console.log(`[Load More] Found ${nextPosts.length} posts in cache older than oldestDisplayedPostTimestamp`)
       
-      // 3. If not enough posts in cache, extend cache
+      // 3. If not enough posts in cache, check for gap and fill if needed
       if (nextPosts.length < pageLength) {
-        const fetchedCount = await extendFeedCache(agent, session.handle, session.did)
-        
-        if (fetchedCount > 0) {
-          // After extending cache, retry getting posts using the same oldestDisplayedPostTimestamp
-          // extendFeedCache may have fetched newer posts, but we still want to use our pagination boundary
-          console.log(`[Load More] After extending cache, retrying with oldestDisplayedPostTimestamp: ${new Date(beforeTimestamp).toISOString()}`)
-          
-          // Retry getting posts from cache after extending
+        // Check for gap in summary cache
+        const hasGap = await detectSummaryCacheGap(beforeTimestamp)
+        if (hasGap) {
+          console.log(`[Load More] Gap detected, filling back to midnight`)
+          await fillGapToMidnight(beforeTimestamp, agent, session.handle, session.did, pageLength)
+          // Retry getting posts after gap fill
           cacheResult = await getCachedFeedBefore(beforeTimestamp, pageLength)
           nextPosts = cacheResult.posts
           postTimestamps = cacheResult.postTimestamps
-          console.log(`[Load More] After extending, found ${nextPosts.length} posts in cache`)
-        } else {
-          // No more posts available (end of feed)
-          setCursor(undefined)
-          setHasMorePosts(false)
-          setIsLoadingMore(false)
-          return
+          console.log(`[Load More] After gap fill, found ${nextPosts.length} posts in cache`)
+        }
+
+        // If still not enough, extend cache
+        if (nextPosts.length < pageLength) {
+          const fetchedCount = await extendFeedCache(agent, session.handle, session.did)
+
+          if (fetchedCount > 0) {
+            // After extending cache, retry getting posts using the same oldestDisplayedPostTimestamp
+            // extendFeedCache may have fetched newer posts, but we still want to use our pagination boundary
+            console.log(`[Load More] After extending cache, retrying with oldestDisplayedPostTimestamp: ${new Date(beforeTimestamp).toISOString()}`)
+
+            // Retry getting posts from cache after extending
+            cacheResult = await getCachedFeedBefore(beforeTimestamp, pageLength)
+            nextPosts = cacheResult.posts
+            postTimestamps = cacheResult.postTimestamps
+            console.log(`[Load More] After extending, found ${nextPosts.length} posts in cache`)
+          } else {
+            // No more posts available (end of feed)
+            setCursor(undefined)
+            setHasMorePosts(false)
+            setIsLoadingMore(false)
+            return
+          }
         }
       }
-      
+
       // 4. Look up curation status and filter posts
       // Pass postTimestamps map so lookupCurationAndFilter uses stored timestamps instead of recalculating
       // feedReceivedTime is still needed for lookupCurationAndFilter signature but won't be used for sorting
@@ -2422,7 +2464,7 @@ export default function HomePage() {
             </div>
             <div className="text-gray-400 dark:text-gray-500">→</div>
             <div className="text-gray-600 dark:text-gray-400">
-              <span className="font-semibold">{skylimitStats.shown_daily.toFixed(0)}</span> displayed
+              <span className="font-semibold">~{skylimitStats.shown_daily.toFixed(0)}</span> displayed
             </div>
           </div>
         </div>

@@ -23,6 +23,10 @@ export default function CurationInitModal({ isOpen, onClose, stats }: CurationIn
     ? Math.round((stats.droppedCount / stats.totalPosts) * 100)
     : 0
 
+  const startTimeStr = stats.oldestTimestamp
+    ? new Date(stats.oldestTimestamp).toLocaleString()
+    : 'unknown'
+
   const endTimeStr = stats.newestTimestamp
     ? new Date(stats.newestTimestamp).toLocaleString()
     : 'now'
@@ -33,8 +37,8 @@ export default function CurationInitModal({ isOpen, onClose, stats }: CurationIn
         <p className="text-gray-700 dark:text-gray-300">
           Analyzed <strong>{stats.postsPerDay.toLocaleString()}</strong> posts/day by{' '}
           <strong>{stats.followeeCount.toLocaleString()}</strong> followee{stats.followeeCount !== 1 ? 's' : ''} over the last{' '}
-          <strong>{stats.daysAnalyzed}</strong> day{stats.daysAnalyzed !== 1 ? 's' : ''} ending{' '}
-          {endTimeStr}.
+          <strong>{stats.daysAnalyzed}</strong> day{stats.daysAnalyzed !== 1 ? 's' : ''}, starting{' '}
+          {startTimeStr} and ending {endTimeStr}.
         </p>
 
         <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
@@ -44,6 +48,10 @@ export default function CurationInitModal({ isOpen, onClose, stats }: CurationIn
             ({stats.droppedCount.toLocaleString()} of {stats.totalPosts.toLocaleString()} posts)
           </div>
         </div>
+
+        <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
+          Use Settings → Skylimit Settings to adjust curation
+        </p>
 
         <button
           onClick={onClose}

@@ -109,13 +109,13 @@ export async function getDB(): Promise<IDBDatabase> {
 
 /**
  * Save post summaries for an interval
- * Merges with existing summaries to avoid overwriting when multiple batches occur in the same interval
+ * Merges with existing summaries - existing entries take precedence to preserve first curation decision
  */
 export async function saveSummaries(interval: string, summaries: PostSummary[]): Promise<void> {
   const database = await getDB()
   const transaction = database.transaction([STORE_SUMMARIES], 'readwrite')
   const store = transaction.objectStore(STORE_SUMMARIES)
-  
+
   // Get existing summaries for this interval to merge
   const existing = await new Promise<PostSummary[] | null>((resolve, reject) => {
     const request = store.get(interval)
@@ -125,25 +125,34 @@ export async function saveSummaries(interval: string, summaries: PostSummary[]):
     }
     request.onerror = () => reject(request.error)
   })
-  
-  // Merge summaries: use Set to deduplicate by URI, keeping the most recent one
+
+  // Merge summaries: existing entries take precedence (preserve first curation decision)
   const summaryMap = new Map<string, PostSummary>()
-  
-  // Add existing summaries first
+
+  // Add existing summaries first (they take precedence)
   if (existing) {
     for (const summary of existing) {
       summaryMap.set(summary.uri, summary)
     }
   }
-  
-  // Add new summaries (will overwrite duplicates, keeping the newer one)
+
+  // Add new summaries ONLY if not already present (preserve existing curation decisions)
+  let skippedCount = 0
   for (const summary of summaries) {
-    summaryMap.set(summary.uri, summary)
+    if (!summaryMap.has(summary.uri)) {
+      summaryMap.set(summary.uri, summary)
+    } else {
+      skippedCount++
+    }
   }
-  
+
+  if (skippedCount > 0) {
+    console.log(`[Summary Cache] Skipping ${skippedCount} already-cached summaries for interval ${interval}`)
+  }
+
   // Convert back to array
   const mergedSummaries = Array.from(summaryMap.values())
-  
+
   await store.put({ interval, summaries: mergedSummaries, timestamp: Date.now() })
 }
 
@@ -330,6 +339,9 @@ export async function clearSummaries(): Promise<void> {
     const transaction = database.transaction([STORE_SUMMARIES], 'readwrite')
     const store = transaction.objectStore(STORE_SUMMARIES)
     await store.clear()
+    // Clear sessionStorage feed state to maintain consistency
+    sessionStorage.removeItem('websky9_home_feed_state')
+    sessionStorage.removeItem('websky9_home_scroll_state')
     console.log('Cleared all post summaries')
   } catch (error) {
     console.error('Failed to clear summaries:', error)

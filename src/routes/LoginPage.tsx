@@ -61,7 +61,7 @@ export default function LoginPage() {
               Skylimit
             </a>
           </h1>
-          <p className="text-gray-600 dark:text-gray-400">Sign in to your Bluesky account</p>
+          <p className="text-gray-600 dark:text-gray-400">A curating <a href="https://bsky.app" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Bluesky</a> client</p>
         </div>
 
         <form onSubmit={handleSubmit} className="card space-y-4">
@@ -123,7 +123,7 @@ export default function LoginPage() {
           <Button
             type="submit"
             variant="primary"
-            className="w-full"
+            className="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 rounded-lg"
             disabled={isLoading}
           >
             {isLoading ? (

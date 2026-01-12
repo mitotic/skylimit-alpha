@@ -189,7 +189,7 @@ export default function SkylimitSettingsPage() {
                 onChange={(e) => updateSetting('showTime', e.target.checked)}
                 className="w-5 h-5"
               />
-              <span>Display timestamp/counter (hh:mm#nnn) for feed</span>
+              <span>Display post timestamp (hh:mm) in home feed</span>
             </label>
 
             <label className="flex items-center space-x-3">
