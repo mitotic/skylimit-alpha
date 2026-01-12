@@ -4,11 +4,119 @@
  */
 
 import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
-import { initDB } from './skylimitCache'
+import { initDB, getSummaryByUri, clearSummaries } from './skylimitCache'
 import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId } from './skylimitGeneral'
 import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost } from './types'
 import { curatePosts, insertEditionPosts } from './skylimitTimeline'
 import { getHomeFeed } from '../api/feed'
+
+/**
+ * Validate feed cache integrity - ensure all feed entries have corresponding summaries
+ * If any feed entry lacks a summary, clear the entire feed cache
+ *
+ * @returns Object indicating if cache is valid, if it was cleared, and if it was empty
+ */
+export async function validateFeedCacheIntegrity(): Promise<{ valid: boolean; cleared: boolean; empty: boolean }> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE], 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE)
+
+    // Get a sample of feed cache entries (first 20)
+    const entries = await new Promise<FeedCacheEntry[]>((resolve, reject) => {
+      const request = store.getAll()
+      request.onsuccess = () => {
+        const results = request.result as FeedCacheEntry[]
+        resolve(results.slice(0, 20))
+      }
+      request.onerror = () => reject(request.error)
+    })
+
+    if (entries.length === 0) {
+      console.log('[Cache Integrity] Feed cache is empty, nothing to validate')
+      return { valid: true, cleared: false, empty: true }
+    }
+
+    // Check if each sampled entry has a corresponding summary
+    let missingCount = 0
+    for (const entry of entries) {
+      const uniqueId = getPostUniqueIdFromCache(entry)
+      const summary = await getSummaryByUri(uniqueId)
+      if (!summary) {
+        missingCount++
+        console.log(`[Cache Integrity] Missing summary for feed entry: ${uniqueId}`)
+      }
+    }
+
+    if (missingCount > 0) {
+      console.log(`[Cache Integrity] Found ${missingCount}/${entries.length} feed entries without summaries, clearing feed cache`)
+      await clearFeedCache()
+      // Also clear feed metadata to reset lookback status
+      await clearFeedMetadata()
+      return { valid: false, cleared: true, empty: false }
+    }
+
+    console.log(`[Cache Integrity] All ${entries.length} sampled feed entries have summaries`)
+    return { valid: true, cleared: false, empty: false }
+  } catch (error) {
+    console.error('[Cache Integrity] Failed to validate feed cache:', error)
+    // On error, assume cache is valid to avoid clearing good data
+    return { valid: true, cleared: false, empty: false }
+  }
+}
+
+/**
+ * Clear feed metadata (cursor and lookback status)
+ */
+export async function clearFeedMetadata(): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_metadata'], 'readwrite')
+    const store = transaction.objectStore('feed_metadata')
+    await store.clear()
+    console.log('[Feed Cache] Cleared feed metadata')
+  } catch (error) {
+    console.warn('Failed to clear feed metadata:', error)
+  }
+}
+
+/**
+ * Clear all caches (feed cache, summaries, and metadata)
+ * Use for full reset when caches are out of sync
+ */
+export async function clearAllCaches(): Promise<void> {
+  await clearFeedCache()
+  await clearSummaries()
+  await clearFeedMetadata()
+  console.log('[Cache] Cleared all caches (feed, summaries, metadata)')
+}
+
+/**
+ * Save posts to feed cache AND curate them (save summaries)
+ * This ensures feed cache entries always have corresponding summary entries
+ *
+ * @param entries - Feed cache entries with calculated postTimestamps
+ * @param cursor - Cursor for pagination
+ * @param agent - BskyAgent instance
+ * @param myUsername - Current user's username
+ * @param myDid - Current user's DID
+ * @returns Curated posts
+ */
+export async function savePostsWithCuration(
+  entries: FeedCacheEntryWithPost[],
+  cursor: string | undefined,
+  agent: BskyAgent,
+  myUsername: string,
+  myDid: string
+): Promise<CurationFeedViewPost[]> {
+  // 1. Save to feed cache
+  await savePostsToFeedCache(entries, cursor)
+
+  // 2. Curate and save summaries (must succeed for cache integrity)
+  const curatedPosts = await curatePosts(entries, agent, myUsername, myDid)
+
+  return curatedPosts
+}
 
 // Get database instance (reuse from skylimitCache)
 async function getDB(): Promise<IDBDatabase> {
@@ -390,16 +498,13 @@ export async function extendFeedCache(
     // 4. Create feed cache entries with calculated postTimestamps
     const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime)
 
-    // 5. Save to feed cache
-    await savePostsToFeedCache(entries, newCursor)
+    // 5. Save to feed cache and curate (ensures both happen together for cache integrity)
+    const curatedFeed = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
 
-    // 6. Curate from entries (saves summaries)
-    const curatedFeed = await curatePosts(entries, agent, myUsername, myDid)
-
-    // 7. Insert edition posts if needed (for display purposes)
+    // 6. Insert edition posts if needed (for display purposes)
     await insertEditionPosts(curatedFeed)
 
-    // 8. Return number of posts fetched
+    // 7. Return number of posts fetched
     return newFeed.length
   } catch (error) {
     console.error('Failed to extend feed cache:', error)
@@ -473,11 +578,8 @@ export async function performLookbackFetch(
       const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime)
       lastPostTime = finalLastPostTime  // Chain for next batch
 
-      // Save to feed cache
-      await savePostsToFeedCache(entries, newCursor)
-
-      // Curate from entries (saves summaries)
-      const curatedFeed = await curatePosts(entries, agent, myUsername, myDid)
+      // Save to feed cache and curate (ensures both happen together for cache integrity)
+      const curatedFeed = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
 
       // Insert edition posts if needed (for display purposes)
       await insertEditionPosts(curatedFeed)
@@ -681,19 +783,11 @@ export async function resetLookbackStatus(): Promise<void> {
 
 /**
  * Get unique ID from a feed cache entry
- * For reposts: uses reposterDid if available, otherwise constructs from post
+ * The entry.uri is already set to getPostUniqueId(post) when created,
+ * which includes the reposter DID prefix for reposts.
  */
 export function getPostUniqueIdFromCache(entry: FeedCacheEntry): string {
-  if (entry.reposterDid) {
-    return `${entry.reposterDid}:${entry.uri}`
-  }
-  // Check if it's a repost by examining the post
-  if (entry.post.reason?.$type === 'app.bsky.feed.defs#reasonRepost') {
-    const reposter = (entry.post.reason as any)?.by
-    if (reposter?.did) {
-      return `${reposter.did}:${entry.uri}`
-    }
-  }
+  // entry.uri is already the full unique ID (set by getPostUniqueId when entry was created)
   return entry.uri
 }
 

@@ -8,6 +8,7 @@ import { getAllIntervals, getSummaries, saveSummaries, getFilter, getAllFollows,
 import { getSettings } from './skylimitStore'
 import { curateSinglePost } from './skylimitFilter'
 import { getEditionTimeStrs } from './skylimitGeneral'
+import { getPostUniqueIdFromCache } from './skylimitFeedCache'
 
 /**
  * Recompute curation status for all posts in summaries cache
@@ -55,22 +56,10 @@ export async function recomputeCurationStatus(
     })
     
     // Build a map of unique ID -> feed cache entry
+    // Use getPostUniqueIdFromCache for consistent ID generation that matches summaries
     const feedCacheMap = new Map<string, any>()
     for (const entry of feedCacheEntries) {
-      // Construct unique ID for this entry
-      let uniqueId: string
-      if (entry.reposterDid) {
-        uniqueId = `${entry.reposterDid}:${entry.uri}`
-      } else if (entry.post.reason?.$type === 'app.bsky.feed.defs#reasonRepost') {
-        const reposter = (entry.post.reason as any)?.by
-        if (reposter?.did) {
-          uniqueId = `${reposter.did}:${entry.uri}`
-        } else {
-          uniqueId = entry.uri
-        }
-      } else {
-        uniqueId = entry.uri
-      }
+      const uniqueId = getPostUniqueIdFromCache(entry)
       feedCacheMap.set(uniqueId, entry)
     }
     
@@ -109,7 +98,9 @@ export async function recomputeCurationStatus(
         // Update curation status in summary
         const oldStatus = summary.curation_dropped
         summary.curation_dropped = curation.curation_dropped
-        
+        summary.curation_msg = curation.curation_msg
+        summary.curation_high_boost = curation.curation_high_boost
+
         if (oldStatus !== curation.curation_dropped) {
           intervalUpdated = true
           updatedCount++

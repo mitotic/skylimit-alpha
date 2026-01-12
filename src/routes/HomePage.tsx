@@ -11,17 +11,20 @@ import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import SkylimitHomeDialog from '../components/SkylimitHomeDialog'
-import { curatePosts, insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getSummaryByUri } from '../curation/skylimitCache'
+import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
+import { insertEditionPosts } from '../curation/skylimitTimeline'
+import { initDB, getFilter, getSummaryByUri, isSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
-import { scheduleStatsComputation } from '../curation/skylimitStatsWorker'
+import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
+import { recomputeCurationStatus } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost } from '../curation/types'
-import { getCachedFeed, clearFeedCache, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, extendFeedCache, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsToFeedCache } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, extendFeedCache, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
+import { clearCounters } from '../curation/skylimitCounter'
 
 // Saved feed state constant
 const WEBSKY9_HOME_FEED_STATE = 'websky9_home_feed_state'
@@ -164,6 +167,10 @@ export default function HomePage() {
   // Lookback caching state
   const [lookingBack, setLookingBack] = useState(false) // true during background lookback fetch
   const [lookbackProgress, setLookbackProgress] = useState<number | null>(null) // 0-100 progress percentage
+  // Initial curation tracking state (for showing modal when curation completes on first load)
+  const [showCurationInitModal, setShowCurationInitModal] = useState(false) // show modal when curation completes
+  const [curationInitStats, setCurationInitStats] = useState<CurationInitStatsDisplay | null>(null)
+  const isInitialCurationRef = useRef(false) // ref to track initial curation in callbacks
   const firstPostRef = useRef<HTMLDivElement>(null)
   const scrollSentinelRef = useRef<HTMLDivElement>(null)  // Sentinel element for intersection observer
   const intersectionObserverRef = useRef<IntersectionObserver | null>(null)  // Observer instance
@@ -262,17 +269,39 @@ export default function HomePage() {
   useEffect(() => {
     let cleanup: (() => void) | null = null
     
-    initDB().then(() => {
+    initDB().then(async () => {
+      // Validate feed cache integrity - ensure all feed entries have summaries
+      const integrity = await validateFeedCacheIntegrity()
+      if (integrity.cleared || integrity.empty) {
+        if (integrity.cleared) {
+          console.log('[Init] Feed cache was cleared due to missing summaries')
+        }
+        if (integrity.empty) {
+          console.log('[Init] Feed cache is empty')
+        }
+        // Clear sessionStorage saved feed state to force fresh load
+        // Otherwise redisplayFeed would restore posts without curation data
+        sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+        console.log('[Init] Cleared sessionStorage saved feed state')
+      }
+
+      // Check if summaries cache is empty (initial curation needed)
+      const summariesEmpty = await isSummariesCacheEmpty()
+      if (summariesEmpty) {
+        console.log('[Init] Summaries cache is empty - initial curation will be performed')
+        isInitialCurationRef.current = true
+      }
+
       setDbInitialized(true)
-      
+
       // Schedule statistics computation if we have session
       if (agent && session) {
         cleanup = scheduleStatsComputation(agent, session.handle, session.did)
       }
-      
+
       // Load statistics for display
       loadSkylimitStats()
-      
+
       // Flush expired parent posts on initialization (runs in background)
       flushExpiredParentPosts().catch(err => {
         console.warn('Failed to flush expired parent posts:', err)
@@ -526,11 +555,8 @@ export default function HomePage() {
                 const initialLastPostTime = new Date()
                 const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime)
 
-                // Save to feed cache first
-                await savePostsToFeedCache(entries, newCursor)
-
-                // Curate from entries (saves summaries)
-                const curatedFeed = await curatePosts(entries, agent, myUsername, myDid)
+                // Save to feed cache and curate (ensures both happen together for cache integrity)
+                const curatedFeed = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
 
                 // Insert edition posts if needed
                 await insertEditionPosts(curatedFeed)
@@ -610,10 +636,68 @@ export default function HomePage() {
                     (progress) => {
                       setLookbackProgress(progress)
                     }
-                  ).then((completed) => {
+                  ).then(async (completed) => {
                     console.log(`[Lookback] Background lookback ${completed ? 'completed' : 'interrupted'}`)
                     setLookingBack(false)
                     setLookbackProgress(100)
+
+                    // If this was initial curation, compute stats and show modal
+                    if (isInitialCurationRef.current && completed) {
+                      try {
+                        console.log('[Curation Init] Computing filter statistics...')
+                        // Compute stats/filter first (this populates the filter cache)
+                        await computeStatsInBackground(agent, myUsername, myDid, true)
+
+                        // Recompute curation status for all cached posts (updates summaries with drop decisions)
+                        console.log('[Curation Init] Updating curation decisions for cached posts...')
+                        await recomputeCurationStatus(agent, myUsername, myDid)
+
+                        console.log('[Curation Init] Getting curation statistics...')
+                        const curationStats = await getCurationInitStats()
+
+                        // Get followee count from filter (now populated)
+                        const filterResult = await getFilter()
+                        const followeeCount = filterResult
+                          ? Object.keys(filterResult[1]).filter(k => !k.startsWith('#')).length
+                          : 0
+
+                        // Calculate days analyzed and posts per day
+                        let daysAnalyzed = 0
+                        let postsPerDay = 0
+                        if (curationStats.oldestTimestamp && curationStats.newestTimestamp) {
+                          const timeRangeMs = curationStats.newestTimestamp - curationStats.oldestTimestamp
+                          daysAnalyzed = Math.max(1, Math.round(timeRangeMs / (24 * 60 * 60 * 1000)))
+                          postsPerDay = Math.round(curationStats.totalCount / daysAnalyzed)
+                        }
+
+                        setCurationInitStats({
+                          totalPosts: curationStats.totalCount,
+                          droppedCount: curationStats.droppedCount,
+                          followeeCount,
+                          oldestTimestamp: curationStats.oldestTimestamp,
+                          newestTimestamp: curationStats.newestTimestamp,
+                          daysAnalyzed,
+                          postsPerDay,
+                        })
+
+                        // Clear counter cache and sessionStorage to force fresh load from feed cache
+                        // This ensures the feed is re-numbered with all lookback posts
+                        clearCounters()
+                        sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+
+                        // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
+                        console.log('[Curation Init] Reloading feed with curation data...')
+                        await redisplayFeed()
+
+                        // Show modal
+                        setShowCurationInitModal(true)
+                        isInitialCurationRef.current = false
+                        console.log('[Curation Init] Modal displayed')
+                      } catch (err) {
+                        console.error('[Curation Init] Failed to compute stats:', err)
+                        isInitialCurationRef.current = false
+                      }
+                    }
                   }).catch((err) => {
                     console.error('[Lookback] Background lookback failed:', err)
                     setLookingBack(false)
@@ -674,11 +758,8 @@ export default function HomePage() {
       const initialLastPostTime = new Date()
       const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime)
 
-      // Save to feed cache first
-      await savePostsToFeedCache(entries, newCursor)
-
-      // Curate from entries (saves summaries)
-      const curatedFeed = await curatePosts(entries, agent, myUsername, myDid)
+      // Save to feed cache and curate (ensures both happen together for cache integrity)
+      const curatedFeed = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
 
       // Debug: Log curation results
       if (newFeed.length > 0 && !cursor) {
@@ -747,10 +828,68 @@ export default function HomePage() {
               (progress) => {
                 setLookbackProgress(progress)
               }
-            ).then((completed) => {
+            ).then(async (completed) => {
               console.log(`[Lookback] Background lookback ${completed ? 'completed' : 'interrupted'}`)
               setLookingBack(false)
               setLookbackProgress(100)
+
+              // If this was initial curation, compute stats and show modal
+              if (isInitialCurationRef.current && completed) {
+                try {
+                  console.log('[Curation Init] Computing filter statistics...')
+                  // Compute stats/filter first (this populates the filter cache)
+                  await computeStatsInBackground(agent, myUsername, myDid, true)
+
+                  // Recompute curation status for all cached posts (updates summaries with drop decisions)
+                  console.log('[Curation Init] Updating curation decisions for cached posts...')
+                  await recomputeCurationStatus(agent, myUsername, myDid)
+
+                  console.log('[Curation Init] Getting curation statistics...')
+                  const curationStats = await getCurationInitStats()
+
+                  // Get followee count from filter (now populated)
+                  const filterResult = await getFilter()
+                  const followeeCount = filterResult
+                    ? Object.keys(filterResult[1]).filter(k => !k.startsWith('#')).length
+                    : 0
+
+                  // Calculate days analyzed and posts per day
+                  let daysAnalyzed = 0
+                  let postsPerDay = 0
+                  if (curationStats.oldestTimestamp && curationStats.newestTimestamp) {
+                    const timeRangeMs = curationStats.newestTimestamp - curationStats.oldestTimestamp
+                    daysAnalyzed = Math.max(1, Math.round(timeRangeMs / (24 * 60 * 60 * 1000)))
+                    postsPerDay = Math.round(curationStats.totalCount / daysAnalyzed)
+                  }
+
+                  setCurationInitStats({
+                    totalPosts: curationStats.totalCount,
+                    droppedCount: curationStats.droppedCount,
+                    followeeCount,
+                    oldestTimestamp: curationStats.oldestTimestamp,
+                    newestTimestamp: curationStats.newestTimestamp,
+                    daysAnalyzed,
+                    postsPerDay,
+                  })
+
+                  // Clear counter cache and sessionStorage to force fresh load from feed cache
+                  // This ensures the feed is re-numbered with all lookback posts
+                  clearCounters()
+                  sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+
+                  // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
+                  console.log('[Curation Init] Reloading feed with curation data...')
+                  await redisplayFeed()
+
+                  // Show modal
+                  setShowCurationInitModal(true)
+                  isInitialCurationRef.current = false
+                  console.log('[Curation Init] Modal displayed')
+                } catch (err) {
+                  console.error('[Curation Init] Failed to compute stats:', err)
+                  isInitialCurationRef.current = false
+                }
+              }
             }).catch((err) => {
               console.error('[Lookback] Background lookback failed:', err)
               setLookingBack(false)
@@ -1025,7 +1164,11 @@ export default function HomePage() {
       setLookbackProgress(null)
       console.log('[Debug] Reset React state')
 
-      // 4. Trigger fresh load (bypass cache)
+      // 5. Mark as initial curation so modal will show after lookback
+      isInitialCurationRef.current = true
+      console.log('[Debug] Set isInitialCurationRef to true for modal display')
+
+      // 6. Trigger fresh load (bypass cache)
       console.log('[Debug] Triggering fresh loadFeed with useCache=false...')
       await loadFeed(undefined, false)
       console.log('[Debug] clearCacheAndReloadHomePage: Complete!')
@@ -1471,11 +1614,8 @@ export default function HomePage() {
         const initialLastPostTime = new Date()
         const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime)
 
-        // Save to feed cache first
-        await savePostsToFeedCache(entries, newCursor)
-
-        // Curate from entries (saves summaries)
-        const curatedFeed = await curatePosts(entries, agent, myUsername, myDid)
+        // Save to feed cache and curate (ensures both happen together for cache integrity)
+        const curatedFeed = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
 
         // Insert edition posts if needed
         await insertEditionPosts(curatedFeed)
@@ -1717,11 +1857,8 @@ export default function HomePage() {
             break
           }
 
-          // Save to feed cache first
-          await savePostsToFeedCache([entry])
-
-          // Curate from entry (saves summaries)
-          const curatedPosts = await curatePosts([entry], agent, session.handle, session.did)
+          // Save to feed cache and curate (ensures both happen together for cache integrity)
+          const curatedPosts = await savePostsWithCuration([entry], undefined, agent, session.handle, session.did)
           const curatedPost = curatedPosts[0] as CurationFeedViewPost
 
           allCuratedPosts.push(curatedPost)
@@ -2447,6 +2584,12 @@ export default function HomePage() {
       <SkylimitHomeDialog
         isOpen={showSkylimitDialog}
         onClose={() => setShowSkylimitDialog(false)}
+      />
+
+      <CurationInitModal
+        isOpen={showCurationInitModal}
+        onClose={() => setShowCurationInitModal(false)}
+        stats={curationInitStats}
       />
     </div>
   )

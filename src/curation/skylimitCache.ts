@@ -189,6 +189,91 @@ export async function getAllIntervalsSorted(): Promise<string[]> {
 }
 
 /**
+ * Check if summaries cache is empty (no intervals stored)
+ */
+export async function isSummariesCacheEmpty(): Promise<boolean> {
+  const intervals = await getAllIntervals()
+  return intervals.length === 0
+}
+
+/**
+ * Statistics for curation initialization modal
+ */
+export interface CurationInitStats {
+  totalCount: number
+  droppedCount: number  // Posts with curation_dropped set (truthy)
+  oldestTimestamp: number | null
+  newestTimestamp: number | null
+}
+
+/**
+ * Get curation statistics from summaries cache
+ * Counts total posts and posts that were dropped by curation
+ */
+export async function getCurationInitStats(): Promise<CurationInitStats> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_SUMMARIES], 'readonly')
+    const store = transaction.objectStore(STORE_SUMMARIES)
+
+    return new Promise((resolve, reject) => {
+      const request = store.getAll()
+
+      request.onsuccess = () => {
+        const results = request.result || []
+        let totalCount = 0
+        let droppedCount = 0
+        let oldestTimestamp: number | null = null
+        let newestTimestamp: number | null = null
+
+        // Process all intervals
+        for (const intervalData of results) {
+          const summaries = intervalData.summaries || []
+
+          for (const summary of summaries) {
+            totalCount++
+
+            // Count dropped posts (curation_dropped is truthy)
+            if (summary.curation_dropped) {
+              droppedCount++
+            }
+
+            // Track timestamps
+            const timestamp = summary.timestamp instanceof Date
+              ? summary.timestamp.getTime()
+              : new Date(summary.timestamp).getTime()
+
+            if (oldestTimestamp === null || timestamp < oldestTimestamp) {
+              oldestTimestamp = timestamp
+            }
+            if (newestTimestamp === null || timestamp > newestTimestamp) {
+              newestTimestamp = timestamp
+            }
+          }
+        }
+
+        resolve({
+          totalCount,
+          droppedCount,
+          oldestTimestamp,
+          newestTimestamp,
+        })
+      }
+
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('Failed to get curation init stats:', error)
+    return {
+      totalCount: 0,
+      droppedCount: 0,
+      oldestTimestamp: null,
+      newestTimestamp: null,
+    }
+  }
+}
+
+/**
  * Get post summary by unique ID (uri for originals, `${did}:${uri}` for reposts)
  */
 export async function getSummaryByUri(uniqueId: string): Promise<PostSummary | null> {
@@ -564,85 +649,53 @@ export interface SummariesCacheStats {
 export async function getSummariesCacheStats(): Promise<SummariesCacheStats> {
   try {
     const database = await getDB()
-    const transaction = database.transaction([STORE_SUMMARIES, 'feed_cache'], 'readonly')
+    const transaction = database.transaction([STORE_SUMMARIES], 'readonly')
     const summariesStore = transaction.objectStore(STORE_SUMMARIES)
-    const feedCacheStore = transaction.objectStore('feed_cache')
-    
+
     return new Promise((resolve, reject) => {
       const request = summariesStore.getAll()
-      
+
       request.onsuccess = () => {
         const results = request.result || []
         let totalCount = 0
         let oldestTimestamp: number | null = null
         let newestTimestamp: number | null = null
-        const summaryUris = new Set<string>()
-        
+        let droppedCount = 0
+        const now = Date.now()
+        const recentCutoff = now - 48 * 60 * 60 * 1000 // 48 hours ago
+
         // Process all intervals
         for (const intervalData of results) {
           const summaries = intervalData.summaries || []
           totalCount += summaries.length
-          
-          // Track timestamps
+
+          // Track timestamps and count dropped posts
           for (const summary of summaries) {
-            const timestamp = summary.timestamp instanceof Date 
-              ? summary.timestamp.getTime() 
+            const timestamp = summary.timestamp instanceof Date
+              ? summary.timestamp.getTime()
               : new Date(summary.timestamp).getTime()
-            
+
             if (oldestTimestamp === null || timestamp < oldestTimestamp) {
               oldestTimestamp = timestamp
             }
             if (newestTimestamp === null || timestamp > newestTimestamp) {
               newestTimestamp = timestamp
             }
-            
-            summaryUris.add(summary.uri)
-          }
-        }
-        
-        // Count dropped summaries (summaries not in feed_cache)
-        // Only count recent summaries (within last 48 hours) since feed_cache only stores recent posts
-        let droppedCount = 0
-        if (summaryUris.size > 0) {
-          const feedCacheRequest = feedCacheStore.getAllKeys()
-          feedCacheRequest.onsuccess = () => {
-            const cachedUris = new Set(feedCacheRequest.result as string[])
-            const now = Date.now()
-            const recentCutoff = now - 48 * 60 * 60 * 1000 // 48 hours ago
-            
-            // Re-process summaries to check which recent ones are dropped
-            for (const intervalData of results) {
-              const summaries = intervalData.summaries || []
-              for (const summary of summaries) {
-                const timestamp = summary.timestamp instanceof Date 
-                  ? summary.timestamp.getTime() 
-                  : new Date(summary.timestamp).getTime()
-                
-                // Only count as dropped if:
-                // 1. It's recent (within last 48 hours) - feed_cache should have it if not dropped
-                // 2. It's not in feed_cache
-                if (timestamp >= recentCutoff && !cachedUris.has(summary.uri)) {
-                  droppedCount++
-                }
-              }
+
+            // Count as dropped if recent (within last 48 hours) and has curation_dropped flag
+            // This matches the logic used in getCurationInitStats for consistency
+            if (timestamp >= recentCutoff && summary.curation_dropped) {
+              droppedCount++
             }
-            
-            resolve({
-              totalCount,
-              oldestTimestamp,
-              newestTimestamp,
-              droppedCount,
-            })
           }
-          feedCacheRequest.onerror = () => reject(feedCacheRequest.error)
-        } else {
-          resolve({
-            totalCount,
-            oldestTimestamp,
-            newestTimestamp,
-            droppedCount: 0,
-          })
         }
+
+        resolve({
+          totalCount,
+          oldestTimestamp,
+          newestTimestamp,
+          droppedCount,
+        })
       }
 
       request.onerror = () => reject(request.error)

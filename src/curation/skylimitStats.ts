@@ -299,22 +299,13 @@ function computeUserProbabilities(
     
     if (accum.followed_at) {
       accum.weight = userEntry.amp_factor
-      
-      // Weight by how long they have been followed
-      const followedAt = new Date(accum.followed_at)
-      if (isNaN(followedAt.getTime())) {
-        console.warn(`computeUserProbabilities: Invalid followed_at for ${trackName}: ${accum.followed_at}`)
-        accum.follow_weight = 1
-      } else if (isNaN(finalIntervalEnd.getTime())) {
-        console.warn(`computeUserProbabilities: Invalid finalIntervalEnd: ${finalIntervalEnd}`)
-        accum.follow_weight = 1
-      } else if (statPeriodMS <= 0 || !isFinite(statPeriodMS)) {
-        console.warn(`computeUserProbabilities: Invalid statPeriodMS: ${statPeriodMS}`)
-        accum.follow_weight = 1
-      } else {
-        const followDuration = finalIntervalEnd.getTime() - followedAt.getTime()
-        accum.follow_weight = Math.min(1, Math.max(0.1, followDuration / statPeriodMS))
-      }
+
+      // Note: follow_weight extrapolation is disabled because followed_at reflects
+      // when the follow was saved to IndexedDB, not the actual follow date from Bluesky.
+      // This caused a bug where all follows got follow_weight=0.1 after cache reset,
+      // inflating posting rates by 10x. Using follow_weight=1 means we use actual
+      // posting counts from the lookback period without extrapolation.
+      accum.follow_weight = 1
     } else {
       // Don't count unfollowed user (or self) posts/reposts
       accum.weight = 0
