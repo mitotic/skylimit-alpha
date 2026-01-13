@@ -30,6 +30,7 @@ import { saveFollow } from './skylimitCache'
 
 const BOOST_AMPLIFY_FAC = 2
 const BOOST_AMPLIFY_MIN = 4
+const DIGEST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000  // 7 days - posts within this window are digestible
 
 /**
  * Count total posts for a user entry
@@ -127,7 +128,7 @@ export async function curateSinglePost(
     !summary.repostUri && 
     !summary.inReplyToUri && 
     !summary.tags.includes(NODIGEST_TAG) &&
-    (statusTime.getTime() >= (Date.now() - 7 * 24 * 60 * 60 * 1000)) // Within last 7 days
+    (statusTime.getTime() >= (Date.now() - DIGEST_WINDOW_MS))
   
   let handledStatus = ''
   let userSave = ''

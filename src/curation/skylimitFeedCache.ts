@@ -4,7 +4,7 @@
  */
 
 import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
-import { initDB, getSummaryByUri, clearSummaries } from './skylimitCache'
+import { initDB, getSummaryByUri, clearSummaries, checkSummaryExists } from './skylimitCache'
 import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId } from './skylimitGeneral'
 import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost } from './types'
 import { curatePosts, insertEditionPosts } from './skylimitTimeline'
@@ -124,6 +124,14 @@ async function getDB(): Promise<IDBDatabase> {
 }
 
 const STORE_FEED_CACHE = 'feed_cache'
+
+// Feed cache retention period - aligns with max lookback period (2 days)
+export const FEED_CACHE_RETENTION_HOURS = 48
+export const FEED_CACHE_RETENTION_MS = FEED_CACHE_RETENTION_HOURS * 60 * 60 * 1000
+
+// Safety limits for fetch iterations and default page size
+const MAX_FETCH_ITERATIONS = 50
+const DEFAULT_PAGE_LENGTH = 25
 
 /**
  * Initialize feed cache store (called during DB initialization)
@@ -307,7 +315,7 @@ export async function savePostsToFeedCache(
     // Clean up old cache entries asynchronously (after transaction completes)
     setTimeout(async () => {
       try {
-        await clearOldFeedCache(24)
+        await clearOldFeedCache(FEED_CACHE_RETENTION_HOURS)
       } catch (err) {
         console.warn('Failed to clean up old feed cache:', err)
       }
@@ -466,10 +474,10 @@ export async function saveFeedCache(
     }
     await metadataStore.put(metadata)
 
-    // Clean up old cache entries (older than 24 hours) - do this asynchronously
+    // Clean up old cache entries older than FEED_CACHE_RETENTION_HOURS - do this asynchronously
     setTimeout(async () => {
       try {
-        await clearOldFeedCache(24)
+        await clearOldFeedCache(FEED_CACHE_RETENTION_HOURS)
       } catch (err) {
         console.warn('Failed to clean up old feed cache:', err)
       }
@@ -604,7 +612,7 @@ export async function performLookbackFetch(
   myUsername: string,
   myDid: string,
   lookbackBoundary: Date,
-  pageLength: number = 25,
+  pageLength: number = DEFAULT_PAGE_LENGTH,
   onProgress?: (percent: number) => void,
   initialLastPostTimeParam?: Date
 ): Promise<boolean> {
@@ -725,7 +733,7 @@ export async function limitedLookbackToMidnight(
   agent: BskyAgent,
   myUsername: string,
   myDid: string,
-  pageLength: number = 25
+  pageLength: number = DEFAULT_PAGE_LENGTH
 ): Promise<number> {
   const localMidnight = getLocalMidnight().getTime()
 
@@ -741,7 +749,7 @@ export async function limitedLookbackToMidnight(
   let cursor = initialCursor
   let totalNewPosts = 0
   let iterations = 0
-  const maxIterations = 50  // Safety limit
+  const maxIterations = MAX_FETCH_ITERATIONS
 
   // Keep fetching backward until we hit midnight OR cached posts
   while (currentOldestTimestamp > localMidnight && iterations < maxIterations) {
@@ -892,7 +900,7 @@ export async function fillGapToMidnight(
   agent: BskyAgent,
   myUsername: string,
   myDid: string,
-  pageLength: number = 25
+  pageLength: number = DEFAULT_PAGE_LENGTH
 ): Promise<number> {
   // Use local midnight of the day containing fromTimestamp as the stop boundary
   const targetDate = new Date(fromTimestamp)
@@ -910,7 +918,7 @@ export async function fillGapToMidnight(
   let cursor: string | undefined
   let totalNewPosts = 0
   let iterations = 0
-  const maxIterations = 50  // Safety limit
+  const maxIterations = MAX_FETCH_ITERATIONS
 
   // Keep fetching backward until we hit midnight OR cached posts
   while (currentOldestTimestamp > localMidnight && iterations < maxIterations) {
@@ -991,6 +999,296 @@ export async function fillGapToMidnight(
 
   console.log(`[Gap Fill] Completed - cached ${totalNewPosts} new posts`)
   return totalNewPosts
+}
+
+/**
+ * Fetch posts backwards from API until hitting a summarized post or local midnight
+ * Used by "Next Page" to ensure no gaps when returning after long absence
+ *
+ * Algorithm:
+ * 1. Use stored cursor from metadata to continue pagination
+ * 2. Fetch posts in batches
+ * 3. For each post: check if it exists in summary cache (already curated)
+ * 4. Stop when hitting a summarized post OR reaching local midnight of fromTimestamp's day
+ * 5. Save new posts to cache with curation
+ * 6. Return curated posts for display
+ *
+ * @param fromTimestamp - The oldest displayed post timestamp (pagination boundary)
+ * @param agent - BskyAgent for API calls
+ * @param myUsername - User's username
+ * @param myDid - User's DID
+ * @param pageLength - Number of posts per page (default 25)
+ * @returns Curated posts ready for display
+ */
+export async function fetchUntilSummarizedOrMidnight(
+  fromTimestamp: number,
+  agent: BskyAgent,
+  myUsername: string,
+  myDid: string,
+  pageLength: number = DEFAULT_PAGE_LENGTH
+): Promise<{ posts: CurationFeedViewPost[]; postTimestamps: Map<string, number>; reachedEnd: boolean }> {
+  // Calculate local midnight of fromTimestamp's date as the stop boundary
+  const targetDate = new Date(fromTimestamp)
+  const localMidnight = getLocalMidnight(targetDate).getTime()
+
+  console.log(`[Fetch Until Summarized] Starting from ${new Date(fromTimestamp).toLocaleTimeString()}, stopping at midnight ${new Date(localMidnight).toLocaleTimeString()} or summarized post`)
+
+  // Start from newest posts (no cursor) - we'll skip posts newer than fromTimestamp
+  let cursor: string | undefined = undefined
+  let totalNewPosts = 0
+  let iterations = 0
+  const maxIterations = MAX_FETCH_ITERATIONS
+  const allPosts: CurationFeedViewPost[] = []
+  const allPostTimestamps = new Map<string, number>()
+  let hitSummarizedPost = false
+  let reachedMidnight = false
+  let startedCollecting = false  // Track when we've passed fromTimestamp
+
+  // Get oldest cached timestamp for initialLastPostTime calculation
+  const oldestTimestamp = await getOldestCachedPostTimestamp()
+  let lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
+
+  while (!hitSummarizedPost && !reachedMidnight && iterations < maxIterations) {
+    iterations++
+
+    try {
+      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
+        cursor,
+        limit: pageLength
+      })
+
+      if (feed.length === 0) {
+        console.log('[Fetch Until Summarized] No more posts from server')
+        break
+      }
+
+      const feedReceivedTime = new Date()
+      const newPosts: AppBskyFeedDefs.FeedViewPost[] = []
+
+      for (const post of feed) {
+        const uniqueId = getPostUniqueId(post)
+        const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime)
+        const postTimestampMs = postTimestamp.getTime()
+
+        // Skip posts newer than or equal to fromTimestamp
+        if (postTimestampMs >= fromTimestamp) {
+          if (!startedCollecting) {
+            console.log(`[Fetch Until Summarized] Skipping post at ${postTimestamp.toLocaleTimeString()} (newer than fromTimestamp)`)
+          }
+          continue
+        }
+
+        // Now we're past fromTimestamp - start collecting
+        if (!startedCollecting) {
+          startedCollecting = true
+          console.log(`[Fetch Until Summarized] Started collecting at ${postTimestamp.toLocaleTimeString()}`)
+        }
+
+        // Check if post is before midnight - stop
+        if (postTimestampMs < localMidnight) {
+          console.log(`[Fetch Until Summarized] Reached midnight boundary at ${postTimestamp.toLocaleTimeString()}`)
+          reachedMidnight = true
+          break
+        }
+
+        // Check if post already exists in summary cache - stop
+        const summaryExists = await checkSummaryExists(uniqueId, postTimestamp)
+        if (summaryExists) {
+          console.log(`[Fetch Until Summarized] Hit summarized post at ${postTimestamp.toLocaleTimeString()}`)
+          hitSummarizedPost = true
+          break
+        }
+
+        newPosts.push(post)
+        allPostTimestamps.set(uniqueId, postTimestampMs)
+      }
+
+      // Save new posts if any
+      if (newPosts.length > 0) {
+        const { entries, finalLastPostTime } = createFeedCacheEntries(newPosts, lastPostTime)
+        lastPostTime = finalLastPostTime
+
+        // Save to cache with curation
+        const curatedPosts = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
+        allPosts.push(...curatedPosts)
+        totalNewPosts += newPosts.length
+
+        console.log(`[Fetch Until Summarized] Cached ${newPosts.length} posts (total: ${totalNewPosts})`)
+      }
+
+      if (hitSummarizedPost || reachedMidnight) {
+        break
+      }
+
+      cursor = newCursor
+      if (!cursor) {
+        console.log('[Fetch Until Summarized] No more cursor')
+        break
+      }
+    } catch (error) {
+      console.warn('[Fetch Until Summarized] Error during fetch:', error)
+      break
+    }
+  }
+
+  if (iterations >= maxIterations) {
+    console.warn('[Fetch Until Summarized] Hit max iterations limit')
+  }
+
+  const reachedEnd = !cursor || reachedMidnight || hitSummarizedPost
+  console.log(`[Fetch Until Summarized] Completed - returned ${allPosts.length} posts, reachedEnd: ${reachedEnd}`)
+  return { posts: allPosts, postTimestamps: allPostTimestamps, reachedEnd }
+}
+
+/**
+ * Fetch a page of posts from the server, starting from a given timestamp
+ * Used as a fallback when gap-filling and cache are both exhausted
+ *
+ * @param fromTimestamp - Timestamp to start from (fetch posts older than this)
+ * @param agent - BskyAgent instance
+ * @param pageLength - Number of posts to fetch
+ * @param existingCursor - If provided, use this cursor directly; otherwise skip from newest
+ * @returns Posts, timestamps, cursor for next page, and hasMore flag
+ */
+export async function fetchPageFromTimestamp(
+  fromTimestamp: number,
+  agent: BskyAgent,
+  myUsername: string,
+  myDid: string,
+  pageLength: number = DEFAULT_PAGE_LENGTH,
+  existingCursor?: string
+): Promise<{
+  posts: CurationFeedViewPost[];
+  postTimestamps: Map<string, number>;
+  cursor: string | undefined;
+  hasMore: boolean;
+}> {
+  console.log(`[Server Fallback] Fetching page from ${new Date(fromTimestamp).toLocaleTimeString()}, cursor: ${existingCursor ? 'provided' : 'none'}`)
+
+  const allPosts: CurationFeedViewPost[] = []
+  const allPostTimestamps = new Map<string, number>()
+  let currentCursor: string | undefined = existingCursor
+  let iterations = 0
+  const maxIterations = MAX_FETCH_ITERATIONS  // Safety limit for skipping phase
+
+  // Get oldest cached timestamp for initialLastPostTime calculation
+  const oldestTimestamp = await getOldestCachedPostTimestamp()
+  let lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
+
+  // If we have an existing cursor, use it directly
+  if (existingCursor) {
+    try {
+      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
+        cursor: existingCursor,
+        limit: pageLength
+      })
+
+      if (feed.length === 0) {
+        console.log('[Server Fallback] No more posts from server')
+        return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
+      }
+
+      const feedReceivedTime = new Date()
+      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime)
+      lastPostTime = finalLastPostTime
+
+      // Save to cache with curation
+      const curatedPosts = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
+
+      // Build timestamps map
+      for (const post of curatedPosts) {
+        const uniqueId = getPostUniqueId(post)
+        const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime)
+        allPostTimestamps.set(uniqueId, postTimestamp.getTime())
+      }
+
+      console.log(`[Server Fallback] Fetched ${curatedPosts.length} posts using cursor`)
+      return {
+        posts: curatedPosts,
+        postTimestamps: allPostTimestamps,
+        cursor: newCursor,
+        hasMore: !!newCursor && curatedPosts.length > 0
+      }
+    } catch (error) {
+      console.warn('[Server Fallback] Error fetching with cursor:', error)
+      return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
+    }
+  }
+
+  // No cursor - need to skip from newest until reaching fromTimestamp
+  let skippedCount = 0
+  let foundStart = false
+
+  while (!foundStart && iterations < maxIterations) {
+    iterations++
+
+    try {
+      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
+        cursor: currentCursor,
+        limit: pageLength
+      })
+
+      if (feed.length === 0) {
+        console.log('[Server Fallback] No more posts while skipping')
+        return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
+      }
+
+      const feedReceivedTime = new Date()
+
+      for (const post of feed) {
+        const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime)
+        const postTimestampMs = postTimestamp.getTime()
+
+        // Skip posts newer than or equal to fromTimestamp
+        if (postTimestampMs >= fromTimestamp) {
+          skippedCount++
+          continue
+        }
+
+        // Found the start - now collect a full page
+        foundStart = true
+        const uniqueId = getPostUniqueId(post)
+        allPostTimestamps.set(uniqueId, postTimestampMs)
+
+        // Create entry and save
+        const { entries } = createFeedCacheEntries([post], lastPostTime)
+        const curatedPosts = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
+        allPosts.push(...curatedPosts)
+
+        // Check if we have enough posts
+        if (allPosts.length >= pageLength) {
+          console.log(`[Server Fallback] Collected ${allPosts.length} posts after skipping ${skippedCount}`)
+          return {
+            posts: allPosts,
+            postTimestamps: allPostTimestamps,
+            cursor: newCursor,
+            hasMore: !!newCursor
+          }
+        }
+      }
+
+      currentCursor = newCursor
+      if (!currentCursor) {
+        console.log('[Server Fallback] No more cursor while collecting')
+        break
+      }
+    } catch (error) {
+      console.warn('[Server Fallback] Error during fetch:', error)
+      break
+    }
+  }
+
+  if (iterations >= maxIterations) {
+    console.warn('[Server Fallback] Hit max iterations while skipping')
+  }
+
+  console.log(`[Server Fallback] Completed - returned ${allPosts.length} posts after skipping ${skippedCount}`)
+  return {
+    posts: allPosts,
+    postTimestamps: allPostTimestamps,
+    cursor: currentCursor,
+    hasMore: !!currentCursor && allPosts.length > 0
+  }
 }
 
 /**
@@ -1224,7 +1522,7 @@ export async function checkFeedCacheExists(uniqueId: string): Promise<boolean> {
  */
 export async function getCachedFeedBefore(
   beforeTimestamp: number,
-  limit: number = 25
+  limit: number = DEFAULT_PAGE_LENGTH
 ): Promise<{ posts: CurationFeedViewPost[]; postTimestamps: Map<string, number> }> {
   try {
     const database = await getDB()
@@ -1328,8 +1626,8 @@ export async function getCachedFeed(limit: number = 50): Promise<CurationFeedVie
             }, 0)
           }
           
-          // Only include posts from last 24 hours
-          if (postTime >= now - 24 * 60 * 60 * 1000) {
+          // Only include posts within FEED_CACHE_RETENTION_MS
+          if (postTime >= now - FEED_CACHE_RETENTION_MS) {
             const cachedPost: CurationFeedViewPost = {
               ...entry.post,
               // curation status will be looked up separately from summaries cache
@@ -1593,7 +1891,7 @@ export async function getLastCachedPostTimestamp(): Promise<number | null> {
  * Uses postTimestamp (when post was created/reposted) rather than cachedAt
  * This ensures we keep posts that are recent, regardless of when they were cached
  */
-export async function clearOldFeedCache(olderThanHours: number = 24): Promise<number> {
+export async function clearOldFeedCache(olderThanHours: number = FEED_CACHE_RETENTION_HOURS): Promise<number> {
   try {
     const database = await getDB()
     const transaction = database.transaction([STORE_FEED_CACHE], 'readwrite')

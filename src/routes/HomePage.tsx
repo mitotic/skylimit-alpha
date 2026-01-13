@@ -21,7 +21,7 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationStatus } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost } from '../curation/types'
-import { getCachedFeed, clearFeedCache, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, extendFeedCache, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, detectSummaryCacheGap, fillGapToMidnight } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchUntilSummarizedOrMidnight, fetchPageFromTimestamp } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { clearCounters } from '../curation/skylimitCounter'
@@ -143,6 +143,7 @@ export default function HomePage() {
   const [feed, setFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])
   const [cursor, setCursor] = useState<string | undefined>()  // Keep for backward compatibility
   const [hasMorePosts, setHasMorePosts] = useState(false)  // Based on oldestDisplayedPostTimestamp existence
+  const [serverCursor, setServerCursor] = useState<string | undefined>(undefined)  // Cursor for server fallback fetches
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [showCompose, setShowCompose] = useState(false)
@@ -1157,6 +1158,7 @@ export default function HomePage() {
       // 4. Reset React state
       setFeed([])
       setCursor(undefined)
+      setServerCursor(undefined)
       setHasMorePosts(false)
       setIsLoading(true)
       setIsInitialLoad(true)
@@ -2090,151 +2092,122 @@ export default function HomePage() {
       const settings = await getSettings()
       const pageLength = settings?.feedPageLength || 25
 
-      // 1. Use oldestDisplayedPostTimestamp from component state (not oldestCachedPostTimestamp from metadata)
+      // Validate we have a pagination boundary
       if (!oldestDisplayedPostTimestamp) {
-        // No more posts available
         setCursor(undefined)
         setHasMorePosts(false)
         setIsLoadingMore(false)
         return
       }
-      
-      const beforeTimestamp = oldestDisplayedPostTimestamp
-      console.log(`[Load More] Starting pagination with oldestDisplayedPostTimestamp: ${new Date(beforeTimestamp).toISOString()}`)
-      
-      // 2. Try to get posts from cache (older than oldestDisplayedPostTimestamp)
-      // getCachedFeedBefore returns { posts, postTimestamps } - use stored postTimestamp from cache
-      let cacheResult = await getCachedFeedBefore(beforeTimestamp, pageLength)
-      let nextPosts = cacheResult.posts
-      let postTimestamps = cacheResult.postTimestamps
-      console.log(`[Load More] Found ${nextPosts.length} posts in cache older than oldestDisplayedPostTimestamp`)
-      
-      // 3. If not enough posts in cache, check for gap and fill if needed
-      if (nextPosts.length < pageLength) {
-        // Check for gap in summary cache
-        const hasGap = await detectSummaryCacheGap(beforeTimestamp)
-        if (hasGap) {
-          console.log(`[Load More] Gap detected, filling back to midnight`)
-          await fillGapToMidnight(beforeTimestamp, agent, session.handle, session.did, pageLength)
-          // Retry getting posts after gap fill
-          cacheResult = await getCachedFeedBefore(beforeTimestamp, pageLength)
-          nextPosts = cacheResult.posts
-          postTimestamps = cacheResult.postTimestamps
-          console.log(`[Load More] After gap fill, found ${nextPosts.length} posts in cache`)
-        }
 
-        // If still not enough, extend cache
-        if (nextPosts.length < pageLength) {
-          const fetchedCount = await extendFeedCache(agent, session.handle, session.did)
+      console.log(`[Load More] Starting fetch from ${new Date(oldestDisplayedPostTimestamp).toISOString()}`)
 
-          if (fetchedCount > 0) {
-            // After extending cache, retry getting posts using the same oldestDisplayedPostTimestamp
-            // extendFeedCache may have fetched newer posts, but we still want to use our pagination boundary
-            console.log(`[Load More] After extending cache, retrying with oldestDisplayedPostTimestamp: ${new Date(beforeTimestamp).toISOString()}`)
+      // Fetch posts from API until hitting a summarized post or local midnight
+      // This ensures no gaps when returning after long absence
+      const { posts: fetchedPosts, postTimestamps, reachedEnd } = await fetchUntilSummarizedOrMidnight(
+        oldestDisplayedPostTimestamp,
+        agent,
+        session.handle,
+        session.did,
+        pageLength
+      )
 
-            // Retry getting posts from cache after extending
-            cacheResult = await getCachedFeedBefore(beforeTimestamp, pageLength)
-            nextPosts = cacheResult.posts
-            postTimestamps = cacheResult.postTimestamps
-            console.log(`[Load More] After extending, found ${nextPosts.length} posts in cache`)
-          } else {
-            // No more posts available (end of feed)
-            setCursor(undefined)
-            setHasMorePosts(false)
+      console.log(`[Load More] Fetched ${fetchedPosts.length} posts, reachedEnd: ${reachedEnd}`)
+
+      // If no posts fetched (hit summarized content), get posts from cache instead
+      // The cache has the already-summarized posts that need to be displayed
+      let postsToDisplay = fetchedPosts
+      let timestampsToUse = postTimestamps
+      let usedCacheFallback = false
+
+      let usedServerFallback = false
+      let newServerCursor: string | undefined = undefined
+
+      if (fetchedPosts.length === 0 && reachedEnd) {
+        console.log(`[Load More] No new posts fetched, getting posts from cache`)
+        const cacheResult = await getCachedFeedBefore(oldestDisplayedPostTimestamp, pageLength)
+        postsToDisplay = cacheResult.posts
+        timestampsToUse = cacheResult.postTimestamps
+        usedCacheFallback = true
+        console.log(`[Load More] Found ${postsToDisplay.length} posts in cache`)
+
+        if (postsToDisplay.length === 0) {
+          // No posts in cache either - use server fallback
+          console.log(`[Load More] Cache empty, using server fallback`)
+          const serverResult = await fetchPageFromTimestamp(
+            oldestDisplayedPostTimestamp,
+            agent,
+            session.handle,
+            session.did,
+            pageLength,
+            serverCursor  // Use existing cursor if available
+          )
+          postsToDisplay = serverResult.posts
+          timestampsToUse = serverResult.postTimestamps
+          newServerCursor = serverResult.cursor
+          usedServerFallback = true
+          usedCacheFallback = false  // Not cache fallback anymore
+          console.log(`[Load More] Server fallback returned ${postsToDisplay.length} posts, cursor: ${newServerCursor ? 'yes' : 'no'}`)
+
+          if (postsToDisplay.length === 0) {
+            // Truly at end of feed
+            console.log(`[Load More] Server fallback returned no posts - end of feed`)
+            setServerCursor(undefined)
             setIsLoadingMore(false)
             return
           }
         }
       }
 
-      // 4. Look up curation status and filter posts
-      // Pass postTimestamps map so lookupCurationAndFilter uses stored timestamps instead of recalculating
-      // feedReceivedTime is still needed for lookupCurationAndFilter signature but won't be used for sorting
+      // Look up curation status and filter posts
       const feedReceivedTime = new Date()
-      const filteredPosts = await lookupCurationAndFilter(nextPosts, feedReceivedTime, postTimestamps)
-      
-      // Calculate oldest timestamp from ALL posts (before filtering) to advance cursor past them
-      // This ensures we don't get stuck if all posts in a batch are filtered out
+      const filteredPosts = await lookupCurationAndFilter(postsToDisplay, feedReceivedTime, timestampsToUse)
+
+      // Calculate oldest timestamp from ALL posts (before filtering) to advance cursor
       const oldestTimestampFromBatch = Math.min(
-        ...nextPosts.map(p => {
+        ...postsToDisplay.map(p => {
           const uniqueId = getPostUniqueId(p)
-          return postTimestamps.get(uniqueId) ?? postTimestamps.get(p.post.uri) ?? Infinity
+          return timestampsToUse.get(uniqueId) ?? timestampsToUse.get(p.post.uri) ?? Infinity
         }).filter(t => t !== Infinity)
       )
-      
-      console.log(`[Load More] Oldest timestamp from batch: ${oldestTimestampFromBatch !== Infinity ? new Date(oldestTimestampFromBatch).toISOString() : 'Infinity'}`)
+
+      console.log(`[Load More] Oldest timestamp: ${oldestTimestampFromBatch !== Infinity ? new Date(oldestTimestampFromBatch).toISOString() : 'Infinity'}`)
       console.log(`[Load More] Filtered posts count: ${filteredPosts.length}`)
-      
-      // 5. Append to existing feed
+
+      // Append to existing feed
       if (filteredPosts.length > 0) {
-        // filteredPosts are already sorted (newest first) and are older than existing feed
-        // Existing feed is already sorted (newest first)
-        // Since we're paginating backward in time, new posts should be appended at the end
-        // No need to re-sort - just append
         setFeed(prevFeed => {
-          // Check for duplicates before appending
           const existingUris = new Set(prevFeed.map(p => getPostUniqueId(p)))
           const newPostsToAdd = filteredPosts.filter(p => !existingUris.has(getPostUniqueId(p)))
-          console.log(`[Load More] Appending ${newPostsToAdd.length} new posts (${filteredPosts.length - newPostsToAdd.length} duplicates filtered)`)
+          console.log(`[Load More] Appending ${newPostsToAdd.length} posts`)
           return [...prevFeed, ...newPostsToAdd]
         })
       }
-      
-      // 6. Update oldestDisplayedPostTimestamp based on unfiltered batch (regardless of filtering)
-      // This ensures we advance past all posts in the batch, even if they were filtered out
+
+      // Update pagination boundary
       if (oldestTimestampFromBatch !== Infinity) {
-        // Update component state with new oldestDisplayedPostTimestamp
         setOldestDisplayedPostTimestamp(oldestTimestampFromBatch)
-        console.log(`[Load More] Updated oldestDisplayedPostTimestamp to: ${new Date(oldestTimestampFromBatch).toISOString()}`)
-        
-        // hasMorePosts will be determined by whether we found more posts in subsequent checks
-        // For now, keep it true if we successfully loaded posts (will be set to false if no more posts found)
-      } else {
-        // No valid timestamps found, end pagination
-        setCursor(undefined)
-        setHasMorePosts(false)
       }
-      
-      // If no posts were displayed but we had posts in the batch, try loading more
-      if (filteredPosts.length === 0 && nextPosts.length > 0 && oldestTimestampFromBatch !== Infinity) {
-        // Posts were filtered out, try next batch using the updated oldestDisplayedPostTimestamp
-        // Only retry once to avoid infinite loop
-        const retryCacheResult = await getCachedFeedBefore(oldestTimestampFromBatch, pageLength)
-        const retryPosts = retryCacheResult.posts
-        const retryPostTimestamps = retryCacheResult.postTimestamps
-        
-        if (retryPosts.length > 0) {
-          const retryFiltered = await lookupCurationAndFilter(retryPosts, feedReceivedTime, retryPostTimestamps)
-          
-          // Calculate oldest timestamp from retry batch (before filtering)
-          const oldestTimestampFromRetry = Math.min(
-            ...retryPosts.map(p => {
-              const uniqueId = getPostUniqueId(p)
-              return retryPostTimestamps.get(uniqueId) ?? retryPostTimestamps.get(p.post.uri) ?? Infinity
-            }).filter(t => t !== Infinity)
-          )
-          
-          if (retryFiltered.length > 0) {
-            // retryFiltered are already sorted (newest first) and are older than existing feed
-            // Just append at the end
-            setFeed(prevFeed => [...prevFeed, ...retryFiltered])
-          }
-          
-          // Update oldestDisplayedPostTimestamp from retry batch (regardless of filtering)
-          if (oldestTimestampFromRetry !== Infinity) {
-            setOldestDisplayedPostTimestamp(oldestTimestampFromRetry)
-          } else {
-            setCursor(undefined)
-            setHasMorePosts(false)
-          }
-        } else {
-          // No more posts in cache, end pagination
-          setCursor(undefined)
-          setHasMorePosts(false)
-        }
-      } else if (nextPosts.length === 0) {
-        // No posts available, end pagination
-        setCursor(undefined)
+
+      // Manage serverCursor based on which fallback was used
+      if (usedServerFallback) {
+        // Server fallback was used - save cursor for next Load More
+        setServerCursor(newServerCursor)
+        console.log(`[Load More] Saved server cursor for next fetch`)
+      } else {
+        // Gap-filling or cache returned posts - reset serverCursor
+        setServerCursor(undefined)
+      }
+
+      // Update hasMorePosts based on whether we reached the end
+      // When using cache fallback, only set hasMorePosts=false if cache returned fewer posts than requested
+      if (usedCacheFallback) {
+        // If we got a full page from cache, there might be more
+        setHasMorePosts(postsToDisplay.length >= pageLength)
+      } else if (usedServerFallback) {
+        // Server fallback - hasMore based on cursor existence
+        setHasMorePosts(!!newServerCursor)
+      } else if (reachedEnd) {
         setHasMorePosts(false)
       }
     } catch (error) {
@@ -2243,7 +2216,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingMore(false)
     }
-  }, [isLoadingMore, agent, session, oldestDisplayedPostTimestamp, feed, lookupCurationAndFilter, lookingBack])
+  }, [isLoadingMore, agent, session, oldestDisplayedPostTimestamp, lookupCurationAndFilter, lookingBack, serverCursor])
 
   // Set up IntersectionObserver for infinite scrolling
   useEffect(() => {
@@ -2613,8 +2586,8 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* "Load More" button - only show when infinite scrolling is disabled and not looking back */}
-        {!infiniteScrollingEnabled && hasMorePosts && !lookingBack && (
+        {/* "Load More" button - always show when infinite scrolling is disabled and not looking back */}
+        {!infiniteScrollingEnabled && !lookingBack && (
           <div className="p-4 text-center">
             <button
               onClick={handleLoadMore}

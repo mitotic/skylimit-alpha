@@ -3,6 +3,8 @@
  */
 
 import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator } from './types'
+import { getIntervalString } from './skylimitGeneral'
+import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 
 const DB_NAME = 'skylimit_db'
 const DB_VERSION = 6 // Increment version to change parent posts cache keyPath to rootUri
@@ -126,7 +128,12 @@ export async function saveSummaries(interval: string, summaries: PostSummary[]):
     request.onerror = () => reject(request.error)
   })
 
-  // Merge summaries: existing entries take precedence (preserve first curation decision)
+  // Merge summaries: existing entries take precedence.
+  // This preserves original curation decisions when posts are re-fetched (e.g., during Load More).
+  // Rationale: When scrolling backwards through the feed, users should see the same posts they
+  // saw before. Preserving original curation ensures feed consistency and prevents posts from
+  // suddenly appearing/disappearing based on changed stats. Curation is only recomputed globally
+  // during initial curation via recomputeCurationStatus().
   const summaryMap = new Map<string, PostSummary>()
 
   // Add existing summaries first (they take precedence)
@@ -301,6 +308,25 @@ export async function getSummaryByUri(uniqueId: string): Promise<PostSummary | n
   }
   
   return null
+}
+
+/**
+ * Check if a post exists in summary cache using interval-based lookup
+ * More efficient than getSummaryByUri which searches all intervals
+ *
+ * @param uniqueId - Post unique ID (uri for originals, `${did}:${uri}` for reposts)
+ * @param postTimestamp - Timestamp of the post (used to determine which interval to check)
+ * @returns true if summary exists, false otherwise
+ */
+export async function checkSummaryExists(uniqueId: string, postTimestamp: Date): Promise<boolean> {
+  try {
+    const interval = getIntervalString(postTimestamp)
+    const summaries = await getSummaries(interval)
+    return summaries?.some(s => s.uri === uniqueId) ?? false
+  } catch (error) {
+    console.warn('[checkSummaryExists] Error:', error)
+    return false
+  }
 }
 
 /**
@@ -674,7 +700,7 @@ export async function getSummariesCacheStats(): Promise<SummariesCacheStats> {
         let newestTimestamp: number | null = null
         let droppedCount = 0
         const now = Date.now()
-        const recentCutoff = now - 48 * 60 * 60 * 1000 // 48 hours ago
+        const recentCutoff = now - FEED_CACHE_RETENTION_MS
 
         // Process all intervals
         for (const intervalData of results) {
