@@ -21,7 +21,7 @@ const MAX_PAGE_RAW = 100
 export const PAGED_UPDATES_DEFAULTS = {
   enabled: true,
   varFactor: 1.5,
-  maxWaitMinutes: 30,
+  maxWaitMinutes: 10,  // Time before showing partial page button
 }
 
 /**
@@ -29,6 +29,8 @@ export const PAGED_UPDATES_DEFAULTS = {
  */
 export interface ProbeResult {
   hasFullPage: boolean        // True if PageSize or more displayable posts available
+  hasMultiplePages: boolean   // True if 2+ pages (filteredPostCount >= 2 * pageSize)
+  pageCount: number           // Number of full pages available (Math.floor(filteredPostCount / pageSize))
   rawPostCount: number        // Total posts fetched from server
   filteredPostCount: number   // Posts that would be displayed (not dropped)
   totalPostCount: number      // All posts considered (may include dropped)
@@ -84,6 +86,8 @@ export async function probeForNewPosts(
 ): Promise<ProbeResult> {
   const result: ProbeResult = {
     hasFullPage: false,
+    hasMultiplePages: false,
+    pageCount: 0,
     rawPostCount: 0,
     filteredPostCount: 0,
     totalPostCount: 0,
@@ -160,9 +164,11 @@ export async function probeForNewPosts(
       }
     }
 
-    // Check if we have a full page
+    // Check page availability
     const pageSize = settings?.feedPageLength || 25
     result.hasFullPage = result.filteredPostCount >= pageSize
+    result.hasMultiplePages = result.filteredPostCount >= pageSize * 2
+    result.pageCount = Math.floor(result.filteredPostCount / pageSize)
 
   } catch (error) {
     console.error('probeForNewPosts: Error probing for posts:', error)

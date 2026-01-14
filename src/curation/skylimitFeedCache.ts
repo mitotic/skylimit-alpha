@@ -1818,6 +1818,23 @@ export async function getOldestCachedPostTimestamp(): Promise<number | null> {
 }
 
 /**
+ * Check if there's a temporal gap between a given timestamp and the newest cached post.
+ * Returns true if probe's oldest timestamp is newer than cache's newest timestamp,
+ * indicating there are posts between the probe and cache that haven't been fetched.
+ *
+ * @param probeOldestTimestamp - Oldest timestamp from the probe
+ * @returns true if there's a gap (probe's oldest is newer than cache's newest)
+ */
+export async function hasGapFromProbe(probeOldestTimestamp: number): Promise<boolean> {
+  const newestCached = await getNewestCachedPostTimestamp()
+  if (newestCached === null) {
+    // No cache = definitely a gap
+    return true
+  }
+  return probeOldestTimestamp > newestCached
+}
+
+/**
  * Clear feed cache (useful when user actions require fresh data)
  */
 export async function clearFeedCache(): Promise<void> {
