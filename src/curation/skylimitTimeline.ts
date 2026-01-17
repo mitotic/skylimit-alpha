@@ -4,11 +4,11 @@
 
 import { BskyAgent } from '@atproto/api'
 import { curateSinglePost } from './skylimitFilter'
-import { getFilter, getAllFollows, saveSummaries, saveEditionPost, getEditionPosts, clearEditionPosts } from './skylimitCache'
+import { getFilter, getAllFollows, saveSummaries, saveEditionPost, getEditionPosts, clearEditionPosts, getSummaries } from './skylimitCache'
 import { createPostSummary } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { scheduleCleanup } from './skylimitCleanup'
-import { CurationFeedViewPost, PostSummary, FeedCacheEntryWithPost } from './types'
+import { CurationFeedViewPost, PostSummary, FeedCacheEntryWithPost, CurationResult } from './types'
 
 /**
  * Curate a batch of posts from feed cache entries
@@ -46,45 +46,76 @@ export async function curatePosts(
   // Group summaries by interval since posts may span multiple intervals
   const summariesByInterval = new Map<string, PostSummary[]>()
 
+  // Pre-load existing summaries for all relevant intervals (for preserving curation decisions)
+  const intervalsNeeded = new Set(entries.map(e => e.interval))
+  const existingSummariesByInterval = new Map<string, Map<string, PostSummary>>()
+  for (const interval of intervalsNeeded) {
+    const summaries = await getSummaries(interval)
+    if (summaries) {
+      const uriMap = new Map<string, PostSummary>()
+      for (const s of summaries) {
+        uriMap.set(s.uri, s)
+      }
+      existingSummariesByInterval.set(interval, uriMap)
+    }
+  }
+
   for (const entry of entries) {
     const post = entry.originalPost
     // Use postTimestamp from entry (calculated by createFeedCacheEntries)
     const postTimestamp = new Date(entry.postTimestamp)
 
-    // Curate the post
-    const curation = await curateSinglePost(
-      post,
-      myUsername,
-      myDid,
-      followMap,
-      currentStats,
-      currentProbs,
-      secretKey,
-      editionCount,
-      amplifyHighBoosts,
-      hideSelfReplies
-    )
+    // Check if this post already has a cached summary (preserves original curation decisions)
+    const existingMap = existingSummariesByInterval.get(entry.interval)
+    const existingSummary = existingMap?.get(entry.uri)
 
-    // Create summary using postTimestamp from entry
-    const summary = createPostSummary(post, postTimestamp)
+    let curation: CurationResult
+    let summary: PostSummary
 
-    // Store curation information in summary (this is the source of truth)
-    summary.curation_dropped = curation.curation_dropped
-    summary.curation_msg = curation.curation_msg
-    summary.curation_high_boost = curation.curation_high_boost
+    if (existingSummary) {
+      // Use existing curation decision from cached summary
+      curation = {
+        curation_dropped: existingSummary.curation_dropped,
+        curation_msg: existingSummary.curation_msg,
+        curation_high_boost: existingSummary.curation_high_boost,
+      }
+      summary = existingSummary
+    } else {
+      // Curate the post (no existing summary)
+      curation = await curateSinglePost(
+        post,
+        myUsername,
+        myDid,
+        followMap,
+        currentStats,
+        currentProbs,
+        secretKey,
+        editionCount,
+        amplifyHighBoosts,
+        hideSelfReplies
+      )
 
-    // Use interval from entry (calculated by createFeedCacheEntries)
-    const summaryInterval = entry.interval
+      // Create summary using postTimestamp from entry
+      summary = createPostSummary(post, postTimestamp)
 
-    // Group summaries by their interval
-    if (!summariesByInterval.has(summaryInterval)) {
-      summariesByInterval.set(summaryInterval, [])
-    }
-    summariesByInterval.get(summaryInterval)!.push(summary)
+      // Store curation information in summary (this is the source of truth)
+      summary.curation_dropped = curation.curation_dropped
+      summary.curation_msg = curation.curation_msg
+      summary.curation_high_boost = curation.curation_high_boost
 
-    // Save for edition if needed
-    if (curation.curation_save) {
-      await saveEditionPost(post.post.uri, post, curation.curation_save)
+      // Use interval from entry (calculated by createFeedCacheEntries)
+      const summaryInterval = entry.interval
+
+      // Group new summaries by their interval (only new ones need saving)
+      if (!summariesByInterval.has(summaryInterval)) {
+        summariesByInterval.set(summaryInterval, [])
+      }
+      summariesByInterval.get(summaryInterval)!.push(summary)
+
+      // Save for edition if needed (only for newly curated posts)
+      if (curation.curation_save) {
+        await saveEditionPost(post.post.uri, post, curation.curation_save)
+      }
     }
 
     // Create curated post (include ALL posts, even dropped ones)

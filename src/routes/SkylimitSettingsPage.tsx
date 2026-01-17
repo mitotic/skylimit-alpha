@@ -397,6 +397,28 @@ export default function SkylimitSettingsPage() {
                 </div>
 
                 <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">
+                    Max Displayed Feed Size
+                  </label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="500"
+                    value={settings.maxDisplayedFeedSize || 300}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value, 10)
+                      if (!isNaN(value) && value >= 50 && value <= 500) {
+                        updateSetting('maxDisplayedFeedSize', value)
+                      }
+                    }}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Maximum number of posts to keep in displayed feed. Older posts are trimmed during navigation. Range: 50-500.
+                  </p>
+                </div>
+
+                <div className="mb-4">
                   <label className="flex items-center space-x-3">
                     <input
                       type="checkbox"

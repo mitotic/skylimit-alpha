@@ -9,7 +9,7 @@ import { BskyAgent, AppBskyFeedDefs } from '@atproto/api'
 import { curateSinglePost } from './skylimitFilter'
 import { getFilter, getAllFollows } from './skylimitCache'
 import { getSettings } from './skylimitStore'
-import { getCachedPostUniqueIds } from './skylimitFeedCache'
+import { getCachedPostUniqueIds, getLocalMidnight } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
 import { FollowInfo, CurationFeedViewPost } from './types'
@@ -82,7 +82,7 @@ export async function probeForNewPosts(
   pageRaw: number,
   myUsername: string,
   myDid: string,
-  _newestDisplayedTimestamp: number  // Kept for API compatibility, but cache lookup is used instead
+  newestDisplayedTimestamp: number  // Defines "today" for midnight boundary calculation
 ): Promise<ProbeResult> {
   const result: ProbeResult = {
     hasFullPage: false,
@@ -123,16 +123,16 @@ export async function probeForNewPosts(
     // Get all cached post IDs to skip already-displayed posts
     const cachedPostIds = await getCachedPostUniqueIds()
 
-    // Curate each post WITHOUT saving to cache
-    for (const post of feed) {
-      // Get post unique ID and skip if already in cache
-      const postUniqueId = getPostUniqueId(post)
-      if (cachedPostIds.has(postUniqueId)) {
-        continue
-      }
+    // Calculate "next day" midnight boundary based on newest displayed post
+    // "Today" = the day of newestDisplayedTimestamp, not actual current time
+    const displayedDate = new Date(newestDisplayedTimestamp)
+    const nextDayMidnight = getLocalMidnight(displayedDate)
+    nextDayMidnight.setDate(nextDayMidnight.getDate() + 1)
+    const nextDayMidnightMs = nextDayMidnight.getTime()
 
-      // Get post timestamp (use repost time for reposts)
-      const postTimestamp = getFeedViewPostTimestamp(post).getTime()
+    // Helper function to curate a single post and update result
+    const processPost = async (post: AppBskyFeedDefs.FeedViewPost, postTimestamp: number): Promise<boolean> => {
+      result.totalPostCount++
 
       // Track timestamp bounds
       if (postTimestamp < result.oldestProbeTimestamp) {
@@ -141,8 +141,6 @@ export async function probeForNewPosts(
       if (postTimestamp > result.newestProbeTimestamp) {
         result.newestProbeTimestamp = postTimestamp
       }
-
-      result.totalPostCount++
 
       // Curate the post (but don't save summary)
       const curation = await curateSinglePost(
@@ -158,9 +156,46 @@ export async function probeForNewPosts(
         hideSelfReplies
       )
 
-      // Count if post would be displayed (not dropped)
+      // Return true if post would be displayed (not dropped)
       if (!curation.curation_dropped) {
         result.filteredPostCount++
+        return true
+      }
+      return false
+    }
+
+    // Separate posts into same-day and next-day buckets
+    const sameDayPosts: { post: AppBskyFeedDefs.FeedViewPost; timestamp: number }[] = []
+    const nextDayPosts: { post: AppBskyFeedDefs.FeedViewPost; timestamp: number }[] = []
+
+    for (const post of feed) {
+      // Get post unique ID and skip if already in cache
+      const postUniqueId = getPostUniqueId(post)
+      if (cachedPostIds.has(postUniqueId)) {
+        continue
+      }
+
+      // Get post timestamp (use repost time for reposts)
+      const postTimestamp = getFeedViewPostTimestamp(post).getTime()
+
+      // Categorize by midnight boundary
+      if (postTimestamp < nextDayMidnightMs) {
+        sameDayPosts.push({ post, timestamp: postTimestamp })
+      } else {
+        nextDayPosts.push({ post, timestamp: postTimestamp })
+      }
+    }
+
+    // Phase 1: Process same-day posts first (before next day's midnight)
+    for (const { post, timestamp } of sameDayPosts) {
+      await processPost(post, timestamp)
+    }
+
+    // Phase 2: If no displayable posts in same day, process next-day posts
+    if (result.filteredPostCount === 0 && nextDayPosts.length > 0) {
+      console.log(`[Probe] No same-day posts available, processing ${nextDayPosts.length} next-day posts`)
+      for (const { post, timestamp } of nextDayPosts) {
+        await processPost(post, timestamp)
       }
     }
 

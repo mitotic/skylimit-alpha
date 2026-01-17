@@ -147,6 +147,8 @@ export interface SkylimitSettings {
   pagedUpdatesMaxWaitMinutes?: number // max wait time before showing partial page, default 30
   // Lookback caching settings
   lookbackDays?: number // number of days to cache back from today, default 1
+  // Feed display settings
+  maxDisplayedFeedSize?: number // max posts in displayed feed, default 300
 }
 
 // Extended FeedViewPost with curation metadata
