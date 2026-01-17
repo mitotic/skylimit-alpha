@@ -102,7 +102,7 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
 
   return (
     <div
-      className="px-4 pt-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors opacity-50"
+      className="px-4 pt-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors opacity-60"
       onClick={handleClick}
     >
       {/* Flex container matching PostCard's gap-3 structure */}

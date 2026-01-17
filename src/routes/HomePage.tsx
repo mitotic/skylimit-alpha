@@ -2952,7 +2952,7 @@ export default function HomePage() {
       {/* Floating compose button in bottom right */}
       <button
         onClick={() => setShowCompose(true)}
-        className="fixed bottom-6 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
+        className="fixed bottom-20 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
         aria-label="Compose new post"
       >
         <span className="text-2xl">✏️</span>
