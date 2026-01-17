@@ -21,7 +21,8 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationStatus } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, hasGapFromProbe, isCacheWithinLookback, getNewestCachedPostTimestamp } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary } from '../curation/skylimitFeedCache'
+import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { clearCounters } from '../curation/skylimitCounter'
@@ -172,11 +173,12 @@ export default function HomePage() {
   const [nextPageReady, setNextPageReady] = useState(false) // true when full page of posts available
   const [firstProbeTimestamp, setFirstProbeTimestamp] = useState<number | null>(null) // for max wait timer
   const [partialPageCount, setPartialPageCount] = useState(0) // count when showing partial page
-  // Multi-page and gap tracking state
+  // Multi-page tracking state
   const [multiPageCount, setMultiPageCount] = useState(0) // total filtered posts when 2+ pages available
-  const [hasProbeGap, setHasProbeGap] = useState(false) // true if gap between probe's oldest and cache's newest
   const [idleTimerTriggered, setIdleTimerTriggered] = useState(false) // true when idle time elapsed for partial page
-  const [gapFillInProgress, setGapFillInProgress] = useState(false) // true during background gap fill (disables Load More)
+  // Secondary cache sync state (for paged updates lookback)
+  const [syncInProgress, setSyncInProgress] = useState(false) // true when secondary cache is being merged
+  const [syncProgress, setSyncProgress] = useState(0) // 0-100 sync progress percentage
   // Debug: track expected display count from probe for comparison
   const probeExpectedCountRef = useRef<number>(0)
   // Cooldown: track when we last displayed new posts to prevent button from immediately reappearing
@@ -302,6 +304,14 @@ export default function HomePage() {
         // Otherwise redisplayFeed would restore posts without curation data
         sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
         console.log('[Init] Cleared sessionStorage saved feed state')
+      }
+
+      // Clear any incomplete secondary cache from interrupted lookback
+      try {
+        await clearSecondaryFeedCache()
+        console.log('[Init] Cleared any incomplete secondary cache')
+      } catch (err) {
+        console.warn('[Init] Failed to clear secondary cache:', err)
       }
 
       // Check if summaries cache is empty (initial curation needed)
@@ -1768,12 +1778,6 @@ export default function HomePage() {
           setFirstProbeTimestamp(Date.now())
         }
 
-        // Check for gap between probe and cache
-        const gapExists = probeResult.oldestProbeTimestamp < Number.MAX_SAFE_INTEGER
-          ? await hasGapFromProbe(probeResult.oldestProbeTimestamp)
-          : false
-        setHasProbeGap(gapExists)
-
         // Check if we have a full page or max wait exceeded
         const hasFullPage = probeResult.filteredPostCount >= pageSize
         const hasMultiplePages = probeResult.hasMultiplePages
@@ -1787,15 +1791,12 @@ export default function HomePage() {
           return
         }
 
-        // Update multi-page count (also set when gap exists with full page)
-        if (hasMultiplePages || (gapExists && hasFullPage)) {
+        // Update multi-page count when multiple pages detected
+        if (hasMultiplePages) {
           setMultiPageCount(probeResult.filteredPostCount)
-          console.log(`[Paged Updates] Multi-page/gap detected: ${probeResult.filteredPostCount} posts (${probeResult.pageCount} pages), gap=${gapExists}, hasMultiplePages=${hasMultiplePages}`)
+          console.log(`[Paged Updates] Multi-page detected: ${probeResult.filteredPostCount} posts (${probeResult.pageCount} pages)`)
         } else {
           setMultiPageCount(0)
-          if (gapExists) {
-            console.log(`[Paged Updates] Gap exists but not full page: ${probeResult.filteredPostCount} posts, gap=${gapExists}`)
-          }
         }
 
         if (hasFullPage || (maxWaitExceeded && probeResult.filteredPostCount > 0)) {
@@ -2173,158 +2174,55 @@ export default function HomePage() {
       const maxDisplayedFeedSize = settings?.maxDisplayedFeedSize || DEFAULT_MAX_DISPLAYED_FEED_SIZE
       const timestampToUse = newestDisplayedPostTimestamp || 0
 
-      // Paged updates mode: fetch fresh from server and curate one-by-one
+      // Paged updates mode: use secondary cache flow for contiguous caching
       if (pagedUpdatesEnabled) {
-        console.log('[Paged Updates] Loading next page with fresh data...')
+        console.log('[Paged Updates] Loading next page via secondary cache...')
 
-        // Get filter fraction and calculate PageRaw
-        const [, currentProbs] = await getFilter() || [null, null]
-        const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
-        const pagedSettings = await getPagedUpdatesSettings()
-        const pageRaw = calculatePageRaw(pageLength, currentFilterFrac, pagedSettings.varFactor)
+        setSyncInProgress(true)
+        setSyncProgress(0)
 
-        console.log(`[Paged Updates] Fetching ${pageRaw} posts (filterFrac=${currentFilterFrac.toFixed(2)})`)
-
-        // Fetch fresh posts from server (capture cursor for potential limited lookback)
-        const { feed: serverFeed, cursor: fetchCursor } = await getHomeFeed(agent, { limit: pageRaw })
-
-        if (serverFeed.length === 0) {
-          setNewPostsCount(0)
-          setShowNewPostsButton(false)
-          setNextPageReady(false)
-          addToast('No new posts available', 'info')
-          return
-        }
-
-        // Sort posts by timestamp (oldest first) for chronological processing
-        const sortedPosts = [...serverFeed].sort((a, b) => {
-          const timeA = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-          const timeB = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-          return timeA - timeB // Oldest first
-        })
-
-        // Process posts ONE AT A TIME until PageSize displayed posts
-        const postsToDisplay: CurationFeedViewPost[] = []
-        const allCuratedPosts: CurationFeedViewPost[] = []
-        let newestCuratedTimestamp = timestampToUse
-        let displayedCount = 0
-
-        // For paged updates (like initial fetch), use current time as initialLastPostTime
-        let lastPostTime = new Date()
-
-        console.log(`[Paged Updates] Processing ${sortedPosts.length} posts one-by-one...`)
-
-        for (const post of sortedPosts) {
-          // Skip posts not newer than currently displayed
-          // Use createFeedCacheEntries to get proper timestamp
-          const { entries: [entry], finalLastPostTime } = createFeedCacheEntries([post], lastPostTime)
-          lastPostTime = finalLastPostTime  // Chain for next post
-          const postTimestamp = entry.postTimestamp
-
-          if (postTimestamp <= timestampToUse) {
-            continue
-          }
-
-          // Stop if we've reached PageSize displayed posts
-          if (displayedCount >= pageLength) {
-            console.log(`[Paged Updates] Reached PageSize (${pageLength}), discarding remaining posts`)
-            break
-          }
-
-          // Save to feed cache and curate (ensures both happen together for cache integrity)
-          const { curatedFeed: curatedPosts } = await savePostsWithCuration([entry], undefined, agent, session.handle, session.did)
-          const curatedPost = curatedPosts[0] as CurationFeedViewPost
-
-          allCuratedPosts.push(curatedPost)
-
-          // Track newest curated timestamp
-          if (postTimestamp > newestCuratedTimestamp) {
-            newestCuratedTimestamp = postTimestamp
-          }
-
-          // Check if post is displayed (not dropped)
-          const isDisplayed = !curatedPost.curation?.curation_dropped
-          if (isDisplayed) {
-            postsToDisplay.push(curatedPost)
-            displayedCount++
-          }
-        }
-
-        console.log(`[Paged Updates] Curated ${allCuratedPosts.length} posts, ${postsToDisplay.length} to display`)
-
-        if (postsToDisplay.length === 0) {
-          setNewPostsCount(0)
-          setShowNewPostsButton(false)
-          setNextPageReady(false)
-          addToast('No new posts to display (filtered by settings)', 'info')
-          return
-        }
-
-        // Sort displayed posts newest first for feed display
-        postsToDisplay.sort((a, b) => {
-          const timeA = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-          const timeB = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-          return timeB - timeA
-        })
-
-        // If there's a gap, do full reload instead of prepending
-        // Save gap state before it's reset later
-        const hadProbeGap = hasProbeGap
-        let oldestDisplayedTimestamp: number | null = null
-
-        if (hasProbeGap) {
-          console.log(`[Paged Updates] Gap detected, doing full reload instead of prepend`)
-          setFeed(postsToDisplay)
-          setNewestDisplayedPostTimestamp(newestCuratedTimestamp)
-          oldestDisplayedTimestamp = getFeedViewPostTimestamp(postsToDisplay[postsToDisplay.length - 1], feedReceivedTime).getTime()
-          setOldestDisplayedPostTimestamp(oldestDisplayedTimestamp)
-
-          // Clear stale previousPageFeed immediately - prefetch will repopulate after gap is filled
-          setPreviousPageFeed([])
-        } else {
-          // Prepend new posts to feed
-          const existingUris = new Set(feed.map(p => getPostUniqueId(p)))
-          const newPostsToAdd = postsToDisplay.filter(p => !existingUris.has(getPostUniqueId(p)))
-
-          let combinedFeed = [...newPostsToAdd, ...feed]
-          // Trim feed if over maxDisplayedFeedSize (saves adjacent page as previousPageFeed)
-          combinedFeed = trimFeedIfNeeded(combinedFeed, pageLength, feedReceivedTime, maxDisplayedFeedSize)
-
-          setFeed(combinedFeed)
-          setNewestDisplayedPostTimestamp(newestCuratedTimestamp)
-        }
-
-        setNewPostsCount(0)
-        setShowNewPostsButton(false)
-        setNextPageReady(false)
-        setFirstProbeTimestamp(null) // Reset probe timer for next page
-        setPartialPageCount(0)
-        setMultiPageCount(0) // Reset multi-page count
-        setHasProbeGap(false) // Reset gap flag
-        lastDisplayTimeRef.current = Date.now() // Start cooldown
-
-        // Debug: compare probe expected count vs actual display count
-        console.log(`[Paged Updates] COUNT COMPARISON: Probe expected ${probeExpectedCountRef.current} posts, actually displayed ${postsToDisplay.length} posts (diff: ${probeExpectedCountRef.current - postsToDisplay.length})`)
-        console.log(`[Paged Updates] Successfully loaded ${postsToDisplay.length} new posts (gap=${hasProbeGap})`)
-
-        // Perform limited lookback to fill gaps back to local midnight for consistent counter numbering
-        if (allCuratedPosts.length > 0 && fetchCursor) {
-          const oldestCuratedTimestamp = Math.min(
-            ...allCuratedPosts.map(p => getFeedViewPostTimestamp(p, feedReceivedTime).getTime())
+        try {
+          // Use secondary cache flow - fetches, caches to secondary, merges to primary
+          const result = await performLookbackFetchToSecondary(
+            agent,
+            session.handle,
+            session.did,
+            pageLength,
+            (progress) => setSyncProgress(Math.round(progress * 0.8)),  // 0-80% for fetch
+            (mergeProgress) => setSyncProgress(80 + Math.round(mergeProgress * 0.2))  // 80-100% for merge
           )
-          const localMidnight = getLocalMidnight().getTime()
-          if (oldestCuratedTimestamp > localMidnight) {
-            console.log(`[Paged Updates] Starting limited lookback from ${new Date(oldestCuratedTimestamp).toLocaleTimeString()} to midnight`)
-            await limitedLookbackToMidnight(oldestCuratedTimestamp, fetchCursor, agent, session.handle, session.did, pageLength)
-          }
+
+          console.log(`[Paged Updates] Secondary cache flow completed: ${result.postsMerged} posts merged`)
+
+          // Clear UI state
+          setNewPostsCount(0)
+          setShowNewPostsButton(false)
+          setNextPageReady(false)
+          setFirstProbeTimestamp(null)
+          setPartialPageCount(0)
+          setMultiPageCount(0)
+          lastDisplayTimeRef.current = Date.now()
+
+          // Clear session storage to force fresh load from cache (not restore old feed)
+          sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+
+          // Load feed fresh from cache (redisplayFeed will fall through to loadFeed)
+          await redisplayFeed()
+
+        } finally {
+          setSyncInProgress(false)
+          setSyncProgress(0)
         }
 
-        // After gap is filled, prefetch next page for Load More
-        if (hadProbeGap && oldestDisplayedTimestamp !== null) {
-          setTimeout(async () => {
-            await prefetchNextPage(oldestDisplayedTimestamp)
-          }, 100)
-        }
+        // Scroll to top after loading new posts
+        isProgrammaticScrollRef.current = true
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        setTimeout(() => {
+          isProgrammaticScrollRef.current = false
+          lastScrollTopRef.current = window.scrollY
+        }, 1000)
+
+        return  // Exit early - don't fall through to standard mode
       } else {
         // Standard mode: load from cache
         console.log('[New Posts] Loading new posts from cache...')
@@ -2388,15 +2286,15 @@ export default function HomePage() {
       return
     }
 
-    // Treat as multi-page if 2+ pages detected OR if there's a gap (probe couldn't count all posts)
-    const isMultiPage = multiPageCount >= 50 || hasProbeGap
+    // Treat as multi-page if 2+ pages detected
+    const isMultiPage = multiPageCount >= 50
 
     if (isMultiPage) {
       // MULTI-PAGE FLOW: Full re-display
-      console.log(`[All New Posts] Multi-page flow: ${multiPageCount} posts, hasGap=${hasProbeGap}`)
+      console.log(`[All New Posts] Multi-page flow: ${multiPageCount} posts`)
 
       setIsLoadingMore(true)
-      setGapFillInProgress(true)
+      setSyncInProgress(true)
 
       try {
         const feedReceivedTime = new Date()
@@ -2479,7 +2377,6 @@ export default function HomePage() {
         setPartialPageCount(0)
         setIdleTimerTriggered(false)
         setMultiPageCount(0)
-        setHasProbeGap(false)
         lastDisplayTimeRef.current = Date.now() // Start cooldown
 
         // Debug: compare probe expected count vs actual display count
@@ -2512,7 +2409,7 @@ export default function HomePage() {
         addToast('Failed to load new posts', 'error')
       } finally {
         setIsLoadingMore(false)
-        setGapFillInProgress(false)
+        setSyncInProgress(false)
       }
     } else {
       // PARTIAL PAGE FLOW: Use existing handleLoadNewPosts logic
@@ -2520,7 +2417,7 @@ export default function HomePage() {
       await handleLoadNewPosts()
       setIdleTimerTriggered(false)
     }
-  }, [agent, session, isLoadingMore, multiPageCount, hasProbeGap, partialPageCount, handleLoadNewPosts])
+  }, [agent, session, isLoadingMore, multiPageCount, partialPageCount, handleLoadNewPosts])
 
   // Scroll to top handler
   const handleScrollToTop = useCallback(() => {
@@ -2905,19 +2802,19 @@ export default function HomePage() {
                     )}
                   </button>
 
-                  {/* "All n new posts" button - shown when multi-page, gap with full page, or partial (after idle timer) */}
-                  {(multiPageCount >= 50 || (hasProbeGap && multiPageCount > 0) || (idleTimerTriggered && partialPageCount > 0)) && (
+                  {/* "All n new posts" button - shown when multi-page or partial (after idle timer) */}
+                  {(multiPageCount >= 50 || (idleTimerTriggered && partialPageCount > 0)) && (
                     <button
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
                         const allCount = multiPageCount > 0 ? multiPageCount : partialPageCount
-                        console.log('[All New Posts] Button clicked', { allCount, multiPageCount, partialPageCount, hasProbeGap, idleTimerTriggered, newPostsCount })
+                        console.log('[All New Posts] Button clicked', { allCount, multiPageCount, partialPageCount, idleTimerTriggered, newPostsCount })
                         handleLoadAllNewPosts()
                       }}
                       disabled={isLoadingMore}
                       className="flex-1 btn btn-secondary flex items-center justify-center gap-2 disabled:opacity-50"
-                      aria-label={`Load all ${multiPageCount > 0 ? multiPageCount : partialPageCount}${hasProbeGap ? '+' : ''} new posts`}
+                      aria-label={`Load all ${multiPageCount > 0 ? multiPageCount : partialPageCount} new posts`}
                     >
                       {isLoadingMore ? (
                         <>
@@ -2927,7 +2824,7 @@ export default function HomePage() {
                       ) : (
                         <>
                           <span>📬</span>
-                          All {multiPageCount > 0 ? multiPageCount : partialPageCount}{hasProbeGap ? '+' : ''} new posts
+                          All {multiPageCount > 0 ? multiPageCount : partialPageCount} new posts
                         </>
                       )}
                     </button>
@@ -3020,13 +2917,13 @@ export default function HomePage() {
               // State 2: More posts available - show Load More button
               <button
                 onClick={handleLoadMore}
-                disabled={gapFillInProgress}
+                disabled={syncInProgress}
                 className="btn btn-secondary"
               >
-                {gapFillInProgress ? (
+                {syncInProgress ? (
                   <span className="flex items-center gap-2">
                     <Spinner size="sm" />
-                    Filling gap...
+                    Synchronizing... {syncProgress}%
                   </span>
                 ) : (
                   'Load More'

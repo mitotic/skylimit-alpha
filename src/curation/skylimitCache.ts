@@ -7,7 +7,7 @@ import { getIntervalString } from './skylimitGeneral'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 
 const DB_NAME = 'skylimit_db'
-const DB_VERSION = 6 // Increment version to change parent posts cache keyPath to rootUri
+const DB_VERSION = 7 // Increment version to add secondary feed cache store
 
 // Store names
 const STORE_SUMMARIES = 'summaries'
@@ -16,6 +16,7 @@ const STORE_FILTER = 'filter'
 const STORE_EDITIONS = 'editions'
 const STORE_SETTINGS = 'settings'
 export const STORE_PARENT_POSTS = 'parent_posts'
+export const STORE_FEED_CACHE_SECONDARY = 'feed_cache_secondary'
 
 let db: IDBDatabase | null = null
 
@@ -95,6 +96,14 @@ export async function initDB(): Promise<IDBDatabase> {
       const rootPostsStore = database.createObjectStore(STORE_PARENT_POSTS, { keyPath: 'rootUri' })
       rootPostsStore.createIndex('cachedAt', 'cachedAt', { unique: false })
       rootPostsStore.createIndex('lastAccessed', 'lastAccessed', { unique: false })
+
+      // Secondary feed cache store: for temporary lookback posts before merge
+      // Same structure as primary feed_cache but used for gap-filling during lookback
+      if (!database.objectStoreNames.contains(STORE_FEED_CACHE_SECONDARY)) {
+        const secondaryFeedCacheStore = database.createObjectStore(STORE_FEED_CACHE_SECONDARY, { keyPath: 'uri' })
+        secondaryFeedCacheStore.createIndex('timestamp', 'timestamp', { unique: false })
+        secondaryFeedCacheStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
+      }
     }
   })
 }
@@ -766,4 +775,368 @@ export async function clearSkylimitSettings(): Promise<void> {
   console.log('Skylimit settings cleared - defaults will be used')
 }
 
+// ============================================================================
+// Secondary Feed Cache Operations
+// Used for temporary storage during lookback gap-filling
+// ============================================================================
+
+/**
+ * Secondary cache entry type (same as primary FeedCacheEntry)
+ */
+export interface SecondaryCacheEntry {
+  uri: string
+  post: any  // FeedViewPost
+  timestamp: number              // feedReceivedTime
+  postTimestamp: number          // actual post creation/repost time
+  interval: string
+  cachedAt: number
+  reposterDid?: string
+}
+
+/**
+ * Secondary cache statistics
+ */
+export interface SecondaryCacheStats {
+  count: number
+  oldestTimestamp: number | null
+  newestTimestamp: number | null
+}
+
+/**
+ * Clear all entries from the secondary feed cache
+ */
+export async function clearSecondaryFeedCache(): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readwrite')
+    const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+
+    await new Promise<void>((resolve, reject) => {
+      const request = store.clear()
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+
+    console.log('[Secondary Cache] Cleared')
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to clear:', error)
+    throw error
+  }
+}
+
+/**
+ * Save a single post to the secondary feed cache
+ */
+export async function saveToSecondaryCache(entry: SecondaryCacheEntry): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readwrite')
+    const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+
+    await new Promise<void>((resolve, reject) => {
+      const request = store.put(entry)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to save entry:', error)
+    throw error
+  }
+}
+
+/**
+ * Save multiple posts to the secondary feed cache
+ */
+export async function saveMultipleToSecondaryCache(entries: SecondaryCacheEntry[]): Promise<number> {
+  if (entries.length === 0) return 0
+
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readwrite')
+    const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+
+    let savedCount = 0
+
+    // Queue all put requests
+    await Promise.all(entries.map(entry => {
+      return new Promise<void>((resolve, reject) => {
+        const request = store.put(entry)
+        request.onsuccess = () => {
+          savedCount++
+          resolve()
+        }
+        request.onerror = () => reject(request.error)
+      })
+    }))
+
+    // Wait for transaction to commit before returning
+    // This ensures data is persisted and visible to subsequent reads
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+
+    return savedCount
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to save multiple entries:', error)
+    throw error
+  }
+}
+
+/**
+ * Get secondary cache statistics (count, oldest, newest timestamps)
+ */
+export async function getSecondaryCacheStats(): Promise<SecondaryCacheStats> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+    const index = store.index('postTimestamp')
+
+    // Get count
+    const count = await new Promise<number>((resolve, reject) => {
+      const request = store.count()
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    if (count === 0) {
+      return { count: 0, oldestTimestamp: null, newestTimestamp: null }
+    }
+
+    // Get oldest (ascending order, first entry)
+    const oldestTimestamp = await new Promise<number | null>((resolve, reject) => {
+      const request = index.openCursor(null, 'next')
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (cursor) {
+          resolve((cursor.value as SecondaryCacheEntry).postTimestamp)
+        } else {
+          resolve(null)
+        }
+      }
+      request.onerror = () => reject(request.error)
+    })
+
+    // Get newest (descending order, first entry)
+    const newestTimestamp = await new Promise<number | null>((resolve, reject) => {
+      const request = index.openCursor(null, 'prev')
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (cursor) {
+          resolve((cursor.value as SecondaryCacheEntry).postTimestamp)
+        } else {
+          resolve(null)
+        }
+      }
+      request.onerror = () => reject(request.error)
+    })
+
+    return { count, oldestTimestamp, newestTimestamp }
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to get stats:', error)
+    return { count: 0, oldestTimestamp: null, newestTimestamp: null }
+  }
+}
+
+/**
+ * Check if a post URI exists in the secondary cache
+ */
+export async function isInSecondaryCache(uri: string): Promise<boolean> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+
+    return new Promise((resolve, reject) => {
+      const request = store.get(uri)
+      request.onsuccess = () => resolve(request.result !== undefined)
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to check existence:', error)
+    return false
+  }
+}
+
+/**
+ * Get posts from secondary cache before a given timestamp (for Load More)
+ * Returns posts sorted by postTimestamp descending (newest first)
+ */
+export async function getSecondaryPostsBefore(
+  beforeTimestamp: number,
+  limit: number
+): Promise<SecondaryCacheEntry[]> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+    const index = store.index('postTimestamp')
+
+    const entries: SecondaryCacheEntry[] = []
+    const range = IDBKeyRange.upperBound(beforeTimestamp, true) // exclusive
+
+    return new Promise((resolve, reject) => {
+      const request = index.openCursor(range, 'prev') // descending order
+
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (cursor && entries.length < limit) {
+          entries.push(cursor.value as SecondaryCacheEntry)
+          cursor.continue()
+        } else {
+          resolve(entries)
+        }
+      }
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to get posts before timestamp:', error)
+    return []
+  }
+}
+
+/**
+ * Get all posts from secondary cache sorted by postTimestamp ascending (oldest first)
+ * Used during merge to copy oldest posts first for contiguity
+ */
+export async function getAllSecondaryPostsOldestFirst(): Promise<SecondaryCacheEntry[]> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+    const index = store.index('postTimestamp')
+
+    return new Promise((resolve, reject) => {
+      const request = index.getAll()
+      request.onsuccess = () => {
+        // Sort by postTimestamp ascending (oldest first)
+        const entries = (request.result as SecondaryCacheEntry[]).sort(
+          (a, b) => a.postTimestamp - b.postTimestamp
+        )
+        resolve(entries)
+      }
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to get all posts:', error)
+    return []
+  }
+}
+
+/**
+ * Check if the oldest post in secondary cache overlaps with primary cache
+ * Returns the overlap URI if found
+ */
+export async function checkSecondaryPrimaryOverlap(): Promise<{ hasOverlap: boolean; overlapUri?: string }> {
+  try {
+    const database = await getDB()
+
+    // Get all URIs from secondary cache
+    const secondaryTransaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readonly')
+    const secondaryStore = secondaryTransaction.objectStore(STORE_FEED_CACHE_SECONDARY)
+
+    const secondaryUris = await new Promise<string[]>((resolve, reject) => {
+      const request = secondaryStore.getAllKeys()
+      request.onsuccess = () => resolve(request.result as string[])
+      request.onerror = () => reject(request.error)
+    })
+
+    if (secondaryUris.length === 0) {
+      return { hasOverlap: false }
+    }
+
+    // Check each secondary URI against primary cache
+    const primaryTransaction = database.transaction(['feed_cache'], 'readonly')
+    const primaryStore = primaryTransaction.objectStore('feed_cache')
+
+    for (const uri of secondaryUris) {
+      const exists = await new Promise<boolean>((resolve, reject) => {
+        const request = primaryStore.get(uri)
+        request.onsuccess = () => resolve(request.result !== undefined)
+        request.onerror = () => reject(request.error)
+      })
+
+      if (exists) {
+        console.log(`[Secondary Cache] Found overlap at URI: ${uri}`)
+        return { hasOverlap: true, overlapUri: uri }
+      }
+    }
+
+    return { hasOverlap: false }
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to check overlap:', error)
+    return { hasOverlap: false }
+  }
+}
+
+/**
+ * Get the newest post timestamp from the primary feed cache
+ * Used as failsafe boundary during secondary cache population
+ */
+export async function getPrimaryNewestTimestamp(): Promise<number | null> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_cache'], 'readonly')
+    const store = transaction.objectStore('feed_cache')
+    const index = store.index('postTimestamp')
+
+    return new Promise((resolve, reject) => {
+      const request = index.openCursor(null, 'prev') // descending, first = newest
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (cursor) {
+          resolve((cursor.value as SecondaryCacheEntry).postTimestamp)
+        } else {
+          resolve(null)
+        }
+      }
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to get primary newest timestamp:', error)
+    return null
+  }
+}
+
+/**
+ * Check if a post URI exists in the primary feed cache
+ */
+export async function isInPrimaryCache(uri: string): Promise<boolean> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_cache'], 'readonly')
+    const store = transaction.objectStore('feed_cache')
+
+    return new Promise((resolve, reject) => {
+      const request = store.get(uri)
+      request.onsuccess = () => resolve(request.result !== undefined)
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to check primary cache:', error)
+    return false
+  }
+}
+
+/**
+ * Copy a single entry from secondary to primary cache
+ * Used during merge (oldest first for contiguity)
+ */
+export async function copySecondaryEntryToPrimary(entry: SecondaryCacheEntry): Promise<boolean> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_cache'], 'readwrite')
+    const store = transaction.objectStore('feed_cache')
+
+    return new Promise((resolve, reject) => {
+      const request = store.put(entry)
+      request.onsuccess = () => resolve(true)
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to copy entry to primary:', error)
+    return false
+  }
+}
 

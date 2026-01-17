@@ -4,7 +4,20 @@
  */
 
 import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
-import { initDB, getSummaryByUri, clearSummaries } from './skylimitCache'
+import {
+  initDB,
+  getSummaryByUri,
+  clearSummaries,
+  clearSecondaryFeedCache,
+  getAllSecondaryPostsOldestFirst,
+  getSecondaryCacheStats,
+  checkSecondaryPrimaryOverlap,
+  getPrimaryNewestTimestamp,
+  isInPrimaryCache,
+  copySecondaryEntryToPrimary,
+  saveMultipleToSecondaryCache,
+  SecondaryCacheEntry
+} from './skylimitCache'
 import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId } from './skylimitGeneral'
 import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost } from './types'
 import { curatePosts, insertEditionPosts } from './skylimitTimeline'
@@ -343,6 +356,10 @@ interface FeedCacheMetadata {
   // Lookback caching tracking
   lookbackCompleted?: boolean          // true if lookback fetch completed
   lookbackCompletedAt?: number         // timestamp when lookback finished
+  // Secondary cache tracking (for gap-filling lookback)
+  secondaryCacheActive?: boolean       // true if secondary cache is being populated
+  secondaryCacheNewestTimestamp?: number  // newest post in secondary cache
+  secondaryCacheOldestTimestamp?: number  // oldest post in secondary cache
 }
 
 /**
@@ -741,6 +758,214 @@ export async function performLookbackFetch(
     return true
   } catch (error) {
     console.error('[Lookback] Failed during background fetch:', error)
+    return false
+  }
+}
+
+/**
+ * Perform a lookback fetch to SECONDARY cache for gap-filling
+ * Used when returning from idle with a fresh primary cache
+ * Writes to secondary cache until overlap with primary is found, then merges
+ *
+ * @param agent - BskyAgent instance
+ * @param myUsername - Current user's username
+ * @param myDid - Current user's DID
+ * @param pageLength - Number of posts per batch
+ * @param onProgress - Callback for progress updates (0-100)
+ * @param onMergeProgress - Callback for merge progress updates (0-100)
+ * @returns Object with completion status and whether merge happened
+ */
+export async function performLookbackFetchToSecondary(
+  agent: BskyAgent,
+  myUsername: string,
+  myDid: string,
+  pageLength: number = DEFAULT_PAGE_LENGTH,
+  onProgress?: (percent: number) => void,
+  onMergeProgress?: (percent: number) => void
+): Promise<{ completed: boolean; merged: boolean; postsMerged: number }> {
+  try {
+    console.log('[Secondary Lookback] Starting gap-filling lookback to secondary cache')
+
+    // Clear any existing secondary cache from interrupted lookback
+    await clearSecondaryFeedCache()
+
+    // Get primary cache newest timestamp (our target to reach)
+    const primaryNewest = await getPrimaryNewestTimestamp()
+    if (!primaryNewest) {
+      console.warn('[Secondary Lookback] No primary cache found, should use regular lookback instead')
+      return { completed: false, merged: false, postsMerged: 0 }
+    }
+    console.log(`[Secondary Lookback] Primary newest: ${new Date(primaryNewest).toISOString()}`)
+
+    // Update metadata to mark secondary cache as active
+    await updateSecondaryCacheMetadata(true, null, null)
+
+    let iterations = 0
+    const maxIterations = 100
+    let cursor: string | undefined = undefined
+    let lastPostTime = new Date()
+    let secondaryNewest: number | null = null
+    let secondaryOldest: number | null = null
+
+    while (iterations < maxIterations) {
+      iterations++
+
+      // Fetch batch (undefined cursor = fetch from newest)
+      const batchSize = 2 * pageLength
+      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
+        cursor,
+        limit: batchSize,
+        onRateLimit: (info) => {
+          console.warn('[Secondary Lookback] Rate limit encountered:', info)
+        }
+      })
+
+      if (feed.length === 0) {
+        console.log('[Secondary Lookback] No more posts from server')
+        break
+      }
+
+      // Create feed cache entries
+      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime)
+      lastPostTime = finalLastPostTime
+
+      // Curate posts (respects existing summaries)
+      // curatePosts takes FeedCacheEntryWithPost[] and saves summaries
+      await curatePosts(entries, agent, myUsername, myDid)
+
+      // Save to secondary cache
+      const secondaryEntries: SecondaryCacheEntry[] = entries.map(entry => ({
+        uri: entry.uri,
+        post: entry.post,
+        timestamp: entry.timestamp,
+        postTimestamp: entry.postTimestamp,
+        interval: entry.interval,
+        cachedAt: entry.cachedAt,
+        reposterDid: entry.reposterDid,
+      }))
+
+      await saveMultipleToSecondaryCache(secondaryEntries)
+
+      // Track secondary cache boundaries
+      const batchNewest = entries[0].postTimestamp
+      const batchOldest = entries[entries.length - 1].postTimestamp
+      if (secondaryNewest === null || batchNewest > secondaryNewest) {
+        secondaryNewest = batchNewest
+      }
+      if (secondaryOldest === null || batchOldest < secondaryOldest) {
+        secondaryOldest = batchOldest
+      }
+
+      // Update metadata
+      await updateSecondaryCacheMetadata(true, secondaryNewest, secondaryOldest)
+
+      console.log(`[Secondary Lookback] Saved ${entries.length} posts to secondary (iteration ${iterations})`)
+
+      // Check for overlap with primary cache
+      const { hasOverlap, overlapUri } = await checkSecondaryPrimaryOverlap()
+      if (hasOverlap) {
+        console.log(`[Secondary Lookback] Found overlap with primary at: ${overlapUri}`)
+        break
+      }
+
+      // Failsafe: stop if we've gone past primary's newest
+      if (secondaryOldest && secondaryOldest < primaryNewest) {
+        console.log('[Secondary Lookback] Failsafe: reached beyond primary newest timestamp')
+        break
+      }
+
+      // Report progress
+      if (onProgress && secondaryOldest && secondaryNewest) {
+        // Progress based on how close oldest is to primary newest
+        const totalGap = secondaryNewest - primaryNewest
+        const coveredGap = secondaryNewest - secondaryOldest
+        const percent = totalGap > 0 ? Math.min(99, Math.round((coveredGap / totalGap) * 100)) : 50
+        onProgress(percent)
+      }
+
+      cursor = newCursor
+      if (!cursor) {
+        console.log('[Secondary Lookback] Server cursor exhausted')
+        break
+      }
+    }
+
+    if (iterations >= maxIterations) {
+      console.warn('[Secondary Lookback] Reached max iterations limit')
+    }
+
+    // Merge secondary to primary
+    console.log('[Secondary Lookback] Starting merge to primary cache')
+    const mergeResult = await mergeSecondaryToPrimary(onMergeProgress)
+
+    // Clear secondary cache metadata
+    await updateSecondaryCacheMetadata(false, null, null)
+
+    console.log(`[Secondary Lookback] Completed. Merged ${mergeResult.postsMerged} posts`)
+    return {
+      completed: true,
+      merged: mergeResult.success,
+      postsMerged: mergeResult.postsMerged
+    }
+  } catch (error) {
+    console.error('[Secondary Lookback] Failed:', error)
+    // Clear secondary metadata on error
+    await updateSecondaryCacheMetadata(false, null, null)
+    return { completed: false, merged: false, postsMerged: 0 }
+  }
+}
+
+/**
+ * Update secondary cache metadata
+ */
+async function updateSecondaryCacheMetadata(
+  active: boolean,
+  newestTimestamp: number | null,
+  oldestTimestamp: number | null
+): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_metadata'], 'readwrite')
+    const store = transaction.objectStore('feed_metadata')
+
+    const existingMetadata = await new Promise<FeedCacheMetadata | null>((resolve, reject) => {
+      const request = store.get('last_fetch')
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => reject(request.error)
+    })
+
+    const updatedMetadata: FeedCacheMetadata = {
+      id: 'last_fetch',
+      lastFetchTime: existingMetadata?.lastFetchTime || Date.now(),
+      newestCachedPostTimestamp: existingMetadata?.newestCachedPostTimestamp || 0,
+      oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || 0,
+      lastCursor: existingMetadata?.lastCursor,
+      lookbackCompleted: existingMetadata?.lookbackCompleted,
+      lookbackCompletedAt: existingMetadata?.lookbackCompletedAt,
+      secondaryCacheActive: active,
+      secondaryCacheNewestTimestamp: newestTimestamp || undefined,
+      secondaryCacheOldestTimestamp: oldestTimestamp || undefined,
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const request = store.put(updatedMetadata)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('[Secondary Metadata] Failed to update:', error)
+  }
+}
+
+/**
+ * Check if secondary cache is active (lookback in progress)
+ */
+export async function isSecondaryCacheActive(): Promise<boolean> {
+  try {
+    const metadata = await getLastFetchMetadata()
+    return metadata?.secondaryCacheActive === true
+  } catch (error) {
+    console.error('[Secondary Cache] Failed to check active status:', error)
     return false
   }
 }
@@ -1872,23 +2097,6 @@ export async function getOldestCachedPostTimestamp(): Promise<number | null> {
 }
 
 /**
- * Check if there's a temporal gap between a given timestamp and the newest cached post.
- * Returns true if probe's oldest timestamp is newer than cache's newest timestamp,
- * indicating there are posts between the probe and cache that haven't been fetched.
- *
- * @param probeOldestTimestamp - Oldest timestamp from the probe
- * @returns true if there's a gap (probe's oldest is newer than cache's newest)
- */
-export async function hasGapFromProbe(probeOldestTimestamp: number): Promise<boolean> {
-  const newestCached = await getNewestCachedPostTimestamp()
-  if (newestCached === null) {
-    // No cache = definitely a gap
-    return true
-  }
-  return probeOldestTimestamp > newestCached
-}
-
-/**
  * Clear feed cache (useful when user actions require fresh data)
  */
 export async function clearFeedCache(): Promise<void> {
@@ -2079,6 +2287,201 @@ export async function getFeedCacheStats(): Promise<FeedCacheStats> {
       oldestTimestamp: null,
       newestTimestamp: null,
     }
+  }
+}
+
+// ============================================================================
+// Secondary Cache Merge and Stale Detection
+// ============================================================================
+
+/**
+ * Check if the primary cache is stale (newest post > 2 calendar days old)
+ * If stale, lookback should discard primary and do fresh lookback
+ */
+export async function isPrimaryCacheStale(): Promise<boolean> {
+  try {
+    const metadata = await getLastFetchMetadata()
+    if (!metadata?.newestCachedPostTimestamp) {
+      // No metadata means cache is empty/uninitialized - not stale, just empty
+      return false
+    }
+
+    const newest = new Date(metadata.newestCachedPostTimestamp)
+    const now = new Date()
+
+    // Calculate start of day-before-yesterday (2 calendar days ago at midnight)
+    const twoDaysAgo = new Date(now)
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
+    twoDaysAgo.setHours(0, 0, 0, 0)
+
+    const isStale = newest < twoDaysAgo
+    if (isStale) {
+      console.log(`[Stale Check] Primary cache is stale. Newest post: ${newest.toISOString()}, threshold: ${twoDaysAgo.toISOString()}`)
+    }
+    return isStale
+  } catch (error) {
+    console.error('[Stale Check] Failed to check primary cache staleness:', error)
+    return false
+  }
+}
+
+/**
+ * Merge secondary cache into primary cache
+ * Copies posts oldest-first to preserve contiguity
+ *
+ * @param onProgress - Callback for progress updates (0-100)
+ * @returns Result with success status and count of posts merged
+ */
+export async function mergeSecondaryToPrimary(
+  onProgress?: (percent: number) => void
+): Promise<{ success: boolean; postsMerged: number }> {
+  try {
+    console.log('[Merge] Starting secondary to primary cache merge')
+
+    // Get all secondary posts sorted oldest first
+    const secondaryPosts = await getAllSecondaryPostsOldestFirst()
+    if (secondaryPosts.length === 0) {
+      console.log('[Merge] No posts in secondary cache to merge')
+      await clearSecondaryFeedCache()
+      return { success: true, postsMerged: 0 }
+    }
+
+    console.log(`[Merge] Found ${secondaryPosts.length} posts to merge`)
+
+    let mergedCount = 0
+    let skippedCount = 0
+
+    // Copy posts oldest first (preserves contiguity after each copy)
+    for (let i = 0; i < secondaryPosts.length; i++) {
+      const entry = secondaryPosts[i]
+
+      // Skip if already in primary (by URI)
+      const alreadyExists = await isInPrimaryCache(entry.uri)
+      if (alreadyExists) {
+        skippedCount++
+        continue
+      }
+
+      // Copy to primary
+      const success = await copySecondaryEntryToPrimary(entry)
+      if (success) {
+        mergedCount++
+      }
+
+      // Report progress
+      if (onProgress) {
+        const percent = Math.round(((i + 1) / secondaryPosts.length) * 100)
+        onProgress(percent)
+      }
+    }
+
+    // Clear secondary cache after successful merge
+    await clearSecondaryFeedCache()
+
+    // Update primary cache metadata with new boundaries
+    await updateFeedCacheNewestPostTimestamp()
+
+    console.log(`[Merge] Complete. Merged: ${mergedCount}, Skipped: ${skippedCount}`)
+    return { success: true, postsMerged: mergedCount }
+  } catch (error) {
+    console.error('[Merge] Failed to merge secondary to primary:', error)
+    return { success: false, postsMerged: 0 }
+  }
+}
+
+/**
+ * Update the feed cache metadata with the newest post timestamp
+ * Called after merge to ensure metadata reflects new cache state
+ */
+async function updateFeedCacheNewestPostTimestamp(): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE, 'feed_metadata'], 'readwrite')
+    const feedStore = transaction.objectStore(STORE_FEED_CACHE)
+    const metadataStore = transaction.objectStore('feed_metadata')
+    const index = feedStore.index('postTimestamp')
+
+    // Get newest post timestamp
+    const newestTimestamp = await new Promise<number | null>((resolve, reject) => {
+      const request = index.openCursor(null, 'prev')
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (cursor) {
+          resolve((cursor.value as FeedCacheEntry).postTimestamp)
+        } else {
+          resolve(null)
+        }
+      }
+      request.onerror = () => reject(request.error)
+    })
+
+    if (newestTimestamp) {
+      // Get existing metadata
+      const existingMetadata = await new Promise<FeedCacheMetadata | null>((resolve, reject) => {
+        const request = metadataStore.get('last_fetch')
+        request.onsuccess = () => resolve(request.result || null)
+        request.onerror = () => reject(request.error)
+      })
+
+      // Update metadata with new newest timestamp
+      const updatedMetadata: FeedCacheMetadata = {
+        id: 'last_fetch',
+        lastFetchTime: Date.now(),
+        newestCachedPostTimestamp: newestTimestamp,
+        oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || newestTimestamp,
+        lastCursor: existingMetadata?.lastCursor,
+        lookbackCompleted: existingMetadata?.lookbackCompleted,
+        lookbackCompletedAt: existingMetadata?.lookbackCompletedAt,
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const request = metadataStore.put(updatedMetadata)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
+
+      console.log(`[Merge] Updated metadata newestCachedPostTimestamp: ${new Date(newestTimestamp).toISOString()}`)
+    }
+  } catch (error) {
+    console.error('[Merge] Failed to update feed cache metadata:', error)
+  }
+}
+
+/**
+ * Get sync progress for secondary cache merge
+ * Returns percentage based on secondary cache oldest vs primary cache newest
+ */
+export async function getSecondaryMergeProgress(): Promise<number> {
+  try {
+    const secondaryStats = await getSecondaryCacheStats()
+    if (secondaryStats.count === 0 || !secondaryStats.oldestTimestamp || !secondaryStats.newestTimestamp) {
+      return 100 // No secondary cache = complete
+    }
+
+    const primaryNewest = await getPrimaryNewestTimestamp()
+    if (!primaryNewest) {
+      return 0 // No primary cache = starting fresh
+    }
+
+    // Calculate progress: how close is secondary's oldest to primary's newest?
+    // When they meet (overlap), progress is 100%
+    const secondaryRange = secondaryStats.newestTimestamp - secondaryStats.oldestTimestamp
+    if (secondaryRange <= 0) {
+      return 50 // Single post, unknown progress
+    }
+
+    const distanceToTarget = secondaryStats.oldestTimestamp - primaryNewest
+    if (distanceToTarget <= 0) {
+      return 100 // Overlap achieved
+    }
+
+    // Estimate based on how far we still need to go
+    // This is a rough estimate since we don't know the exact gap
+    const estimatedProgress = Math.max(0, Math.min(99, 100 - (distanceToTarget / (60 * 60 * 1000)) * 10))
+    return Math.round(estimatedProgress)
+  } catch (error) {
+    console.error('[Merge Progress] Failed to calculate:', error)
+    return 0
   }
 }
 
