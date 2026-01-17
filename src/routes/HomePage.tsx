@@ -211,41 +211,6 @@ export default function HomePage() {
   const scrollSaveBlockedRef = useRef(false)  // Blocks scroll saves during restoration phase
   const loadMoreLastCallRef = useRef<number>(0)  // For debouncing Load More button
 
-  // Stuck load failsafe timer - starts when loading with no feed displayed
-  useEffect(() => {
-    console.log(`[Failsafe] Timer check: path=${location.pathname}, dbInit=${dbInitialized}, isLoading=${isLoading}, feedLen=${feed.length}, timerActive=${loadProgressStartTimeRef.current !== null}`)
-
-    // Only start timer when: on home page, db ready, loading, no feed displayed
-    if (location.pathname !== '/' || !dbInitialized || !isLoading || feed.length > 0) {
-      console.log(`[Failsafe] Timer conditions not met, skipping`)
-      return
-    }
-
-    // Don't start a new timer if one is already running
-    if (loadProgressStartTimeRef.current !== null) {
-      console.log(`[Failsafe] Timer already running, skipping`)
-      return
-    }
-
-    // Start stuck load failsafe timer
-    console.log(`[Failsafe] Starting stuck load timer (${STUCK_LOAD_TIMEOUT_MIN} min)`)
-    loadProgressStartTimeRef.current = Date.now()
-    loadProgressCheckTimeoutRef.current = setTimeout(() => {
-      if (loadProgressStartTimeRef.current !== null) {
-        console.error('[Failsafe] Load stuck, showing recovery modal')
-        setShowStuckLoadModal(true)
-      }
-    }, STUCK_LOAD_TIMEOUT_MS)
-
-    return () => {
-      // Clear timer on cleanup (when conditions change)
-      if (loadProgressCheckTimeoutRef.current) {
-        clearTimeout(loadProgressCheckTimeoutRef.current)
-        loadProgressCheckTimeoutRef.current = null
-      }
-    }
-  }, [location.pathname, dbInitialized, isLoading, feed.length, STUCK_LOAD_TIMEOUT_MIN, STUCK_LOAD_TIMEOUT_MS])
-
   // Save feed state when navigating away from home page
   useEffect(() => {
     const wasOnHome = previousPathnameRef.current === '/'
@@ -331,6 +296,18 @@ export default function HomePage() {
   useEffect(() => {
     console.log('[Failsafe] initDB useEffect starting')
     let cleanup: (() => void) | null = null
+
+    // Start stuck load failsafe timer BEFORE initDB - catches hangs in initDB itself
+    if (loadProgressStartTimeRef.current === null) {
+      console.log(`[Failsafe] Starting stuck load timer (${STUCK_LOAD_TIMEOUT_MIN} min) - before initDB`)
+      loadProgressStartTimeRef.current = Date.now()
+      loadProgressCheckTimeoutRef.current = setTimeout(() => {
+        if (loadProgressStartTimeRef.current !== null) {
+          console.error('[Failsafe] Load stuck, showing recovery modal')
+          setShowStuckLoadModal(true)
+        }
+      }, STUCK_LOAD_TIMEOUT_MS)
+    }
 
     initDB().then(async () => {
       console.log('[Failsafe] initDB() promise resolved')
