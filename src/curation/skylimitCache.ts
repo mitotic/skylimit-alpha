@@ -1151,19 +1151,46 @@ export async function copySecondaryEntryToPrimary(entry: SecondaryCacheEntry): P
 export async function resetEverything(): Promise<void> {
   console.log('[Reset] Starting complete data wipe...')
 
+  // Close any open database connection first - this is required for deleteDatabase to work
+  if (db) {
+    db.close()
+    db = null
+    console.log('[Reset] Closed existing database connection')
+  }
+
+  // Helper to delete a database and wait for completion
+  const deleteDatabase = (name: string): Promise<void> => {
+    return new Promise((resolve) => {
+      console.log(`[Reset] Deleting IndexedDB: ${name}`)
+      const request = indexedDB.deleteDatabase(name)
+      request.onsuccess = () => {
+        console.log(`[Reset] Successfully deleted IndexedDB: ${name}`)
+        resolve()
+      }
+      request.onerror = () => {
+        console.error(`[Reset] Error deleting IndexedDB: ${name}`, request.error)
+        // Resolve anyway to continue with other deletions
+        resolve()
+      }
+      request.onblocked = () => {
+        console.warn(`[Reset] Delete blocked for IndexedDB: ${name} - database still in use`)
+        // Resolve anyway - the delete will complete when connections close
+        resolve()
+      }
+    })
+  }
+
   // Clear all IndexedDB databases
   try {
     const databases = await indexedDB.databases()
     for (const database of databases) {
       if (database.name) {
-        indexedDB.deleteDatabase(database.name)
-        console.log(`[Reset] Deleted IndexedDB: ${database.name}`)
+        await deleteDatabase(database.name)
       }
     }
   } catch (e) {
-    // Fallback: delete known database directly
-    indexedDB.deleteDatabase('skylimit_db')
-    console.log('[Reset] Deleted IndexedDB: skylimit_db (fallback)')
+    // Fallback: delete known database directly (indexedDB.databases() not supported in all browsers)
+    await deleteDatabase(DB_NAME)
   }
 
   // Clear all session storage
@@ -1173,9 +1200,6 @@ export async function resetEverything(): Promise<void> {
   // Clear all local storage
   localStorage.clear()
   console.log('[Reset] Cleared localStorage')
-
-  // Reset in-memory db reference
-  db = null
 
   console.log('[Reset] Complete data wipe finished')
 }
