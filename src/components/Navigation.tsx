@@ -3,12 +3,16 @@ import { useEffect, useState } from 'react'
 import { useSession } from '../auth/SessionContext'
 import { getUnreadCount } from '../api/notifications'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
+import { resetEverything } from '../curation/skylimitCache'
+import ConfirmModal from './ConfirmModal'
 
 export default function Navigation() {
   const location = useLocation()
   const navigate = useNavigate()
   const { session, logout, agent } = useSession()
   const [unreadCount, setUnreadCount] = useState<number>(0)
+  const [showResetAllModal, setShowResetAllModal] = useState(false)
+  const [isResettingAll, setIsResettingAll] = useState(false)
 
   const isActive = (path: string) => location.pathname === path
 
@@ -77,6 +81,17 @@ export default function Navigation() {
     }
   }
 
+  const handleResetAll = async () => {
+    setIsResettingAll(true)
+    try {
+      await resetEverything()
+      window.location.reload()
+    } catch (error) {
+      console.error('Failed to reset all:', error)
+      setIsResettingAll(false)
+    }
+  }
+
   return (
     <div className="flex justify-around md:justify-start md:flex-col h-full">
       {navItems.map(item => (
@@ -120,9 +135,37 @@ export default function Navigation() {
             <span className="text-xl">⎋</span>
             <span className="hidden md:inline font-medium">Logout</span>
           </button>
+
+          <button
+            onClick={() => setShowResetAllModal(true)}
+            className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          >
+            <span className="text-xl">⏻</span>
+            <span className="hidden md:inline font-medium">Reset all</span>
+          </button>
         </>
       )}
 
+      {/* Reset All Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showResetAllModal}
+        onClose={() => setShowResetAllModal(false)}
+        onConfirm={handleResetAll}
+        title="Reset All Data"
+        message={`WARNING: This will completely wipe all Websky data:
+• All cached posts and summaries
+• All Skylimit settings
+• Follow list data
+• Login session (you will be logged out)
+
+This is a complete reset to factory state. Use this only if the app is not working correctly.
+
+This cannot be undone.`}
+        confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
+        cancelText="Cancel"
+        isDangerous={true}
+        isLoading={isResettingAll}
+      />
     </div>
   )
 }

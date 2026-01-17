@@ -213,13 +213,17 @@ export default function HomePage() {
 
   // Stuck load failsafe timer - starts when loading with no feed displayed
   useEffect(() => {
+    console.log(`[Failsafe] Timer check: path=${location.pathname}, dbInit=${dbInitialized}, isLoading=${isLoading}, feedLen=${feed.length}, timerActive=${loadProgressStartTimeRef.current !== null}`)
+
     // Only start timer when: on home page, db ready, loading, no feed displayed
     if (location.pathname !== '/' || !dbInitialized || !isLoading || feed.length > 0) {
+      console.log(`[Failsafe] Timer conditions not met, skipping`)
       return
     }
 
     // Don't start a new timer if one is already running
     if (loadProgressStartTimeRef.current !== null) {
+      console.log(`[Failsafe] Timer already running, skipping`)
       return
     }
 
@@ -325,9 +329,11 @@ export default function HomePage() {
 
   // Initialize IndexedDB and schedule stats computation
   useEffect(() => {
+    console.log('[Failsafe] initDB useEffect starting')
     let cleanup: (() => void) | null = null
-    
+
     initDB().then(async () => {
+      console.log('[Failsafe] initDB() promise resolved')
       // Validate feed cache integrity - ensure all feed entries have summaries
       const integrity = await validateFeedCacheIntegrity()
       if (integrity.cleared || integrity.empty) {
@@ -358,6 +364,7 @@ export default function HomePage() {
         isInitialCurationRef.current = true
       }
 
+      console.log('[Failsafe] Setting dbInitialized=true')
       setDbInitialized(true)
 
       // Note: Stuck load timer is started by a separate useEffect that monitors isLoading and feed state
