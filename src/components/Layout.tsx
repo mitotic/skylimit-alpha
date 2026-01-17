@@ -1,7 +1,9 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import Navigation from './Navigation'
+import Avatar from './Avatar'
 import { useSession } from '../auth/SessionContext'
+import { getProfile } from '../api/profile'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -10,9 +12,29 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { session } = useSession()
+  const { session, agent } = useSession()
+  const [userAvatar, setUserAvatar] = useState<string | undefined>()
 
   const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications'
+
+  // Fetch user avatar
+  useEffect(() => {
+    if (!agent || !session) {
+      setUserAvatar(undefined)
+      return
+    }
+
+    const fetchUserAvatar = async () => {
+      try {
+        const profile = await getProfile(agent, session.handle)
+        setUserAvatar(profile.avatar)
+      } catch (error) {
+        console.warn('Failed to fetch user profile for avatar:', error)
+      }
+    }
+
+    fetchUserAvatar()
+  }, [agent, session])
 
   const handleBack = () => {
     if (window.history.length > 1) {
@@ -26,7 +48,7 @@ export default function Layout({ children }: LayoutProps) {
     <div className="min-h-screen bg-white dark:bg-gray-900">
       <div className="max-w-4xl mx-auto">
         <header className="sticky top-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between px-4 py-2">
+          <div className="flex items-center justify-between px-2 py-0.5">
             <div className="w-10">
               {showBackButton && (
                 <button
@@ -47,18 +69,23 @@ export default function Layout({ children }: LayoutProps) {
                 <img
                   src="/SkylimitLogo.png"
                   alt="Skylimit"
-                  className="h-9 w-9 object-contain"
+                  className="h-11 w-11 object-contain"
                 />
               </button>
               <span className="text-sm text-gray-500 dark:text-gray-400">Alpha version</span>
             </div>
-            <div className="w-10 flex justify-end">
+            <div className="flex justify-end">
               {session && (
                 <button
                   onClick={() => navigate(`/profile/${session.handle}`)}
                   className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline transition-colors"
                   aria-label="View profile"
                 >
+                  <Avatar
+                    src={userAvatar}
+                    alt={session.handle}
+                    size="sm"
+                  />
                   @{session.handle}
                 </button>
               )}

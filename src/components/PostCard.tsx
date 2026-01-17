@@ -52,6 +52,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [loading, setLoading] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [curationDisabled, setCurationDisabled] = useState(false)
+  const [feedPageLength, setFeedPageLength] = useState<number>(25)
   const popupRef = useRef<HTMLDivElement>(null)
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
@@ -80,6 +81,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           const settings = await getSettings()
           // Track curation disabled state for styling
           setCurationDisabled(settings?.disabled || false)
+          // Get page length for page boundary indicator
+          setFeedPageLength(settings?.feedPageLength || 25)
           // Show counter unless curation is disabled
           // The counter (#number) should always show when curation is enabled
           // The time (hh:mm) display is controlled separately by showTime setting
@@ -238,9 +241,12 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     }
   }
 
+  // Page boundary: non-zero counter where counter % pageLength === 1
+  const isPageBoundary = showCounterDisplay && postNumber !== null && postNumber > 0 && postNumber % feedPageLength === 1
+
   return (
     <article
-      className="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+      className={`${isPageBoundary ? 'border-b-4 border-blue-500 dark:border-blue-400' : 'border-b border-gray-200 dark:border-gray-700'} hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors`}
     >
       {repostedBy && (
         <div className="px-4 pt-4 pb-2 text-sm text-gray-500 dark:text-gray-400 flex items-center justify-between relative">

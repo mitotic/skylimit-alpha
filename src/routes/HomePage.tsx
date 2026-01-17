@@ -2817,7 +2817,7 @@ export default function HomePage() {
                         handleLoadAllNewPosts()
                       }}
                       disabled={isLoadingMore}
-                      className="flex-1 btn btn-secondary flex items-center justify-center gap-2 disabled:opacity-50"
+                      className="flex-1 btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
                       aria-label={`Load all ${multiPageCount > 0 ? multiPageCount : partialPageCount} new posts`}
                     >
                       {isLoadingMore ? (
@@ -2828,7 +2828,7 @@ export default function HomePage() {
                       ) : (
                         <>
                           <span>📬</span>
-                          All {multiPageCount > 0 ? multiPageCount : partialPageCount} new posts
+                          All new posts ({multiPageCount > 0 ? multiPageCount : partialPageCount})
                         </>
                       )}
                     </button>
