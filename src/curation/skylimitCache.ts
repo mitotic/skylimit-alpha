@@ -1143,3 +1143,40 @@ export async function copySecondaryEntryToPrimary(entry: SecondaryCacheEntry): P
   }
 }
 
+/**
+ * Nuclear option: Delete entire IndexedDB database and all storage
+ * Used for stuck load recovery and manual "Reset all" in settings
+ * This will log the user out - they must log in again
+ */
+export async function resetEverything(): Promise<void> {
+  console.log('[Reset] Starting complete data wipe...')
+
+  // Clear all IndexedDB databases
+  try {
+    const databases = await indexedDB.databases()
+    for (const database of databases) {
+      if (database.name) {
+        indexedDB.deleteDatabase(database.name)
+        console.log(`[Reset] Deleted IndexedDB: ${database.name}`)
+      }
+    }
+  } catch (e) {
+    // Fallback: delete known database directly
+    indexedDB.deleteDatabase('skylimit_db')
+    console.log('[Reset] Deleted IndexedDB: skylimit_db (fallback)')
+  }
+
+  // Clear all session storage
+  sessionStorage.clear()
+  console.log('[Reset] Cleared sessionStorage')
+
+  // Clear all local storage
+  localStorage.clear()
+  console.log('[Reset] Cleared localStorage')
+
+  // Reset in-memory db reference
+  db = null
+
+  console.log('[Reset] Complete data wipe finished')
+}
+

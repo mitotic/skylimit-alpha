@@ -13,7 +13,7 @@ import RateLimitIndicator from '../components/RateLimitIndicator'
 import SkylimitHomeDialog from '../components/SkylimitHomeDialog'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getSummaryByUri, isSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
+import { initDB, getFilter, getSummaryByUri, isSummariesCacheEmpty, getCurationInitStats, resetEverything } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
@@ -191,6 +191,12 @@ export default function HomePage() {
   const [showCurationInitModal, setShowCurationInitModal] = useState(false) // show modal when curation completes
   const [curationInitStats, setCurationInitStats] = useState<CurationInitStatsDisplay | null>(null)
   const isInitialCurationRef = useRef(false) // ref to track initial curation in callbacks
+  // Failsafe: detect stuck loading state
+  const [showStuckLoadModal, setShowStuckLoadModal] = useState(false)
+  const loadProgressStartTimeRef = useRef<number | null>(null)
+  const loadProgressCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const STUCK_LOAD_TIMEOUT_MIN = 1 // minutes
+  const STUCK_LOAD_TIMEOUT_MS = STUCK_LOAD_TIMEOUT_MIN * 60 * 1000
   const firstPostRef = useRef<HTMLDivElement>(null)
   const scrollSentinelRef = useRef<HTMLDivElement>(null)  // Sentinel element for intersection observer
   const intersectionObserverRef = useRef<IntersectionObserver | null>(null)  // Observer instance
@@ -204,6 +210,37 @@ export default function HomePage() {
   const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)  // For debouncing scroll saves
   const scrollSaveBlockedRef = useRef(false)  // Blocks scroll saves during restoration phase
   const loadMoreLastCallRef = useRef<number>(0)  // For debouncing Load More button
+
+  // Stuck load failsafe timer - starts when loading with no feed displayed
+  useEffect(() => {
+    // Only start timer when: on home page, db ready, loading, no feed displayed
+    if (location.pathname !== '/' || !dbInitialized || !isLoading || feed.length > 0) {
+      return
+    }
+
+    // Don't start a new timer if one is already running
+    if (loadProgressStartTimeRef.current !== null) {
+      return
+    }
+
+    // Start stuck load failsafe timer
+    console.log(`[Failsafe] Starting stuck load timer (${STUCK_LOAD_TIMEOUT_MIN} min)`)
+    loadProgressStartTimeRef.current = Date.now()
+    loadProgressCheckTimeoutRef.current = setTimeout(() => {
+      if (loadProgressStartTimeRef.current !== null) {
+        console.error('[Failsafe] Load stuck, showing recovery modal')
+        setShowStuckLoadModal(true)
+      }
+    }, STUCK_LOAD_TIMEOUT_MS)
+
+    return () => {
+      // Clear timer on cleanup (when conditions change)
+      if (loadProgressCheckTimeoutRef.current) {
+        clearTimeout(loadProgressCheckTimeoutRef.current)
+        loadProgressCheckTimeoutRef.current = null
+      }
+    }
+  }, [location.pathname, dbInitialized, isLoading, feed.length, STUCK_LOAD_TIMEOUT_MIN, STUCK_LOAD_TIMEOUT_MS])
 
   // Save feed state when navigating away from home page
   useEffect(() => {
@@ -323,6 +360,8 @@ export default function HomePage() {
 
       setDbInitialized(true)
 
+      // Note: Stuck load timer is started by a separate useEffect that monitors isLoading and feed state
+
       // Schedule statistics computation if we have session
       if (agent && session) {
         cleanup = scheduleStatsComputation(agent, session.handle, session.did)
@@ -342,6 +381,10 @@ export default function HomePage() {
     
     return () => {
       if (cleanup) cleanup()
+      // Clear stuck load timer on unmount
+      if (loadProgressCheckTimeoutRef.current) {
+        clearTimeout(loadProgressCheckTimeoutRef.current)
+      }
     }
   }, [agent, session])
   
@@ -753,8 +796,17 @@ export default function HomePage() {
             
             // Mark initial load as complete
             setIsInitialLoad(false)
-            
+
             setIsLoading(false)
+            // Clear stuck load failsafe - load completed successfully
+            if (loadProgressStartTimeRef.current !== null) {
+              console.log('[Failsafe] Clearing stuck load timer - cache load completed')
+            }
+            loadProgressStartTimeRef.current = null
+            if (loadProgressCheckTimeoutRef.current) {
+              clearTimeout(loadProgressCheckTimeoutRef.current)
+              loadProgressCheckTimeoutRef.current = null
+            }
             console.log(`[Feed] Loaded ${filteredPosts.length} posts from cache`)
 
             // Pre-fetch next page for instant Load More (NO SPINNER)
@@ -1180,6 +1232,15 @@ export default function HomePage() {
     } finally {
       setIsLoading(false)
       setIsLoadingMore(false)
+      // Clear stuck load failsafe - load completed (success or error)
+      if (loadProgressStartTimeRef.current !== null) {
+        console.log('[Failsafe] Clearing stuck load timer - loadFeed completed')
+      }
+      loadProgressStartTimeRef.current = null
+      if (loadProgressCheckTimeoutRef.current) {
+        clearTimeout(loadProgressCheckTimeoutRef.current)
+        loadProgressCheckTimeoutRef.current = null
+      }
     }
   }, [agent, session, dbInitialized, setRateLimitStatus])
 
@@ -2985,6 +3046,66 @@ export default function HomePage() {
         onClose={() => setShowCurationInitModal(false)}
         stats={curationInitStats}
       />
+
+      {/* Stuck Load Recovery Modal */}
+      {showStuckLoadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-4 shadow-xl">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
+              Loading Taking Too Long
+            </h2>
+            <p className="text-gray-600 dark:text-gray-300 mb-4">
+              The app has been trying to load for over {STUCK_LOAD_TIMEOUT_MIN} minute{STUCK_LOAD_TIMEOUT_MIN > 1 ? 's' : ''}. This may be caused by
+              corrupted local data. Would you like to clear all website data and start fresh?
+            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              This will log you out and clear cached posts. You can log back in immediately.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowStuckLoadModal(false)
+                  // Schedule another check
+                  loadProgressCheckTimeoutRef.current = setTimeout(() => {
+                    if (loadProgressStartTimeRef.current !== null) {
+                      console.error('[Failsafe] Load still stuck, showing recovery modal again')
+                      setShowStuckLoadModal(true)
+                    }
+                  }, STUCK_LOAD_TIMEOUT_MS)
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                           text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                Wait {STUCK_LOAD_TIMEOUT_MIN} min
+              </button>
+              <button
+                onClick={() => {
+                  // Cancel: hide modal and stop all future checks
+                  setShowStuckLoadModal(false)
+                  loadProgressStartTimeRef.current = null
+                  if (loadProgressCheckTimeoutRef.current) {
+                    clearTimeout(loadProgressCheckTimeoutRef.current)
+                    loadProgressCheckTimeoutRef.current = null
+                  }
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                           text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  await resetEverything()
+                  window.location.reload()
+                }}
+                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+              >
+                Clear Data & Reload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

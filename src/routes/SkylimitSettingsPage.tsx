@@ -8,7 +8,7 @@ import { getSettings, updateSettings } from '../curation/skylimitStore'
 import { SkylimitSettings } from '../curation/types'
 import Button from '../components/Button'
 import SkylimitStatistics from '../components/SkylimitStatistics'
-import { getSummariesCacheStats, SummariesCacheStats, clearSkylimitSettings } from '../curation/skylimitCache'
+import { getSummariesCacheStats, SummariesCacheStats, clearSkylimitSettings, resetEverything } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
 import { getFeedCacheStats, FeedCacheStats } from '../curation/skylimitFeedCache'
 
@@ -24,6 +24,8 @@ export default function SkylimitSettingsPage() {
   const [isResetting, setIsResetting] = useState(false)
   const [showClearSettingsModal, setShowClearSettingsModal] = useState(false)
   const [isClearingSettings, setIsClearingSettings] = useState(false)
+  const [showResetAllModal, setShowResetAllModal] = useState(false)
+  const [isResettingAll, setIsResettingAll] = useState(false)
 
   useEffect(() => {
     loadSettings()
@@ -137,6 +139,17 @@ export default function SkylimitSettingsPage() {
     } catch (error) {
       console.error('Failed to clear settings:', error)
       setIsClearingSettings(false)
+    }
+  }
+
+  const handleResetAll = async () => {
+    setIsResettingAll(true)
+    try {
+      await resetEverything()
+      window.location.reload()
+    } catch (error) {
+      console.error('Failed to reset all:', error)
+      setIsResettingAll(false)
     }
   }
 
@@ -617,7 +630,7 @@ export default function SkylimitSettingsPage() {
             variant="secondary"
             onClick={() => setShowCleanResetModal(true)}
             disabled={isResetting}
-            className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full"
+            className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
           >
             Reset cache
           </Button>
@@ -629,6 +642,15 @@ export default function SkylimitSettingsPage() {
             className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
           >
             Reset Skylimit settings
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowResetAllModal(true)}
+            disabled={isResettingAll}
+            className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full"
+          >
+            Reset all
           </Button>
         </div>
       </section>
@@ -673,6 +695,27 @@ This cannot be undone.`}
         cancelText="Cancel"
         isDangerous={true}
         isLoading={isClearingSettings}
+      />
+
+      {/* Reset All Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showResetAllModal}
+        onClose={() => setShowResetAllModal(false)}
+        onConfirm={handleResetAll}
+        title="Reset All Data"
+        message={`WARNING: This will completely wipe all Websky data:
+• All cached posts and summaries
+• All Skylimit settings
+• Follow list data
+• Login session (you will be logged out)
+
+This is a complete reset to factory state. Use this only if the app is not working correctly.
+
+This cannot be undone.`}
+        confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
+        cancelText="Cancel"
+        isDangerous={true}
+        isLoading={isResettingAll}
       />
     </div>
   )
