@@ -297,6 +297,35 @@ export default function HomePage() {
     console.log('[Failsafe] initDB useEffect starting')
     let cleanup: (() => void) | null = null
 
+    // Check for reset flag BEFORE opening any DB connection
+    // This allows reset to work even when initDB() would hang
+    const urlParams = new URLSearchParams(window.location.search)
+    if (urlParams.get('reset') === '1') {
+      console.log('[Reset] Reset flag detected in URL')
+      // eslint-disable-next-line no-restricted-globals
+      if (confirm('Reset ALL curation settings and cached data? This will also log you out.')) {
+        console.log('[Reset] User confirmed, deleting IndexedDB')
+        // Clear storage first
+        sessionStorage.clear()
+        localStorage.clear()
+        // Delete IndexedDB - this will succeed since no connection is open yet
+        const request = indexedDB.deleteDatabase('skylimit_db')
+        request.onsuccess = () => {
+          console.log('[Reset] Database deleted successfully, reloading clean')
+          window.location.href = '/'
+        }
+        request.onerror = () => {
+          console.error('[Reset] Database deletion failed, reloading anyway')
+          window.location.href = '/'
+        }
+        return // Stop here, wait for redirect
+      } else {
+        console.log('[Reset] User cancelled, removing reset flag and continuing')
+        window.history.replaceState({}, '', '/')
+        // Continue with normal init below
+      }
+    }
+
     // Start stuck load failsafe timer BEFORE initDB - catches hangs in initDB itself
     if (loadProgressStartTimeRef.current === null) {
       console.log(`[Failsafe] Starting stuck load timer (${STUCK_LOAD_TIMEOUT_MIN} min) - before initDB`)
@@ -2824,7 +2853,8 @@ export default function HomePage() {
                 <button
                   onClick={async () => {
                     await resetEverything()
-                    window.location.reload()
+                    // Use reset flag URL so IndexedDB deletion happens before initDB opens a connection
+                    window.location.href = '/?reset=1'
                   }}
                   className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
                 >
@@ -3140,7 +3170,8 @@ export default function HomePage() {
               <button
                 onClick={async () => {
                   await resetEverything()
-                  window.location.reload()
+                  // Use reset flag URL so IndexedDB deletion happens before initDB opens a connection
+                  window.location.href = '/?reset=1'
                 }}
                 className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
               >
