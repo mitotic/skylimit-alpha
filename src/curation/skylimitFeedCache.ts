@@ -86,7 +86,11 @@ export async function clearFeedMetadata(): Promise<void> {
     const database = await getDB()
     const transaction = database.transaction(['feed_metadata'], 'readwrite')
     const store = transaction.objectStore('feed_metadata')
-    await store.clear()
+    await new Promise<void>((resolve, reject) => {
+      const request = store.clear()
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
     console.log('[Feed Cache] Cleared feed metadata')
   } catch (error) {
     console.warn('Failed to clear feed metadata:', error)
@@ -416,13 +420,14 @@ export async function saveFeedCache(
     let savedCount = 0
 
     // Save each post (ALL posts, including dropped ones) - but skip existing ones
-    const savePromises = posts.map(async (post) => {
+    // Queue all put operations synchronously (IndexedDB transactions auto-commit between async ops)
+    for (const post of posts) {
       // Get unique ID (includes reposter DID for reposts)
       const uniqueId = getPostUniqueId(post)
 
       // Skip if already cached
       if (existingUris.has(uniqueId)) {
-        return
+        continue
       }
 
       // Calculate postTimestamp (actual post creation/repost time)
@@ -460,42 +465,41 @@ export async function saveFeedCache(
         cachedAt,
         reposterDid,            // For reposts, store reposter DID
       }
-      await feedStore.put(entry)
+      feedStore.put(entry)  // Queue synchronously, don't await
       savedCount++
+    }
+
+    // Read existing metadata and save new metadata - all synchronously within transaction
+    // Use a cursor read that doesn't break the transaction
+    const existingRequest = metadataStore.get('last_fetch')
+    existingRequest.onsuccess = () => {
+      const existingMetadata = existingRequest.result as FeedCacheMetadata | null
+
+      // Save metadata with oldestCachedPostTimestamp
+      // If no NEW posts were saved, preserve existing timestamps to avoid overwriting with 0
+      const metadata: FeedCacheMetadata = {
+        id: 'last_fetch',
+        lastCursor: cursor,
+        lastFetchTime: cachedAt,
+        newestCachedPostTimestamp: savedCount === 0 && existingMetadata?.newestCachedPostTimestamp
+          ? existingMetadata.newestCachedPostTimestamp
+          : newestCachedPostTimestamp,
+        oldestCachedPostTimestamp: savedCount === 0 && existingMetadata?.oldestCachedPostTimestamp
+          ? existingMetadata.oldestCachedPostTimestamp
+          : (oldestCachedPostTimestamp === Infinity ? newestCachedPostTimestamp : oldestCachedPostTimestamp),
+        // Preserve lookback status from existing metadata
+        lookbackCompleted: existingMetadata?.lookbackCompleted,
+        lookbackCompletedAt: existingMetadata?.lookbackCompletedAt,
+      }
+      metadataStore.put(metadata)  // Queue synchronously
+    }
+
+    // Wait for transaction to complete
+    await new Promise<void>((resolve, reject) => {
+      writeTransaction.oncomplete = () => resolve()
+      writeTransaction.onerror = () => reject(writeTransaction.error)
+      writeTransaction.onabort = () => reject(new Error('Transaction aborted'))
     })
-
-    await Promise.all(savePromises)
-
-    // Always read existing metadata to preserve lookback status and timestamps
-    let existingMetadata: FeedCacheMetadata | null = null
-    try {
-      const existingRequest = metadataStore.get('last_fetch')
-      existingMetadata = await new Promise<FeedCacheMetadata | null>((resolve) => {
-        existingRequest.onsuccess = () => resolve(existingRequest.result)
-        existingRequest.onerror = () => resolve(null)
-      })
-    } catch (err) {
-      // Ignore errors when reading existing metadata
-      console.warn('Failed to read existing metadata:', err)
-    }
-
-    // Save metadata with oldestCachedPostTimestamp
-    // If no NEW posts were saved, preserve existing timestamps to avoid overwriting with 0
-    const metadata: FeedCacheMetadata = {
-      id: 'last_fetch',
-      lastCursor: cursor,
-      lastFetchTime: cachedAt,
-      newestCachedPostTimestamp: savedCount === 0 && existingMetadata?.newestCachedPostTimestamp
-        ? existingMetadata.newestCachedPostTimestamp
-        : newestCachedPostTimestamp,
-      oldestCachedPostTimestamp: savedCount === 0 && existingMetadata?.oldestCachedPostTimestamp
-        ? existingMetadata.oldestCachedPostTimestamp
-        : (oldestCachedPostTimestamp === Infinity ? newestCachedPostTimestamp : oldestCachedPostTimestamp),
-      // Preserve lookback status from existing metadata
-      lookbackCompleted: existingMetadata?.lookbackCompleted,
-      lookbackCompletedAt: existingMetadata?.lookbackCompletedAt,
-    }
-    await metadataStore.put(metadata)
 
     // Clean up old cache entries older than FEED_CACHE_RETENTION_HOURS - do this asynchronously
     setTimeout(async () => {
@@ -1898,7 +1902,12 @@ export async function getCachedFeed(limit: number = 50): Promise<CurationFeedVie
                 const db = await getDB()
                 const tx = db.transaction([STORE_FEED_CACHE], 'readwrite')
                 const store = tx.objectStore(STORE_FEED_CACHE)
-                await store.put({ ...entry, postTimestamp: postTime })
+                store.put({ ...entry, postTimestamp: postTime })  // Queue synchronously
+                // Wait for transaction to complete
+                await new Promise<void>((resolve, reject) => {
+                  tx.oncomplete = () => resolve()
+                  tx.onerror = () => reject(tx.error)
+                })
               } catch (err) {
                 // Ignore migration errors
               }
@@ -2104,7 +2113,11 @@ export async function clearFeedCache(): Promise<void> {
     const database = await getDB()
     const transaction = database.transaction([STORE_FEED_CACHE], 'readwrite')
     const store = transaction.objectStore(STORE_FEED_CACHE)
-    await store.clear()
+    await new Promise<void>((resolve, reject) => {
+      const request = store.clear()
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
     // Clear sessionStorage feed state to maintain consistency
     sessionStorage.removeItem('websky9_home_feed_state')
     sessionStorage.removeItem('websky9_home_scroll_state')
