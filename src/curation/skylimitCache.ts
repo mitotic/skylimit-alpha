@@ -1144,81 +1144,16 @@ export async function copySecondaryEntryToPrimary(entry: SecondaryCacheEntry): P
 }
 
 /**
- * Nuclear option: Delete entire IndexedDB database and all storage
- * Used for stuck load recovery and manual "Reset all" in settings
- * This will log the user out - they must log in again
+ * Trigger a complete reset of all Websky data.
+ * Redirects to /?reset=1 which handles the actual deletion.
  *
- * Note: If initDB() is hanging (which causes the stuck load), the IDBOpenDBRequest
- * from indexedDB.open() holds a connection that blocks deleteDatabase().
- * We handle this by:
- * 1. Clearing localStorage/sessionStorage first (ensures logout)
- * 2. Attempting IndexedDB deletion with a timeout
- * 3. Proceeding with page reload even if IndexedDB delete is blocked
- *    (the browser will complete the delete when the page unloads)
+ * The reset is done via URL parameter because:
+ * 1. IndexedDB deletion is blocked by active connections from initDB()
+ * 2. The ?reset=1 handler runs BEFORE any DB connections are opened
+ * 3. This ensures the deletion always succeeds
  */
-export async function resetEverything(): Promise<void> {
-  console.log('[Reset] Starting complete data wipe...')
-
-  // Clear all session storage FIRST - this ensures logout even if IndexedDB delete is blocked
-  sessionStorage.clear()
-  console.log('[Reset] Cleared sessionStorage')
-
-  // Clear all local storage - this also ensures logout
-  localStorage.clear()
-  console.log('[Reset] Cleared localStorage')
-
-  // Close any open database connection - this may help deleteDatabase succeed
-  if (db) {
-    db.close()
-    db = null
-    console.log('[Reset] Closed existing database connection')
-  }
-
-  // Helper to delete a database with timeout
-  // If blocked (by hanging initDB), we proceed after timeout - page reload will release the lock
-  const deleteDatabase = (name: string): Promise<void> => {
-    return new Promise((resolve) => {
-      console.log(`[Reset] Deleting IndexedDB: ${name}`)
-      const request = indexedDB.deleteDatabase(name)
-
-      // Timeout: if blocked for more than 500ms, proceed anyway
-      // The page reload will release the connection and deletion will complete
-      const timeout = setTimeout(() => {
-        console.warn(`[Reset] Delete timeout for IndexedDB: ${name} - proceeding anyway`)
-        resolve()
-      }, 500)
-
-      request.onsuccess = () => {
-        clearTimeout(timeout)
-        console.log(`[Reset] Successfully deleted IndexedDB: ${name}`)
-        resolve()
-      }
-      request.onerror = () => {
-        clearTimeout(timeout)
-        console.error(`[Reset] Error deleting IndexedDB: ${name}`, request.error)
-        resolve()
-      }
-      request.onblocked = () => {
-        // Don't resolve immediately - let the timeout handle it
-        // This gives the browser a chance to complete the delete
-        console.warn(`[Reset] Delete blocked for IndexedDB: ${name} - waiting for timeout`)
-      }
-    })
-  }
-
-  // Clear all IndexedDB databases
-  try {
-    const databases = await indexedDB.databases()
-    for (const database of databases) {
-      if (database.name) {
-        await deleteDatabase(database.name)
-      }
-    }
-  } catch (e) {
-    // Fallback: delete known database directly (indexedDB.databases() not supported in all browsers)
-    await deleteDatabase(DB_NAME)
-  }
-
-  console.log('[Reset] Complete data wipe finished')
+export function resetEverything(): void {
+  console.log('[Reset] Redirecting to /?reset=1 for clean reset')
+  window.location.href = '/?reset=1'
 }
 

@@ -13,7 +13,7 @@ import RateLimitIndicator from '../components/RateLimitIndicator'
 import SkylimitHomeDialog from '../components/SkylimitHomeDialog'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getSummaryByUri, isSummariesCacheEmpty, getCurationInitStats, resetEverything } from '../curation/skylimitCache'
+import { initDB, getFilter, getSummaryByUri, isSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
@@ -191,12 +191,6 @@ export default function HomePage() {
   const [showCurationInitModal, setShowCurationInitModal] = useState(false) // show modal when curation completes
   const [curationInitStats, setCurationInitStats] = useState<CurationInitStatsDisplay | null>(null)
   const isInitialCurationRef = useRef(false) // ref to track initial curation in callbacks
-  // Failsafe: detect stuck loading state
-  const [showStuckLoadModal, setShowStuckLoadModal] = useState(false)
-  const loadProgressStartTimeRef = useRef<number | null>(null)
-  const loadProgressCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const STUCK_LOAD_TIMEOUT_MIN = 1 // minutes
-  const STUCK_LOAD_TIMEOUT_MS = STUCK_LOAD_TIMEOUT_MIN * 60 * 1000
   const firstPostRef = useRef<HTMLDivElement>(null)
   const scrollSentinelRef = useRef<HTMLDivElement>(null)  // Sentinel element for intersection observer
   const intersectionObserverRef = useRef<IntersectionObserver | null>(null)  // Observer instance
@@ -293,53 +287,11 @@ export default function HomePage() {
   }, [dbInitialized])
 
   // Initialize IndexedDB and schedule stats computation
+  // Note: Reset flag (?reset=1) is handled in main.tsx BEFORE React mounts
   useEffect(() => {
-    console.log('[Failsafe] initDB useEffect starting')
     let cleanup: (() => void) | null = null
 
-    // Check for reset flag BEFORE opening any DB connection
-    // This allows reset to work even when initDB() would hang
-    const urlParams = new URLSearchParams(window.location.search)
-    if (urlParams.get('reset') === '1') {
-      console.log('[Reset] Reset flag detected in URL')
-      // eslint-disable-next-line no-restricted-globals
-      if (confirm('Reset ALL curation settings and cached data? This will also log you out.')) {
-        console.log('[Reset] User confirmed, deleting IndexedDB')
-        // Clear storage first
-        sessionStorage.clear()
-        localStorage.clear()
-        // Delete IndexedDB - this will succeed since no connection is open yet
-        const request = indexedDB.deleteDatabase('skylimit_db')
-        request.onsuccess = () => {
-          console.log('[Reset] Database deleted successfully, reloading clean')
-          window.location.href = '/'
-        }
-        request.onerror = () => {
-          console.error('[Reset] Database deletion failed, reloading anyway')
-          window.location.href = '/'
-        }
-        return // Stop here, wait for redirect
-      } else {
-        console.log('[Reset] User cancelled, removing reset flag and continuing')
-        window.history.replaceState({}, '', '/')
-        // Continue with normal init below
-      }
-    }
-
-    // Start stuck load failsafe timer BEFORE initDB - catches hangs in initDB itself
-    if (loadProgressStartTimeRef.current === null) {
-      console.log(`[Failsafe] Starting stuck load timer (${STUCK_LOAD_TIMEOUT_MIN} min) - before initDB`)
-      loadProgressStartTimeRef.current = Date.now()
-      loadProgressCheckTimeoutRef.current = setTimeout(() => {
-        if (loadProgressStartTimeRef.current !== null) {
-          console.error('[Failsafe] Load stuck, showing recovery modal')
-          setShowStuckLoadModal(true)
-        }
-      }, STUCK_LOAD_TIMEOUT_MS)
-    }
-
     initDB().then(async () => {
-      console.log('[Failsafe] initDB() promise resolved')
       // Validate feed cache integrity - ensure all feed entries have summaries
       const integrity = await validateFeedCacheIntegrity()
       if (integrity.cleared || integrity.empty) {
@@ -394,13 +346,9 @@ export default function HomePage() {
     
     return () => {
       if (cleanup) cleanup()
-      // Clear stuck load timer on unmount
-      if (loadProgressCheckTimeoutRef.current) {
-        clearTimeout(loadProgressCheckTimeoutRef.current)
-      }
     }
   }, [agent, session])
-  
+
   // Periodically flush expired parent posts (every hour)
   useEffect(() => {
     if (!dbInitialized) return
@@ -811,15 +759,6 @@ export default function HomePage() {
             setIsInitialLoad(false)
 
             setIsLoading(false)
-            // Clear stuck load failsafe - load completed successfully
-            if (loadProgressStartTimeRef.current !== null) {
-              console.log('[Failsafe] Clearing stuck load timer - cache load completed')
-            }
-            loadProgressStartTimeRef.current = null
-            if (loadProgressCheckTimeoutRef.current) {
-              clearTimeout(loadProgressCheckTimeoutRef.current)
-              loadProgressCheckTimeoutRef.current = null
-            }
             console.log(`[Feed] Loaded ${filteredPosts.length} posts from cache`)
 
             // Pre-fetch next page for instant Load More (NO SPINNER)
@@ -1245,15 +1184,6 @@ export default function HomePage() {
     } finally {
       setIsLoading(false)
       setIsLoadingMore(false)
-      // Clear stuck load failsafe - load completed (success or error)
-      if (loadProgressStartTimeRef.current !== null) {
-        console.log('[Failsafe] Clearing stuck load timer - loadFeed completed')
-      }
-      loadProgressStartTimeRef.current = null
-      if (loadProgressCheckTimeoutRef.current) {
-        clearTimeout(loadProgressCheckTimeoutRef.current)
-        loadProgressCheckTimeoutRef.current = null
-      }
     }
   }, [agent, session, dbInitialized, setRateLimitStatus])
 
@@ -2803,67 +2733,6 @@ export default function HomePage() {
     return (
       <div className="flex items-center justify-center h-64">
         <Spinner size="lg" />
-
-        {/* Stuck Load Recovery Modal - must be here for when loading is stuck */}
-        {showStuckLoadModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-4 shadow-xl">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-                Loading Taking Too Long
-              </h2>
-              <p className="text-gray-600 dark:text-gray-300 mb-4">
-                The app has been trying to load for over {STUCK_LOAD_TIMEOUT_MIN} minute{STUCK_LOAD_TIMEOUT_MIN > 1 ? 's' : ''}. This may be caused by
-                corrupted local data. Would you like to clear all website data and start fresh?
-              </p>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
-                This will log you out and clear cached posts. You can log back in immediately.
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowStuckLoadModal(false)
-                    // Schedule another check
-                    loadProgressCheckTimeoutRef.current = setTimeout(() => {
-                      if (loadProgressStartTimeRef.current !== null) {
-                        console.error('[Failsafe] Load still stuck, showing recovery modal again')
-                        setShowStuckLoadModal(true)
-                      }
-                    }, STUCK_LOAD_TIMEOUT_MS)
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
-                             text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
-                >
-                  Wait {STUCK_LOAD_TIMEOUT_MIN} min
-                </button>
-                <button
-                  onClick={() => {
-                    // Cancel: hide modal and stop all future checks
-                    setShowStuckLoadModal(false)
-                    loadProgressStartTimeRef.current = null
-                    if (loadProgressCheckTimeoutRef.current) {
-                      clearTimeout(loadProgressCheckTimeoutRef.current)
-                      loadProgressCheckTimeoutRef.current = null
-                    }
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
-                             text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={async () => {
-                    await resetEverything()
-                    // Use reset flag URL so IndexedDB deletion happens before initDB opens a connection
-                    window.location.href = '/?reset=1'
-                  }}
-                  className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
-                >
-                  Clear Data & Reload
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     )
   }
@@ -3120,67 +2989,6 @@ export default function HomePage() {
         onClose={() => setShowCurationInitModal(false)}
         stats={curationInitStats}
       />
-
-      {/* Stuck Load Recovery Modal */}
-      {showStuckLoadModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-4 shadow-xl">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-              Loading Taking Too Long
-            </h2>
-            <p className="text-gray-600 dark:text-gray-300 mb-4">
-              The app has been trying to load for over {STUCK_LOAD_TIMEOUT_MIN} minute{STUCK_LOAD_TIMEOUT_MIN > 1 ? 's' : ''}. This may be caused by
-              corrupted local data. Would you like to clear all website data and start fresh?
-            </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
-              This will log you out and clear cached posts. You can log back in immediately.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowStuckLoadModal(false)
-                  // Schedule another check
-                  loadProgressCheckTimeoutRef.current = setTimeout(() => {
-                    if (loadProgressStartTimeRef.current !== null) {
-                      console.error('[Failsafe] Load still stuck, showing recovery modal again')
-                      setShowStuckLoadModal(true)
-                    }
-                  }, STUCK_LOAD_TIMEOUT_MS)
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
-                           text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Wait {STUCK_LOAD_TIMEOUT_MIN} min
-              </button>
-              <button
-                onClick={() => {
-                  // Cancel: hide modal and stop all future checks
-                  setShowStuckLoadModal(false)
-                  loadProgressStartTimeRef.current = null
-                  if (loadProgressCheckTimeoutRef.current) {
-                    clearTimeout(loadProgressCheckTimeoutRef.current)
-                    loadProgressCheckTimeoutRef.current = null
-                  }
-                }}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
-                           text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  await resetEverything()
-                  // Use reset flag URL so IndexedDB deletion happens before initDB opens a connection
-                  window.location.href = '/?reset=1'
-                }}
-                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
-              >
-                Clear Data & Reload
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

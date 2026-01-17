@@ -81,16 +81,9 @@ export default function Navigation() {
     }
   }
 
-  const handleResetAll = async () => {
+  const handleResetAll = () => {
     setIsResettingAll(true)
-    try {
-      await resetEverything()
-      // Use reset flag URL so IndexedDB deletion happens before initDB opens a connection
-      window.location.href = '/?reset=1'
-    } catch (error) {
-      console.error('Failed to reset all:', error)
-      setIsResettingAll(false)
-    }
+    resetEverything() // Redirects to /?reset=1
   }
 
   return (
@@ -131,7 +124,7 @@ export default function Navigation() {
 
           <button
             onClick={logout}
-            className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="flex items-center gap-3 px-4 py-3 text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
             <span className="text-xl">⎋</span>
             <span className="hidden md:inline font-medium">Logout</span>

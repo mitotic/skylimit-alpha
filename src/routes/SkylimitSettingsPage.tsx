@@ -142,16 +142,9 @@ export default function SkylimitSettingsPage() {
     }
   }
 
-  const handleResetAll = async () => {
+  const handleResetAll = () => {
     setIsResettingAll(true)
-    try {
-      await resetEverything()
-      // Use reset flag URL so IndexedDB deletion happens before initDB opens a connection
-      window.location.href = '/?reset=1'
-    } catch (error) {
-      console.error('Failed to reset all:', error)
-      setIsResettingAll(false)
-    }
+    resetEverything() // Redirects to /?reset=1
   }
 
   if (loading) {
