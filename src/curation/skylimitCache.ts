@@ -29,12 +29,9 @@ export async function initDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
 
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => {
-      db = request.result
-      resolve(db)
-    }
-
+    // IMPORTANT: onupgradeneeded must be assigned first, before onerror/onsuccess
+    // IndexedDB fires onupgradeneeded synchronously during version upgrades,
+    // so the handler must be registered immediately after opening the request
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result
       const transaction = (event.target as IDBOpenDBRequest).transaction!
@@ -104,6 +101,12 @@ export async function initDB(): Promise<IDBDatabase> {
         secondaryFeedCacheStore.createIndex('timestamp', 'timestamp', { unique: false })
         secondaryFeedCacheStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
       }
+    }
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      db = request.result
+      resolve(db)
     }
   })
 }
