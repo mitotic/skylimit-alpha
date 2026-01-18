@@ -379,23 +379,21 @@ export default function SkylimitStatistics() {
       </div>
 
       {/* Active Followee Statistics Table */}
-      <div>
+      <div className="w-full">
         <h3 className="text-lg font-semibold mb-3">Active Followees</h3>
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-collapse border border-gray-300 dark:border-gray-600">
+        <div className="overflow-x-auto max-w-full" style={{ WebkitOverflowScrolling: 'touch' }}>
+          <table className="w-full border-collapse border border-gray-300 dark:border-gray-600 text-sm">
             <thead>
               <tr className="bg-gray-100 dark:bg-gray-700">
-                <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left font-semibold">Rank</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left font-semibold">Followee</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left font-semibold">Posts/day</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left font-semibold">Shown/day</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-4 py-2 text-left font-semibold">Name</th>
+                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">#</th>
+                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Followee</th>
+                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Posts</th>
+                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Shown</th>
+                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Name</th>
               </tr>
             </thead>
             <tbody>
-              {accountStats
-                .filter(account => account.postsPerDay > 0)
-                .map((account, index) => {
+              {accountStats.map((account, index) => {
                 // For Name column: use displayName if available, otherwise altname if anonymized, otherwise username
                 let name: string
                 if (anonymize && !account.isSelf) {
@@ -411,6 +409,13 @@ export default function SkylimitStatistics() {
                   e.stopPropagation()
                   // Only navigate if it's not a hashtag (hashtags don't have profile pages)
                   if (!account.isHashtag && account.username) {
+                    // Save scroll position before navigation (for scroll restoration on back)
+                    const scrollY = window.scrollY || document.documentElement.scrollTop
+                    try {
+                      sessionStorage.setItem('websky_skylimit_settings_scroll', scrollY.toString())
+                    } catch (error) {
+                      // Ignore storage errors
+                    }
                     navigate(`/profile/${account.username}`)
                   }
                 }
@@ -451,22 +456,24 @@ export default function SkylimitStatistics() {
                 const curationMessage = formatCurationMessage(account.userEntry, account.followInfo)
                 
                 return (
-                  <tr 
+                  <tr
                     key={account.username}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors relative"
+                    className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                   >
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2">{index + 1}</td>
-                    <td 
-                      className={`border border-gray-300 dark:border-gray-600 px-4 py-2 ${
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">{index + 1}</td>
+                    <td
+                      className={`border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm ${
                         !account.isHashtag ? 'cursor-pointer text-blue-600 dark:text-blue-400 hover:underline' : ''
                       }`}
                       onClick={handleFolloweeClick}
                     >
-                      {account.isHashtag ? `#${account.username.slice(1)}` : account.username}
-                      {account.isSelf && <span className="text-gray-500 dark:text-gray-400 ml-1">(self)</span>}
+                      <div className="max-w-[150px] truncate" title={account.username}>
+                        {account.isHashtag ? `#${account.username.slice(1)}` : account.username}
+                        {account.isSelf && <span className="text-gray-500 dark:text-gray-400 ml-1">(self)</span>}
+                      </div>
                     </td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2">{formatPostCount(account.postsPerDay)}</td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2 relative">
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">{formatPostCount(account.postsPerDay)}</td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm relative">
                       {formatPostCount(shownPerDay)} (
                         <button
                           onClick={handleProbabilityClick}
@@ -478,9 +485,9 @@ export default function SkylimitStatistics() {
                       {isPopupOpen && (
                         <div
                           ref={popupRef}
-                          className={`absolute right-0 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
-                            popupPosition === 'above' 
-                              ? 'bottom-full mb-1' 
+                          className={`absolute right-0 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
+                            popupPosition === 'above'
+                              ? 'bottom-full mb-1'
                               : 'top-full mt-1'
                           }`}
                           onClick={(e) => e.stopPropagation()}
@@ -531,7 +538,9 @@ export default function SkylimitStatistics() {
                         </div>
                       )}
                     </td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-4 py-2">{name}</td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
+                      <div className="max-w-[120px] truncate" title={name}>{name}</div>
+                    </td>
                   </tr>
                 )
               })}

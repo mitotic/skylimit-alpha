@@ -12,6 +12,8 @@ import { getSummariesCacheStats, SummariesCacheStats, clearSkylimitSettings, res
 import ConfirmModal from '../components/ConfirmModal'
 import { getFeedCacheStats, FeedCacheStats } from '../curation/skylimitFeedCache'
 
+const SCROLL_STATE_KEY = 'websky_skylimit_settings_scroll'
+
 export default function SkylimitSettingsPage() {
   const navigate = useNavigate()
   const [settings, setSettings] = useState<SkylimitSettings | null>(null)
@@ -27,10 +29,42 @@ export default function SkylimitSettingsPage() {
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
 
+  // Load settings and cache stats on mount
   useEffect(() => {
     loadSettings()
     loadCacheStats()
   }, [])
+
+  // Restore scroll position when page loads (after content is ready)
+  // Scroll is saved in SkylimitStatistics.tsx before navigation
+  useEffect(() => {
+    if (loading) return
+
+    const savedScrollY = sessionStorage.getItem(SCROLL_STATE_KEY)
+    if (!savedScrollY) return
+
+    const scrollY = parseInt(savedScrollY, 10)
+    if (isNaN(scrollY) || scrollY <= 0) return
+
+    // Wait for SkylimitStatistics table to load before restoring scroll
+    const attemptRestore = (attempts: number) => {
+      if (attempts <= 0) {
+        window.scrollTo(0, scrollY)
+        return
+      }
+
+      // Check if the Active Followees table has content (tbody with rows)
+      const table = document.querySelector('table tbody tr')
+      if (table) {
+        window.scrollTo(0, scrollY)
+      } else {
+        setTimeout(() => attemptRestore(attempts - 1), 100)
+      }
+    }
+
+    // Start attempting after a short delay, retry up to 30 times (3 seconds)
+    setTimeout(() => attemptRestore(30), 100)
+  }, [loading])
 
   const loadCacheStats = async () => {
     setLoadingStats(true)
