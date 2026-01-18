@@ -99,7 +99,7 @@ export default function SkylimitPostActions({ post, curation, onAmpChange }: Sky
       {showPopup && (
         <div
           ref={popupRef}
-          className="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50"
+          className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="p-3 border-b border-gray-200 dark:border-gray-700">

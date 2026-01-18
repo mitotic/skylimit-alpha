@@ -33,12 +33,16 @@ export default function RepostMenu({ onRepost, onQuotePost, onClose, position }:
     }
   }, [onClose])
 
+  // Ensure menu doesn't overflow viewport on the right
+  const menuWidth = 200 // min-w-[200px]
+  const adjustedX = Math.min(position.x, window.innerWidth - menuWidth - 16)
+
   return createPortal(
     <div
       ref={menuRef}
-      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-2 min-w-[200px]"
+      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-2 min-w-[200px] max-w-[calc(100vw-2rem)]"
       style={{
-        left: `${position.x}px`,
+        left: `${Math.max(8, adjustedX)}px`,
         top: `${position.y}px`,
       }}
       role="menu"

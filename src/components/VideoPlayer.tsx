@@ -86,7 +86,7 @@ export default function VideoPlayer({ playlist, thumbnail, alt, aspectRatio }: V
   if (error) {
     return (
       <div
-        className="relative bg-gray-900 rounded-lg overflow-hidden max-w-[500px] mx-auto flex items-center justify-center"
+        className="relative bg-gray-900 rounded-lg overflow-hidden w-full max-w-[500px] mx-auto flex items-center justify-center"
         style={{ aspectRatio: ratio.toString() }}
       >
         <div className="text-center text-gray-400 p-4">
@@ -102,7 +102,7 @@ export default function VideoPlayer({ playlist, thumbnail, alt, aspectRatio }: V
   if (!isPlaying) {
     return (
       <div
-        className="relative bg-gray-900 rounded-lg overflow-hidden max-w-[500px] mx-auto cursor-pointer group"
+        className="relative bg-gray-900 rounded-lg overflow-hidden w-full max-w-[500px] mx-auto cursor-pointer group"
         style={{ aspectRatio: ratio.toString() }}
         onClick={handlePlay}
       >
@@ -143,7 +143,7 @@ export default function VideoPlayer({ playlist, thumbnail, alt, aspectRatio }: V
 
   return (
     <div
-      className="relative bg-black rounded-lg overflow-hidden max-w-[500px] mx-auto"
+      className="relative bg-black rounded-lg overflow-hidden w-full max-w-[500px] mx-auto"
       style={{ aspectRatio: ratio.toString() }}
     >
       <video

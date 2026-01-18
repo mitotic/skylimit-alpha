@@ -198,21 +198,21 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
             size="sm"
           />
         </div>
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="flex items-center gap-1 sm:gap-2 flex-1 min-w-0 overflow-hidden">
           <span
             onClick={handleAuthorClick}
-            className="font-semibold text-sm hover:underline cursor-pointer"
+            className="font-semibold text-sm hover:underline cursor-pointer truncate max-w-[35%] sm:max-w-none"
           >
             {author.displayName || author.handle}
           </span>
           <span
             onClick={handleAuthorClick}
-            className="text-gray-500 dark:text-gray-400 text-sm hover:underline cursor-pointer"
+            className="text-gray-500 dark:text-gray-400 text-sm hover:underline cursor-pointer truncate max-w-[25%] sm:max-w-none hidden sm:inline"
           >
             @{author.handle}
           </span>
-          <span className="text-gray-500 dark:text-gray-400 text-sm">·</span>
-          <span className="text-gray-500 dark:text-gray-400 text-xs">{timeAgo}</span>
+          <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">·</span>
+          <span className="text-gray-500 dark:text-gray-400 text-xs flex-shrink-0">{timeAgo}</span>
         </div>
       </div>
 

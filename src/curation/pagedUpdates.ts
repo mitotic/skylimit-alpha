@@ -34,8 +34,10 @@ export interface ProbeResult {
   rawPostCount: number        // Total posts fetched from server
   filteredPostCount: number   // Posts that would be displayed (not dropped)
   totalPostCount: number      // All posts considered (may include dropped)
-  oldestProbeTimestamp: number // Timestamp of oldest probed post
-  newestProbeTimestamp: number // Timestamp of newest probed post
+  oldestProbeTimestamp: number // Timestamp of oldest probed post (after cache filtering)
+  newestProbeTimestamp: number // Timestamp of newest probed post (after cache filtering)
+  rawOldestTimestamp: number   // Timestamp of oldest raw post from API
+  rawNewestTimestamp: number   // Timestamp of newest raw post from API
 }
 
 /**
@@ -93,6 +95,8 @@ export async function probeForNewPosts(
     totalPostCount: 0,
     oldestProbeTimestamp: Number.MAX_SAFE_INTEGER,
     newestProbeTimestamp: 0,
+    rawOldestTimestamp: Number.MAX_SAFE_INTEGER,
+    rawNewestTimestamp: 0,
   }
 
   try {
@@ -102,6 +106,17 @@ export async function probeForNewPosts(
 
     if (feed.length === 0) {
       return result
+    }
+
+    // Track raw post timestamps before any filtering
+    for (const post of feed) {
+      const postTimestamp = getFeedViewPostTimestamp(post).getTime()
+      if (postTimestamp < result.rawOldestTimestamp) {
+        result.rawOldestTimestamp = postTimestamp
+      }
+      if (postTimestamp > result.rawNewestTimestamp) {
+        result.rawNewestTimestamp = postTimestamp
+      }
     }
 
     // Get settings and filter data for curation

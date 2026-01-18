@@ -38,7 +38,7 @@ const DEFAULT_MAX_DISPLAYED_FEED_SIZE = 300
 // Saved feed state interface
 interface SavedFeedState {
   displayedFeed: AppBskyFeedDefs.FeedViewPost[]  // Renamed from 'feed' for clarity
-  previousPageFeed: AppBskyFeedDefs.FeedViewPost[]  // Pre-fetched next page for instant Load More
+  previousPageFeed: AppBskyFeedDefs.FeedViewPost[]  // Pre-fetched next page for instant Prev Page
   newestDisplayedPostTimestamp: number | null
   oldestDisplayedPostTimestamp: number | null
   hasMorePosts: boolean  // Deprecated - use previousPageFeed.length > 0
@@ -147,8 +147,8 @@ export default function HomePage() {
   const { agent, session } = useSession()
   const { rateLimitStatus, setRateLimitStatus } = useRateLimit()
   const [feed, setFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])
-  const [previousPageFeed, setPreviousPageFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])  // Pre-fetched next page for instant Load More
-  const [isPrefetching, setIsPrefetching] = useState(false)  // True while fetching next page after Load More
+  const [previousPageFeed, setPreviousPageFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])  // Pre-fetched next page for instant Prev Page
+  const [isPrefetching, setIsPrefetching] = useState(false)  // True while fetching next page after Prev Page
   const [cursor, setCursor] = useState<string | undefined>()  // Keep for backward compatibility
   const [hasMorePosts, setHasMorePosts] = useState(false)  // Deprecated - use previousPageFeed.length > 0
   const [serverCursor, setServerCursor] = useState<string | undefined>(undefined)  // Cursor for server fallback fetches
@@ -171,9 +171,8 @@ export default function HomePage() {
   // Paged fresh updates state
   const [pagedUpdatesEnabled, setPagedUpdatesEnabled] = useState(true) // enabled by default
   const [nextPageReady, setNextPageReady] = useState(false) // true when full page of posts available
-  const [firstProbeTimestamp, setFirstProbeTimestamp] = useState<number | null>(null) // for max wait timer
-  const [partialPageCount, setPartialPageCount] = useState(0) // count when showing partial page
-  // Multi-page tracking state
+  const [partialPageCount, setPartialPageCount] = useState(0) // count when showing partial page (for "All new posts" button)
+  // Multi-page tracking state (kept for logging purposes)
   const [multiPageCount, setMultiPageCount] = useState(0) // total filtered posts when 2+ pages available
   const [idleTimerTriggered, setIdleTimerTriggered] = useState(false) // true when idle time elapsed for partial page
   // Secondary cache sync state (for paged updates lookback)
@@ -203,7 +202,7 @@ export default function HomePage() {
   const scrollRestoreBlockedRef = useRef(false)  // Blocks restoration if user is actively scrolling
   const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)  // For debouncing scroll saves
   const scrollSaveBlockedRef = useRef(false)  // Blocks scroll saves during restoration phase
-  const loadMoreLastCallRef = useRef<number>(0)  // For debouncing Load More button
+  const prevPageLastCallRef = useRef<number>(0)  // For debouncing Prev Page button
 
   // Save feed state when navigating away from home page
   useEffect(() => {
@@ -549,8 +548,8 @@ export default function HomePage() {
     return newFeed
   }, [])
 
-  // Helper function to pre-fetch the next page for instant Load More
-  // This populates previousPageFeed for the NEXT Load More click
+  // Helper function to pre-fetch the next page for instant Prev Page
+  // This populates previousPageFeed for the NEXT Prev Page click
   const prefetchNextPage = useCallback(async (afterTimestamp: number) => {
     if (!agent || !session) return
 
@@ -718,7 +717,7 @@ export default function HomePage() {
       if (!cursor && useCache) {
         const cachedPosts = await getCachedFeed(initialCacheLength)
         if (cachedPosts.length > 0) {
-          // Get last cursor from metadata so "Load More" button appears
+          // Get last cursor from metadata so "Prev Page" button appears
           const metadata = await getLastFetchMetadata()
           const lastCursor = metadata?.lastCursor
           
@@ -761,7 +760,7 @@ export default function HomePage() {
             setIsLoading(false)
             console.log(`[Feed] Loaded ${filteredPosts.length} posts from cache`)
 
-            // Pre-fetch next page for instant Load More (NO SPINNER)
+            // Pre-fetch next page for instant Prev Page (NO SPINNER)
             // Use local variable since state updates are async
             setTimeout(async () => {
               await prefetchNextPage(oldestDisplayedTimestamp)
@@ -1054,7 +1053,7 @@ export default function HomePage() {
           // Mark initial load as complete
           setIsInitialLoad(false)
 
-          // Pre-fetch next page for instant Load More (when no lookback needed)
+          // Pre-fetch next page for instant Prev Page (when no lookback needed)
           // If lookback will happen, prefetch is done after redisplayFeed
           if (cacheIsFresh && !cursor) {
             setTimeout(async () => {
@@ -1756,7 +1755,6 @@ export default function HomePage() {
         const pagedSettings = await getPagedUpdatesSettings()
         const pageSize = pagedSettings.pageSize
         const varFactor = pagedSettings.varFactor
-        const maxWaitMinutes = pagedSettings.maxWaitMinutes
 
         // Calculate how many raw posts to fetch (use 3x pageSize for multi-page detection)
         const pageRaw = calculatePageRaw(pageSize * 3, currentFilterFrac, varFactor)
@@ -1772,21 +1770,16 @@ export default function HomePage() {
           currentTimestamp
         )
 
-        console.log(`[Paged Updates] Probe result: ${probeResult.filteredPostCount}/${pageSize} displayable posts (${probeResult.totalPostCount} newer, ${probeResult.rawPostCount} raw, pages=${probeResult.pageCount}, multiPage=${probeResult.hasMultiplePages})`)
+        const rawNewestTime = probeResult.rawNewestTimestamp > 0 ? new Date(probeResult.rawNewestTimestamp).toLocaleTimeString() : 'N/A'
+        const rawOldestTime = probeResult.rawOldestTimestamp < Number.MAX_SAFE_INTEGER ? new Date(probeResult.rawOldestTimestamp).toLocaleTimeString() : 'N/A'
+        console.log(`[Paged Updates] Probe result: ${probeResult.filteredPostCount}/${pageSize} displayable posts (${probeResult.totalPostCount} processed, ${probeResult.rawPostCount} raw, rawNewest=${rawNewestTime}, rawOldest=${rawOldestTime})`)
 
         // Debug: save expected count for comparison when button is clicked
         probeExpectedCountRef.current = probeResult.filteredPostCount
 
-        // Track first probe timestamp for max wait timer
-        if (probeResult.filteredPostCount > 0 && !firstProbeTimestamp) {
-          setFirstProbeTimestamp(Date.now())
-        }
-
-        // Check if we have a full page or max wait exceeded
+        // Check if we have a full page
         const hasFullPage = probeResult.filteredPostCount >= pageSize
         const hasMultiplePages = probeResult.hasMultiplePages
-        const maxWaitExceeded = firstProbeTimestamp &&
-          (Date.now() - firstProbeTimestamp) >= maxWaitMinutes * 60 * 1000
 
         // Check cooldown - don't show buttons immediately after displaying posts
         const inCooldown = Date.now() - lastDisplayTimeRef.current < DISPLAY_COOLDOWN_MS
@@ -1795,7 +1788,7 @@ export default function HomePage() {
           return
         }
 
-        // Update multi-page count when multiple pages detected
+        // Update multi-page count when multiple pages detected (for logging)
         if (hasMultiplePages) {
           setMultiPageCount(probeResult.filteredPostCount)
           console.log(`[Paged Updates] Multi-page detected: ${probeResult.filteredPostCount} posts (${probeResult.pageCount} pages)`)
@@ -1803,19 +1796,18 @@ export default function HomePage() {
           setMultiPageCount(0)
         }
 
-        if (hasFullPage || (maxWaitExceeded && probeResult.filteredPostCount > 0)) {
-          setNextPageReady(true)
-          setNewPostsCount(probeResult.filteredPostCount)
-          setPartialPageCount(maxWaitExceeded && !hasFullPage ? probeResult.filteredPostCount : 0)
-          setShowNewPostsButton(true)
-          console.log(`[Paged Updates] ${hasFullPage ? 'Full page ready' : 'Max wait exceeded'}: ${probeResult.filteredPostCount} posts → SHOWING BUTTON`)
+        // Simplified button logic:
+        // - "New Page" button: active when hasFullPage, grayed otherwise (always visible)
+        // - "All new posts" button: controlled by idle timer (see separate useEffect)
+        setNextPageReady(hasFullPage)
+        setNewPostsCount(probeResult.filteredPostCount)
+        setPartialPageCount(probeResult.filteredPostCount) // Always track for idle timer
+        setShowNewPostsButton(hasFullPage) // For standard mode compatibility
+
+        if (hasFullPage) {
+          console.log(`[Paged Updates] Full page ready: ${probeResult.filteredPostCount} posts`)
         } else {
-          // Not ready yet, keep tracking
-          setNextPageReady(false)
-          setNewPostsCount(probeResult.filteredPostCount) // Update count for display
-          setPartialPageCount(probeResult.filteredPostCount) // Track partial count for idle timer
-          setShowNewPostsButton(false) // Hide button until ready
-          console.log(`[Paged Updates] Not ready yet: ${probeResult.filteredPostCount}/${pageSize} posts, maxWaitExceeded=${maxWaitExceeded}`)
+          console.log(`[Paged Updates] Partial page: ${probeResult.filteredPostCount}/${pageSize} posts (idle timer will handle "All new posts" button)`)
         }
       } catch (error) {
         console.warn('[Paged Updates] Probe error:', error)
@@ -1862,10 +1854,11 @@ export default function HomePage() {
       // Calculate time since top post was displayed
       const timeSinceTopPost = Date.now() - newestDisplayedPostTimestamp
 
-      // Trigger if idle time exceeded and partial posts available
-      if (timeSinceTopPost >= maxWaitMs && partialPageCount > 0 && !nextPageReady) {
+      // Trigger "All new posts" button if idle time exceeded and any posts available
+      // This is independent of nextPageReady - shows "All new posts" even when "New Page" is active
+      if (timeSinceTopPost >= maxWaitMs && partialPageCount > 0) {
         setIdleTimerTriggered(true)
-        console.log(`[Idle Timer] Triggered: ${Math.round(timeSinceTopPost / 60000)} min elapsed, ${partialPageCount} partial posts available`)
+        console.log(`[Idle Timer] Triggered: ${Math.round(timeSinceTopPost / 60000)} min elapsed, ${partialPageCount} posts available`)
       } else {
         setIdleTimerTriggered(false)
       }
@@ -1876,7 +1869,7 @@ export default function HomePage() {
     const interval = setInterval(checkIdleTime, 30000)
 
     return () => clearInterval(interval)
-  }, [newestDisplayedPostTimestamp, pagedUpdatesEnabled, isInitialLoad, partialPageCount, nextPageReady])
+  }, [newestDisplayedPostTimestamp, pagedUpdatesEnabled, isInitialLoad, partialPageCount])
 
   // Periodically fetch new posts from Bluesky server to update cache
   // This ensures the cache stays fresh and the periodic cache check can detect new posts
@@ -2202,9 +2195,9 @@ export default function HomePage() {
           setNewPostsCount(0)
           setShowNewPostsButton(false)
           setNextPageReady(false)
-          setFirstProbeTimestamp(null)
           setPartialPageCount(0)
           setMultiPageCount(0)
+          setIdleTimerTriggered(false)
           lastDisplayTimeRef.current = Date.now()
 
           // Clear session storage to force fresh load from cache (not restore old feed)
@@ -2377,7 +2370,6 @@ export default function HomePage() {
         setNewPostsCount(0)
         setShowNewPostsButton(false)
         setNextPageReady(false)
-        setFirstProbeTimestamp(null)
         setPartialPageCount(0)
         setIdleTimerTriggered(false)
         setMultiPageCount(0)
@@ -2440,7 +2432,7 @@ export default function HomePage() {
     }, 1000)
   }, [])
 
-  const handleLoadMore = useCallback(async () => {
+  const handlePrevPage = useCallback(async () => {
     // Guard: button shouldn't be visible if empty, but check anyway
     if (previousPageFeed.length === 0) return
 
@@ -2449,11 +2441,11 @@ export default function HomePage() {
 
     // Debounce: Skip if called within 300ms of last call
     const now = Date.now()
-    if (now - loadMoreLastCallRef.current < 300) {
-      console.log('[Load More] Debounced - called too quickly')
+    if (now - prevPageLastCallRef.current < 300) {
+      console.log('[Prev Page] Debounced - called too quickly')
       return
     }
-    loadMoreLastCallRef.current = now
+    prevPageLastCallRef.current = now
 
     // Check if background lookback is in progress
     if (lookingBack) {
@@ -2461,7 +2453,7 @@ export default function HomePage() {
       return
     }
 
-    console.log(`[Load More] INSTANT: Displaying ${previousPageFeed.length} pre-fetched posts`)
+    console.log(`[Prev Page] INSTANT: Displaying ${previousPageFeed.length} pre-fetched posts`)
 
     // 1. INSTANT: Display previousPageFeed (from memory, no IndexedDB access)
     const feedReceivedTime = new Date()
@@ -2474,7 +2466,7 @@ export default function HomePage() {
     setFeed(prevFeed => {
       const existingUris = new Set(prevFeed.map(p => getPostUniqueId(p)))
       const newPosts = previousPageFeed.filter(p => !existingUris.has(getPostUniqueId(p)))
-      console.log(`[Load More] Appending ${newPosts.length} pre-fetched posts`)
+      console.log(`[Prev Page] Appending ${newPosts.length} pre-fetched posts`)
       return [...prevFeed, ...newPosts]
     })
 
@@ -2519,8 +2511,8 @@ export default function HomePage() {
       (entries) => {
         const entry = entries[0]
         if (entry.isIntersecting && previousPageFeed.length > 0 && !isPrefetching) {
-          // Call handleLoadMore when sentinel is visible
-          handleLoadMore()
+          // Call handlePrevPage when sentinel is visible
+          handlePrevPage()
         }
       },
       {
@@ -2541,7 +2533,7 @@ export default function HomePage() {
         intersectionObserverRef.current = null
       }
     }
-  }, [infiniteScrollingEnabled, previousPageFeed, isPrefetching, handleLoadMore])
+  }, [infiniteScrollingEnabled, previousPageFeed, isPrefetching, handlePrevPage])
 
   const handleLike = async (uri: string, cid: string) => {
     if (!agent) return
@@ -2806,19 +2798,18 @@ export default function HomePage() {
                     )}
                   </button>
 
-                  {/* "All n new posts" button - shown when multi-page or partial (after idle timer) */}
-                  {(multiPageCount >= 50 || (idleTimerTriggered && partialPageCount > 0)) && (
+                  {/* "All n new posts" button - shown when idle timer triggered and posts available */}
+                  {idleTimerTriggered && partialPageCount > 0 && (
                     <button
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
-                        const allCount = multiPageCount > 0 ? multiPageCount : partialPageCount
-                        console.log('[All New Posts] Button clicked', { allCount, multiPageCount, partialPageCount, idleTimerTriggered, newPostsCount })
+                        console.log('[All New Posts] Button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
                         handleLoadAllNewPosts()
                       }}
                       disabled={isLoadingMore}
                       className="flex-1 btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
-                      aria-label={`Load all ${multiPageCount > 0 ? multiPageCount : partialPageCount} new posts`}
+                      aria-label={`Load all ${partialPageCount} new posts`}
                     >
                       {isLoadingMore ? (
                         <>
@@ -2828,7 +2819,7 @@ export default function HomePage() {
                       ) : (
                         <>
                           <span>📬</span>
-                          All new posts ({multiPageCount > 0 ? multiPageCount : partialPageCount})
+                          All new posts ({partialPageCount})
                         </>
                       )}
                     </button>
@@ -2912,15 +2903,15 @@ export default function HomePage() {
         {!infiniteScrollingEnabled && !lookingBack && (
           <div className="p-4 text-center">
             {isPrefetching ? (
-              // State 1: After clicking Load More, prefetching next page - show spinner
+              // State 1: After clicking Prev Page, prefetching next page - show spinner
               <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
                 <Spinner size="sm" />
                 <span>Loading...</span>
               </div>
             ) : previousPageFeed.length > 0 ? (
-              // State 2: More posts available - show Load More button
+              // State 2: More posts available - show Prev Page button
               <button
-                onClick={handleLoadMore}
+                onClick={handlePrevPage}
                 disabled={syncInProgress}
                 className="btn btn-secondary"
               >
@@ -2930,7 +2921,7 @@ export default function HomePage() {
                     Synchronizing... {syncProgress}%
                   </span>
                 ) : (
-                  'Load More'
+                  'Prev Page'
                 )}
               </button>
             ) : !isLoading && feed.length > 0 ? (

@@ -282,7 +282,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               {showPopup && curation && (
                 <div
                   ref={popupRef}
-                  className={`absolute right-0 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
+                  className={`absolute right-0 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
                     popupPosition === 'above' 
                       ? 'bottom-full mb-1' 
                       : 'top-full mt-1'
@@ -394,7 +394,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             {showPopup && curation && (
               <div
                 ref={popupRef}
-                className={`absolute right-4 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
+                className={`absolute right-4 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
                   popupPosition === 'above' 
                     ? 'bottom-full mb-1' 
                     : 'top-12'
@@ -473,21 +473,21 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 relative">
+          <div className="flex items-center gap-2 mb-1 relative min-w-0 flex-wrap">
             <span
               onClick={handleAuthorClick}
-              className="font-semibold hover:underline cursor-pointer"
+              className="font-semibold hover:underline cursor-pointer truncate max-w-[40%] sm:max-w-none"
             >
               {author.displayName || author.handle}
             </span>
             <span
               onClick={handleAuthorClick}
-              className="text-gray-500 dark:text-gray-400 hover:underline cursor-pointer"
+              className="text-gray-500 dark:text-gray-400 hover:underline cursor-pointer truncate max-w-[30%] sm:max-w-none hidden sm:inline"
             >
               @{author.handle}
             </span>
             <span className="text-gray-500 dark:text-gray-400">·</span>
-            <span className="text-gray-500 dark:text-gray-400 text-sm">{timeAgo}</span>
+            <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">{timeAgo}</span>
             {/* Counter for replies - show on same line as author name */}
             {isReply && showCounterDisplay && !isReposted && (
               <>
@@ -515,7 +515,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 {showPopup && curation && (
                   <div
                     ref={popupRef}
-                    className={`absolute right-0 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
+                    className={`absolute right-0 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
                       popupPosition === 'above' 
                         ? 'bottom-full mb-1' 
                         : 'top-full mt-1'
