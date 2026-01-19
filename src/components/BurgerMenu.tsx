@@ -16,7 +16,11 @@ export default function BurgerMenu() {
   const [isResettingAll, setIsResettingAll] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const isActive = (path: string) => location.pathname === path
+  // Check if a nav item is active - compare pathname only (ignore query params)
+  const isActive = (path: string) => {
+    const pathWithoutQuery = path.split('?')[0]
+    return location.pathname === pathWithoutQuery
+  }
 
   // Close menu when route changes
   useEffect(() => {
@@ -58,7 +62,7 @@ export default function BurgerMenu() {
     { path: '/', label: 'Home', icon: '🏠' },
     { path: '/notifications', label: 'Notifications', icon: '🔔', badge: unreadCount > 0 ? unreadCount : undefined },
     { path: '/search', label: 'Search', icon: '🔍' },
-    { path: '/settings', label: 'Settings', icon: '⚙️' },
+    { path: '/settings?tab=basic', label: 'Settings', icon: '⚙️' },
   ]
 
   const handleProfileClick = () => {

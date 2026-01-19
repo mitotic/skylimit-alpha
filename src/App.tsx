@@ -8,7 +8,6 @@ import HomePage from './routes/HomePage'
 import SearchPage from './routes/SearchPage'
 import ProfilePage from './routes/ProfilePage'
 import SettingsPage from './routes/SettingsPage'
-import SkylimitSettingsPage from './routes/SkylimitSettingsPage'
 import ThreadPage from './routes/ThreadPage'
 import NotificationsPage from './routes/NotificationsPage'
 
@@ -32,7 +31,6 @@ function App() {
                   <Route path="/profile/:actor" element={<ProfilePage />} />
                   <Route path="/post/:uri" element={<ThreadPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
-                  <Route path="/settings/skylimit" element={<SkylimitSettingsPage />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Layout>

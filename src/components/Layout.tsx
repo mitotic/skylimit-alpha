@@ -16,7 +16,7 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const { session, agent } = useSession()
   const [userAvatar, setUserAvatar] = useState<string | undefined>()
-  const [escapeToBlueSky, setEscapeToBlueSky] = useState(false)
+  const [clickToBlueSky, setClickToBlueSky] = useState(false)
 
   const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications'
 
@@ -39,18 +39,18 @@ export default function Layout({ children }: LayoutProps) {
     fetchUserAvatar()
   }, [agent, session])
 
-  // Load escape to Bluesky setting
+  // Load click to Bluesky setting (reload on navigation to pick up changes from settings page)
   useEffect(() => {
-    const loadEscapeSetting = async () => {
+    const loadClickToBlueskySetting = async () => {
       try {
         const settings = await getSettings()
-        setEscapeToBlueSky(settings?.escapeToBlueSky || false)
+        setClickToBlueSky(settings?.clickToBlueSky || false)
       } catch (error) {
-        console.error('Error loading escape setting:', error)
+        console.error('Error loading click to Bluesky setting:', error)
       }
     }
-    loadEscapeSetting()
-  }, [])
+    loadClickToBlueskySetting()
+  }, [location.pathname])
 
   const handleBack = () => {
     if (window.history.length > 1) {
@@ -90,21 +90,9 @@ export default function Layout({ children }: LayoutProps) {
                 <img
                   src="/SkylimitLogo.png"
                   alt="Skylimit"
-                  className="h-11 w-11 object-contain"
+                  className={`h-11 w-11 object-contain ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full' : ''}`}
                 />
               </button>
-              {escapeToBlueSky && (
-                <a
-                  href="https://bsky.app"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-2xl hover:opacity-80 transition-opacity"
-                  aria-label="Open Bluesky"
-                  title="Open Bluesky"
-                >
-                  🦋
-                </a>
-              )}
               <span className="text-sm text-gray-500 dark:text-gray-400">Alpha version</span>
             </div>
             <div className="flex justify-end min-w-0 flex-shrink">

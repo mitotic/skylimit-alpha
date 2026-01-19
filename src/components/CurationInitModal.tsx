@@ -50,7 +50,7 @@ export default function CurationInitModal({ isOpen, onClose, stats }: CurationIn
         </div>
 
         <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
-          Use Settings → Skylimit Settings to adjust curation
+          Use Settings → Curation tab to adjust curation
         </p>
 
         <button

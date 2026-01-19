@@ -14,7 +14,11 @@ export default function Navigation() {
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
 
-  const isActive = (path: string) => location.pathname === path
+  // Check if a nav item is active - compare pathname only (ignore query params)
+  const isActive = (path: string) => {
+    const pathWithoutQuery = path.split('?')[0]
+    return location.pathname === pathWithoutQuery
+  }
 
   // Fetch unread notification count
   useEffect(() => {
@@ -72,7 +76,7 @@ export default function Navigation() {
     { path: '/', label: 'Home', icon: '🏠' },
     { path: '/notifications', label: 'Notifications', icon: '🔔', badge: unreadCount > 0 ? unreadCount : undefined },
     { path: '/search', label: 'Search', icon: '🔍' },
-    { path: '/settings', label: 'Settings', icon: '⚙️' },
+    { path: '/settings?tab=basic', label: 'Settings', icon: '⚙️' },
   ]
 
   const handleProfileClick = () => {

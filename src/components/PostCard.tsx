@@ -53,7 +53,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [debugMode, setDebugMode] = useState(false)
   const [curationDisabled, setCurationDisabled] = useState(false)
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
-  const [escapeToBlueSky, setEscapeToBlueSky] = useState(false)
+  const [clickToBlueSky, setClickToBlueSky] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
@@ -82,8 +82,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           const settings = await getSettings()
           // Track curation disabled state for styling
           setCurationDisabled(settings?.disabled || false)
-          // Load escape to Bluesky setting
-          setEscapeToBlueSky(settings?.escapeToBlueSky || false)
+          // Load click to Bluesky setting
+          setClickToBlueSky(settings?.clickToBlueSky || false)
           // Get page length for page boundary indicator
           setFeedPageLength(settings?.feedPageLength || 25)
           // Show counter unless curation is disabled
@@ -226,7 +226,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const handlePostClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget || (e.target as HTMLElement).closest('button') === null) {
       if (actualPost.uri) {
-        if (escapeToBlueSky) {
+        if (clickToBlueSky) {
           // Open in Bluesky client
           const url = getBlueSkyPostUrl(actualPost.uri, author.handle)
           window.open(url, '_blank', 'noopener,noreferrer')
@@ -241,7 +241,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (escapeToBlueSky) {
+    if (clickToBlueSky) {
       window.open(getBlueSkyProfileUrl(author.handle), '_blank', 'noopener,noreferrer')
     } else {
       navigate(`/profile/${author.handle}`)
@@ -251,7 +251,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const handleReposterClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (repostedBy?.handle) {
-      if (escapeToBlueSky) {
+      if (clickToBlueSky) {
         window.open(getBlueSkyProfileUrl(repostedBy.handle), '_blank', 'noopener,noreferrer')
       } else {
         navigate(`/profile/${repostedBy.handle}`)
@@ -360,11 +360,11 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     <button
                       onClick={() => {
                         setShowPopup(false)
-                        navigate('/settings/skylimit')
+                        navigate('/settings?tab=curation')
                       }}
                       className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
                     >
-                      Skylimit Settings
+                      Curation Settings
                     </button>
                   </div>
                 </div>
@@ -472,11 +472,11 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   <button
                     onClick={() => {
                       setShowPopup(false)
-                      navigate('/settings/skylimit')
+                      navigate('/settings?tab=curation')
                     }}
                     className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
                   >
-                    Skylimit Settings
+                    Curation Settings
                   </button>
                 </div>
               </div>
@@ -593,11 +593,11 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                       <button
                         onClick={() => {
                           setShowPopup(false)
-                          navigate('/settings/skylimit')
+                          navigate('/settings?tab=curation')
                         }}
                         className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
                       >
-                        Skylimit Settings
+                        Curation Settings
                       </button>
                     </div>
                   </div>

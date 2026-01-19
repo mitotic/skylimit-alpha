@@ -155,8 +155,8 @@ export interface SkylimitSettings {
   lookbackDays?: number // number of days to cache back from today, default 1
   // Feed display settings
   maxDisplayedFeedSize?: number // max posts in displayed feed, default 300
-  // Escape to Bluesky settings
-  escapeToBlueSky?: boolean // redirect posts/profiles to bsky.app, default false
+  // Click to Bluesky settings
+  clickToBlueSky?: boolean // redirect posts/profiles to bsky.app, default false
 }
 
 // Extended FeedViewPost with curation metadata

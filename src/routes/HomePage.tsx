@@ -10,7 +10,6 @@ import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
-import SkylimitHomeDialog from '../components/SkylimitHomeDialog'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
 import { initDB, getFilter, getSummaryByUniqueId, isSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
@@ -159,7 +158,6 @@ export default function HomePage() {
   const [quotePost, setQuotePost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [dbInitialized, setDbInitialized] = useState(false)
-  const [showSkylimitDialog, setShowSkylimitDialog] = useState(false)
   const [skylimitStats, setSkylimitStats] = useState<GlobalStats | null>(null)
   const [newPostsCount, setNewPostsCount] = useState(0)
   const [showNewPostsButton, setShowNewPostsButton] = useState(false)
@@ -2972,11 +2970,6 @@ export default function HomePage() {
       />
 
       <ToastContainer toasts={toasts} onRemove={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />
-      
-      <SkylimitHomeDialog
-        isOpen={showSkylimitDialog}
-        onClose={() => setShowSkylimitDialog(false)}
-      />
 
       <CurationInitModal
         isOpen={showCurationInitModal}

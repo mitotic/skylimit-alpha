@@ -26,7 +26,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   const { agent } = useSession()
   const [fullPost, setFullPost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [isLoadingFullPost, setIsLoadingFullPost] = useState(false)
-  const [escapeToBlueSky, setEscapeToBlueSky] = useState(false)
+  const [clickToBlueSky, setEscapeToBlueSky] = useState(false)
 
   // Parse the record safely - do this before any early returns
   const recordAny = record.record && typeof record.record === 'object' ? record.record as any : null
@@ -129,7 +129,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
     const loadEscapeSetting = async () => {
       try {
         const settings = await getSettings()
-        setEscapeToBlueSky(settings?.escapeToBlueSky || false)
+        setEscapeToBlueSky(settings?.clickToBlueSky || false)
       } catch (error) {
         console.error('Error loading escape setting:', error)
       }
@@ -187,7 +187,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (displayPost.uri) {
-      if (escapeToBlueSky) {
+      if (clickToBlueSky) {
         // Open in Bluesky client
         const url = getBlueSkyPostUrl(displayPost.uri, author.handle)
         window.open(url, '_blank', 'noopener,noreferrer')
@@ -204,7 +204,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
 
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (escapeToBlueSky) {
+    if (clickToBlueSky) {
       window.open(getBlueSkyProfileUrl(author.handle), '_blank', 'noopener,noreferrer')
     } else {
       navigate(`/profile/${author.handle}`)
