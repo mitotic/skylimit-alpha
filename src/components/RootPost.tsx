@@ -5,6 +5,8 @@ import { formatDistanceToNow } from 'date-fns'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread } from '../api/feed'
 import { getCachedRootPost, saveCachedRootPost } from '../curation/parentPostCache'
+import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
+import { getSettings } from '../curation/skylimitStore'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
 
@@ -19,6 +21,7 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
   const { agent } = useSession()
   const [rootPost, setRootPost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [clickToBlueSky, setClickToBlueSky] = useState(false)
 
   useEffect(() => {
     if (!agent || !rootUri) return
@@ -58,6 +61,19 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
     fetchRoot()
   }, [agent, rootUri])
 
+  // Load click to Bluesky setting
+  useEffect(() => {
+    const loadSetting = async () => {
+      try {
+        const settings = await getSettings()
+        setClickToBlueSky(settings?.clickToBlueSky || false)
+      } catch (error) {
+        console.error('Error loading click to Bluesky setting:', error)
+      }
+    }
+    loadSetting()
+  }, [])
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-2">
@@ -81,18 +97,27 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (rootPost.uri) {
-      const encodedUri = encodeURIComponent(rootPost.uri)
-      if (onClick) {
-        onClick(rootPost.uri)
+      if (clickToBlueSky) {
+        // Open in Bluesky client (same tab)
+        window.location.href = getBlueSkyPostUrl(rootPost.uri, author.handle)
       } else {
-        navigate(`/post/${encodedUri}`)
+        const encodedUri = encodeURIComponent(rootPost.uri)
+        if (onClick) {
+          onClick(rootPost.uri)
+        } else {
+          navigate(`/post/${encodedUri}`)
+        }
       }
     }
   }
 
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    navigate(`/profile/${author.handle}`)
+    if (clickToBlueSky) {
+      window.location.href = getBlueSkyProfileUrl(author.handle)
+    } else {
+      navigate(`/profile/${author.handle}`)
+    }
   }
 
   // Line style: solid for direct reply, dashed for nested reply

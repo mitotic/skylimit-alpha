@@ -188,9 +188,8 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
     e.stopPropagation()
     if (displayPost.uri) {
       if (clickToBlueSky) {
-        // Open in Bluesky client
-        const url = getBlueSkyPostUrl(displayPost.uri, author.handle)
-        window.open(url, '_blank', 'noopener,noreferrer')
+        // Open in Bluesky client (same tab)
+        window.location.href = getBlueSkyPostUrl(displayPost.uri, author.handle)
       } else {
         const encodedUri = encodeURIComponent(displayPost.uri)
         if (onClick) {
@@ -205,7 +204,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (clickToBlueSky) {
-      window.open(getBlueSkyProfileUrl(author.handle), '_blank', 'noopener,noreferrer')
+      window.location.href = getBlueSkyProfileUrl(author.handle)
     } else {
       navigate(`/profile/${author.handle}`)
     }

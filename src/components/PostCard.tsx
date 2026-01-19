@@ -227,9 +227,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     if (e.target === e.currentTarget || (e.target as HTMLElement).closest('button') === null) {
       if (actualPost.uri) {
         if (clickToBlueSky) {
-          // Open in Bluesky client
-          const url = getBlueSkyPostUrl(actualPost.uri, author.handle)
-          window.open(url, '_blank', 'noopener,noreferrer')
+          // Open in Bluesky client (same tab)
+          window.location.href = getBlueSkyPostUrl(actualPost.uri, author.handle)
         } else {
           // Navigate within Websky
           const encodedUri = encodeURIComponent(actualPost.uri)
@@ -242,7 +241,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (clickToBlueSky) {
-      window.open(getBlueSkyProfileUrl(author.handle), '_blank', 'noopener,noreferrer')
+      window.location.href = getBlueSkyProfileUrl(author.handle)
     } else {
       navigate(`/profile/${author.handle}`)
     }
@@ -252,7 +251,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     e.stopPropagation()
     if (repostedBy?.handle) {
       if (clickToBlueSky) {
-        window.open(getBlueSkyProfileUrl(repostedBy.handle), '_blank', 'noopener,noreferrer')
+        window.location.href = getBlueSkyProfileUrl(repostedBy.handle)
       } else {
         navigate(`/profile/${repostedBy.handle}`)
       }
