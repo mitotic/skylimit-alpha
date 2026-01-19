@@ -2,12 +2,12 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, FeedCacheEntry } from './types'
 import { getIntervalString } from './skylimitGeneral'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 
 const DB_NAME = 'skylimit_db'
-const DB_VERSION = 7 // Increment version to add secondary feed cache store
+const DB_VERSION = 8 // Increment version: renamed uri to uniqueId in FeedCacheEntry (clears cache)
 
 // Store names
 const STORE_SUMMARIES = 'summaries'
@@ -34,7 +34,6 @@ export async function initDB(): Promise<IDBDatabase> {
     // so the handler must be registered immediately after opening the request
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result
-      const transaction = (event.target as IDBOpenDBRequest).transaction!
 
       // Summaries store: indexed by interval string
       if (!database.objectStoreNames.contains(STORE_SUMMARIES)) {
@@ -65,20 +64,15 @@ export async function initDB(): Promise<IDBDatabase> {
       }
 
       // Feed cache store: for caching full FeedViewPost objects
-      let feedCacheStore: IDBObjectStore
-      if (!database.objectStoreNames.contains('feed_cache')) {
-        feedCacheStore = database.createObjectStore('feed_cache', { keyPath: 'uri' })
-        feedCacheStore.createIndex('timestamp', 'timestamp', { unique: false })
-        feedCacheStore.createIndex('interval', 'interval', { unique: false })
-        feedCacheStore.createIndex('cachedAt', 'cachedAt', { unique: false })
-        feedCacheStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
-      } else {
-        // Add postTimestamp index if it doesn't exist (for existing stores)
-        feedCacheStore = transaction.objectStore('feed_cache')
-        if (!feedCacheStore.indexNames.contains('postTimestamp')) {
-          feedCacheStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
-        }
+      // Delete and recreate to change keyPath from 'uri' to 'uniqueId'
+      if (database.objectStoreNames.contains('feed_cache')) {
+        database.deleteObjectStore('feed_cache')
       }
+      const feedCacheStore = database.createObjectStore('feed_cache', { keyPath: 'uniqueId' })
+      feedCacheStore.createIndex('timestamp', 'timestamp', { unique: false })
+      feedCacheStore.createIndex('interval', 'interval', { unique: false })
+      feedCacheStore.createIndex('cachedAt', 'cachedAt', { unique: false })
+      feedCacheStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
 
       // Feed metadata store: for storing last fetch cursor and timestamp
       if (!database.objectStoreNames.contains('feed_metadata')) {
@@ -96,11 +90,13 @@ export async function initDB(): Promise<IDBDatabase> {
 
       // Secondary feed cache store: for temporary lookback posts before merge
       // Same structure as primary feed_cache but used for gap-filling during lookback
-      if (!database.objectStoreNames.contains(STORE_FEED_CACHE_SECONDARY)) {
-        const secondaryFeedCacheStore = database.createObjectStore(STORE_FEED_CACHE_SECONDARY, { keyPath: 'uri' })
-        secondaryFeedCacheStore.createIndex('timestamp', 'timestamp', { unique: false })
-        secondaryFeedCacheStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
+      // Delete and recreate to change keyPath from 'uri' to 'uniqueId'
+      if (database.objectStoreNames.contains(STORE_FEED_CACHE_SECONDARY)) {
+        database.deleteObjectStore(STORE_FEED_CACHE_SECONDARY)
       }
+      const secondaryFeedCacheStore = database.createObjectStore(STORE_FEED_CACHE_SECONDARY, { keyPath: 'uniqueId' })
+      secondaryFeedCacheStore.createIndex('timestamp', 'timestamp', { unique: false })
+      secondaryFeedCacheStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
     }
 
     request.onerror = () => reject(request.error)
@@ -151,15 +147,15 @@ export async function saveSummaries(interval: string, summaries: PostSummary[]):
   // Add existing summaries first (they take precedence)
   if (existing) {
     for (const summary of existing) {
-      summaryMap.set(summary.uri, summary)
+      summaryMap.set(summary.uniqueId, summary)
     }
   }
 
   // Add new summaries ONLY if not already present (preserve existing curation decisions)
   let skippedCount = 0
   for (const summary of summaries) {
-    if (!summaryMap.has(summary.uri)) {
-      summaryMap.set(summary.uri, summary)
+    if (!summaryMap.has(summary.uniqueId)) {
+      summaryMap.set(summary.uniqueId, summary)
     } else {
       skippedCount++
     }
@@ -302,31 +298,31 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
 }
 
 /**
- * Get post summary by unique ID (uri for originals, `${did}:${uri}` for reposts)
+ * Get post summary by unique ID (post URI for originals, `${did}:${uri}` for reposts)
  */
-export async function getSummaryByUri(uniqueId: string): Promise<PostSummary | null> {
+export async function getSummaryByUniqueId(uniqueId: string): Promise<PostSummary | null> {
   await getDB() // Ensure DB is initialized
   const intervals = await getAllIntervals()
-  
+
   // Search through all intervals to find the summary
   for (const interval of intervals) {
     const summaries = await getSummaries(interval)
     if (summaries) {
-      const summary = summaries.find(s => s.uri === uniqueId)
+      const summary = summaries.find(s => s.uniqueId === uniqueId)
       if (summary) {
         return summary
       }
     }
   }
-  
+
   return null
 }
 
 /**
  * Check if a post exists in summary cache using interval-based lookup
- * More efficient than getSummaryByUri which searches all intervals
+ * More efficient than getSummaryByUniqueId which searches all intervals
  *
- * @param uniqueId - Post unique ID (uri for originals, `${did}:${uri}` for reposts)
+ * @param uniqueId - Post unique ID (post URI for originals, `${did}:${uri}` for reposts)
  * @param postTimestamp - Timestamp of the post (used to determine which interval to check)
  * @returns true if summary exists, false otherwise
  */
@@ -334,7 +330,7 @@ export async function checkSummaryExists(uniqueId: string, postTimestamp: Date):
   try {
     const interval = getIntervalString(postTimestamp)
     const summaries = await getSummaries(interval)
-    return summaries?.some(s => s.uri === uniqueId) ?? false
+    return summaries?.some(s => s.uniqueId === uniqueId) ?? false
   } catch (error) {
     console.warn('[checkSummaryExists] Error:', error)
     return false
@@ -356,7 +352,7 @@ export async function updateSummaryCurationStatus(
   for (const interval of intervals) {
     const summaries = await getSummaries(interval)
     if (summaries) {
-      const index = summaries.findIndex(s => s.uri === uniqueId)
+      const index = summaries.findIndex(s => s.uniqueId === uniqueId)
       if (index !== -1) {
         summaries[index].curation_dropped = curationStatus
         await saveSummaries(interval, summaries)
@@ -785,9 +781,13 @@ export async function clearSkylimitSettings(): Promise<void> {
 
 /**
  * Secondary cache entry type (same as primary FeedCacheEntry)
+ *
+ * IMPORTANT: uniqueId is NOT the same as the post's URI for reposts.
+ * - For original posts: uniqueId equals post.post.uri
+ * - For reposts: uniqueId is `${reposterDid}:${post.post.uri}`
  */
 export interface SecondaryCacheEntry {
-  uri: string
+  uniqueId: string               // Unique identifier (see above for format)
   post: any  // FeedViewPost
   timestamp: number              // feedReceivedTime
   postTimestamp: number          // actual post creation/repost time
@@ -943,16 +943,16 @@ export async function getSecondaryCacheStats(): Promise<SecondaryCacheStats> {
 }
 
 /**
- * Check if a post URI exists in the secondary cache
+ * Check if a post uniqueId exists in the secondary cache
  */
-export async function isInSecondaryCache(uri: string): Promise<boolean> {
+export async function isInSecondaryCache(uniqueId: string): Promise<boolean> {
   try {
     const database = await getDB()
     const transaction = database.transaction([STORE_FEED_CACHE_SECONDARY], 'readonly')
     const store = transaction.objectStore(STORE_FEED_CACHE_SECONDARY)
 
     return new Promise((resolve, reject) => {
-      const request = store.get(uri)
+      const request = store.get(uniqueId)
       request.onsuccess = () => resolve(request.result !== undefined)
       request.onerror = () => reject(request.error)
     })
@@ -1029,9 +1029,14 @@ export async function getAllSecondaryPostsOldestFirst(): Promise<SecondaryCacheE
 
 /**
  * Check if the oldest post in secondary cache overlaps with primary cache
- * Returns the overlap URI if found
+ * Returns the overlap URI, timestamp, and handle if found
  */
-export async function checkSecondaryPrimaryOverlap(): Promise<{ hasOverlap: boolean; overlapUri?: string }> {
+export async function checkSecondaryPrimaryOverlap(): Promise<{
+  hasOverlap: boolean;
+  overlapUri?: string;
+  overlapTimestamp?: number;
+  overlapHandle?: string;
+}> {
   try {
     const database = await getDB()
 
@@ -1054,15 +1059,25 @@ export async function checkSecondaryPrimaryOverlap(): Promise<{ hasOverlap: bool
     const primaryStore = primaryTransaction.objectStore('feed_cache')
 
     for (const uri of secondaryUris) {
-      const exists = await new Promise<boolean>((resolve, reject) => {
+      const entry = await new Promise<FeedCacheEntry | undefined>((resolve, reject) => {
         const request = primaryStore.get(uri)
-        request.onsuccess = () => resolve(request.result !== undefined)
+        request.onsuccess = () => resolve(request.result as FeedCacheEntry | undefined)
         request.onerror = () => reject(request.error)
       })
 
-      if (exists) {
+      if (entry) {
+        // Get handle - use reposter if it's a repost, otherwise post author
+        const handle = entry.post.reason
+          ? (entry.post.reason as { by?: { handle?: string } }).by?.handle
+          : entry.post.post.author.handle
+
         console.log(`[Secondary Cache] Found overlap at URI: ${uri}`)
-        return { hasOverlap: true, overlapUri: uri }
+        return {
+          hasOverlap: true,
+          overlapUri: uri,
+          overlapTimestamp: entry.postTimestamp,
+          overlapHandle: handle || 'unknown'
+        }
       }
     }
 
@@ -1103,16 +1118,16 @@ export async function getPrimaryNewestTimestamp(): Promise<number | null> {
 }
 
 /**
- * Check if a post URI exists in the primary feed cache
+ * Check if a post uniqueId exists in the primary feed cache
  */
-export async function isInPrimaryCache(uri: string): Promise<boolean> {
+export async function isInPrimaryCache(uniqueId: string): Promise<boolean> {
   try {
     const database = await getDB()
     const transaction = database.transaction(['feed_cache'], 'readonly')
     const store = transaction.objectStore('feed_cache')
 
     return new Promise((resolve, reject) => {
-      const request = store.get(uri)
+      const request = store.get(uniqueId)
       request.onsuccess = () => resolve(request.result !== undefined)
       request.onerror = () => reject(request.error)
     })

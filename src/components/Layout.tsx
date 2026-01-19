@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import Navigation from './Navigation'
+import BurgerMenu from './BurgerMenu'
 import Avatar from './Avatar'
 import { useSession } from '../auth/SessionContext'
 import { getProfile } from '../api/profile'
+import { getSettings } from '../curation/skylimitStore'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -14,6 +16,7 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const { session, agent } = useSession()
   const [userAvatar, setUserAvatar] = useState<string | undefined>()
+  const [escapeToBlueSky, setEscapeToBlueSky] = useState(false)
 
   const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications'
 
@@ -36,6 +39,19 @@ export default function Layout({ children }: LayoutProps) {
     fetchUserAvatar()
   }, [agent, session])
 
+  // Load escape to Bluesky setting
+  useEffect(() => {
+    const loadEscapeSetting = async () => {
+      try {
+        const settings = await getSettings()
+        setEscapeToBlueSky(settings?.escapeToBlueSky || false)
+      } catch (error) {
+        console.error('Error loading escape setting:', error)
+      }
+    }
+    loadEscapeSetting()
+  }, [])
+
   const handleBack = () => {
     if (window.history.length > 1) {
       navigate(-1)
@@ -49,11 +65,16 @@ export default function Layout({ children }: LayoutProps) {
       <div className="max-w-4xl mx-auto w-full px-0 sm:px-0">
         <header className="sticky top-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between px-2 py-0.5">
-            <div className="w-10">
+            <div className="w-10 flex items-center">
+              {/* Burger menu - mobile only */}
+              <div className="md:hidden">
+                <BurgerMenu />
+              </div>
+              {/* Back button - shown on subpages, desktop only when burger is visible */}
               {showBackButton && (
                 <button
                   onClick={handleBack}
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                  className="hidden md:block p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                   aria-label="Go back"
                 >
                   ←
@@ -72,6 +93,18 @@ export default function Layout({ children }: LayoutProps) {
                   className="h-11 w-11 object-contain"
                 />
               </button>
+              {escapeToBlueSky && (
+                <a
+                  href="https://bsky.app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-2xl hover:opacity-80 transition-opacity"
+                  aria-label="Open Bluesky"
+                  title="Open Bluesky"
+                >
+                  🦋
+                </a>
+              )}
               <span className="text-sm text-gray-500 dark:text-gray-400">Alpha version</span>
             </div>
             <div className="flex justify-end min-w-0 flex-shrink">

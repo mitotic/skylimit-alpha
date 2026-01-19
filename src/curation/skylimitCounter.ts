@@ -149,9 +149,9 @@ async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void>
     })
     
     // Assign numbers: first post after midnight = #1, second = #2, etc.
-    // Use dateString:uri as key to support multiple dates
+    // Use dateString:uniqueId as key to support multiple dates
     allSummaries.forEach((summary, index) => {
-      const key = `${dateString}:${summary.uri}`
+      const key = `${dateString}:${summary.uniqueId}`
       postCounter[key] = index + 1
     })
     

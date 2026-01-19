@@ -39,7 +39,6 @@ export async function curatePosts(
   const editionCount = editionTimeStrs.length
   const secretKey = settings?.secretKey || 'default'
   const amplifyHighBoosts = settings?.amplifyHighBoosts || false
-  const hideSelfReplies = settings?.hideSelfReplies || false
   const curationDisabled = !settings || settings.disabled
 
   const result: CurationFeedViewPost[] = []
@@ -52,11 +51,11 @@ export async function curatePosts(
   for (const interval of intervalsNeeded) {
     const summaries = await getSummaries(interval)
     if (summaries) {
-      const uriMap = new Map<string, PostSummary>()
+      const uniqueIdMap = new Map<string, PostSummary>()
       for (const s of summaries) {
-        uriMap.set(s.uri, s)
+        uniqueIdMap.set(s.uniqueId, s)
       }
-      existingSummariesByInterval.set(interval, uriMap)
+      existingSummariesByInterval.set(interval, uniqueIdMap)
     }
   }
 
@@ -67,7 +66,7 @@ export async function curatePosts(
 
     // Check if this post already has a cached summary (preserves original curation decisions)
     const existingMap = existingSummariesByInterval.get(entry.interval)
-    const existingSummary = existingMap?.get(entry.uri)
+    const existingSummary = existingMap?.get(entry.uniqueId)
 
     let curation: CurationResult
     let summary: PostSummary
@@ -91,8 +90,7 @@ export async function curatePosts(
         currentProbs,
         secretKey,
         editionCount,
-        amplifyHighBoosts,
-        hideSelfReplies
+        amplifyHighBoosts
       )
 
       // Create summary using postTimestamp from entry

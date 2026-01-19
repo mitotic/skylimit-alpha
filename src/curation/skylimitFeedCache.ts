@@ -6,7 +6,7 @@
 import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
 import {
   initDB,
-  getSummaryByUri,
+  getSummaryByUniqueId,
   clearSummaries,
   clearSecondaryFeedCache,
   getAllSecondaryPostsOldestFirst,
@@ -54,7 +54,7 @@ export async function validateFeedCacheIntegrity(): Promise<{ valid: boolean; cl
     let missingCount = 0
     for (const entry of entries) {
       const uniqueId = getPostUniqueIdFromCache(entry)
-      const summary = await getSummaryByUri(uniqueId)
+      const summary = await getSummaryByUniqueId(uniqueId)
       if (!summary) {
         missingCount++
         console.log(`[Cache Integrity] Missing summary for feed entry: ${uniqueId}`)
@@ -219,7 +219,7 @@ export function createFeedCacheEntries(
     }
 
     const entry: FeedCacheEntryWithPost = {
-      uri: getPostUniqueId(post),
+      uniqueId: getPostUniqueId(post),
       post: {
         post: post.post,
         reason: post.reason,
@@ -256,17 +256,17 @@ export async function savePostsToFeedCache(
     const database = await getDB()
 
     // Step 1: Check which entries already exist in cache (read transaction)
-    const existingUris = new Set<string>()
+    const existingUniqueIds = new Set<string>()
     const readTransaction = database.transaction([STORE_FEED_CACHE], 'readonly')
     const readStore = readTransaction.objectStore(STORE_FEED_CACHE)
 
     // Check each entry's existence
     await Promise.all(entries.map(entry => {
       return new Promise<void>((resolve) => {
-        const request = readStore.get(entry.uri)
+        const request = readStore.get(entry.uniqueId)
         request.onsuccess = () => {
           if (request.result) {
-            existingUris.add(entry.uri)
+            existingUniqueIds.add(entry.uniqueId)
           }
           resolve()
         }
@@ -275,10 +275,10 @@ export async function savePostsToFeedCache(
     }))
 
     // Filter to only new entries (not already cached)
-    const newEntries = entries.filter(entry => !existingUris.has(entry.uri))
+    const newEntries = entries.filter(entry => !existingUniqueIds.has(entry.uniqueId))
 
-    if (existingUris.size > 0) {
-      console.log(`[Feed Cache] Skipping ${existingUris.size} already-cached posts, saving ${newEntries.length} new posts`)
+    if (existingUniqueIds.size > 0) {
+      console.log(`[Feed Cache] Skipping ${existingUniqueIds.size} already-cached posts, saving ${newEntries.length} new posts`)
     }
 
     // Step 2: Write only new entries (write transaction)
@@ -302,7 +302,7 @@ export async function savePostsToFeedCache(
 
       // Create the cache entry (without originalPost for storage)
       const cacheEntry: FeedCacheEntry = {
-        uri: entry.uri,
+        uniqueId: entry.uniqueId,
         post: entry.post,
         timestamp: entry.timestamp,
         postTimestamp: entry.postTimestamp,
@@ -454,7 +454,7 @@ export async function saveFeedCache(
 
       // Cache ALL posts (removed curation_dropped check)
       const entry: FeedCacheEntry = {
-        uri: uniqueId,  // Use unique ID (includes reposter DID for reposts)
+        uniqueId,  // Use unique ID (includes reposter DID for reposts)
         post: {
           post: post.post,
           reason: post.reason,
@@ -839,7 +839,7 @@ export async function performLookbackFetchToSecondary(
 
       // Save to secondary cache
       const secondaryEntries: SecondaryCacheEntry[] = entries.map(entry => ({
-        uri: entry.uri,
+        uniqueId: entry.uniqueId,
         post: entry.post,
         timestamp: entry.timestamp,
         postTimestamp: entry.postTimestamp,
@@ -866,9 +866,24 @@ export async function performLookbackFetchToSecondary(
       console.log(`[Secondary Lookback] Saved ${entries.length} posts to secondary (iteration ${iterations})`)
 
       // Check for overlap with primary cache
-      const { hasOverlap, overlapUri } = await checkSecondaryPrimaryOverlap()
+      const { hasOverlap, overlapUri, overlapTimestamp, overlapHandle } = await checkSecondaryPrimaryOverlap()
       if (hasOverlap) {
         console.log(`[Secondary Lookback] Found overlap with primary at: ${overlapUri}`)
+
+        // Debug: Check for suspicious gap
+        if (secondaryOldest && primaryNewest) {
+          const gapMs = secondaryOldest - primaryNewest
+          const gapHours = gapMs / (1000 * 60 * 60)
+          console.log(`[Secondary Lookback] Gap: ${gapHours.toFixed(1)} hours (secondaryOldest=${new Date(secondaryOldest).toISOString()}, primaryNewest=${new Date(primaryNewest).toISOString()})`)
+
+          if (gapHours > 2) {
+            const secondaryOldestTime = new Date(secondaryOldest).toLocaleString()
+            const primaryNewestTime = new Date(primaryNewest).toLocaleString()
+            const overlapTime = overlapTimestamp ? new Date(overlapTimestamp).toLocaleString() : 'unknown'
+            alert(`Debug warning: Long gap (${gapHours.toFixed(1)} hours) between secondary and primary cache: ${secondaryOldestTime} to ${primaryNewestTime}. Overlapping post at ${overlapTime} from ${overlapHandle || 'unknown'}`)
+          }
+        }
+
         break
       }
 
@@ -1729,12 +1744,12 @@ export async function resetLookbackStatus(): Promise<void> {
 
 /**
  * Get unique ID from a feed cache entry
- * The entry.uri is already set to getPostUniqueId(post) when created,
+ * The entry.uniqueId is already set to getPostUniqueId(post) when created,
  * which includes the reposter DID prefix for reposts.
  */
 export function getPostUniqueIdFromCache(entry: FeedCacheEntry): string {
-  // entry.uri is already the full unique ID (set by getPostUniqueId when entry was created)
-  return entry.uri
+  // entry.uniqueId is already the full unique ID (set by getPostUniqueId when entry was created)
+  return entry.uniqueId
 }
 
 /**
@@ -1817,8 +1832,8 @@ export async function getCachedFeedBefore(
       const range = IDBKeyRange.upperBound(beforeTimestamp, true)
       const request = index.openCursor(range, 'prev') // 'prev' for descending order (newest first)
       
-      const results: Array<{ post: CurationFeedViewPost; postTimestamp: number; uri: string; reposterDid?: string }> = []
-      
+      const results: Array<{ post: CurationFeedViewPost; postTimestamp: number; uniqueId: string; reposterDid?: string }> = []
+
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
         if (cursor && results.length < limit) {
@@ -1827,28 +1842,22 @@ export async function getCachedFeedBefore(
             ...entry.post,
             // curation status will be looked up separately from summaries cache
           }
-          results.push({ 
-            post: cachedPost, 
+          results.push({
+            post: cachedPost,
             postTimestamp: entry.postTimestamp,
-            uri: entry.uri,
+            uniqueId: entry.uniqueId,
             reposterDid: entry.reposterDid
           })
           cursor.continue()
         } else {
           // Sort by postTimestamp descending (newest first)
           results.sort((a, b) => b.postTimestamp - a.postTimestamp)
-          
-          // Create map of post URIs to postTimestamps
+
+          // Create map of post uniqueIds to postTimestamps
           const postTimestamps = new Map<string, number>()
           results.forEach(r => {
-            // For reposts, use unique ID format: ${reposterDid}:${post.post.uri}
-            // For original posts, use post.post.uri
-            const uniqueId = r.reposterDid 
-              ? `${r.reposterDid}:${r.post.post.uri}`
-              : r.post.post.uri
-            postTimestamps.set(uniqueId, r.postTimestamp)
-            // Also store by original URI for lookup
-            postTimestamps.set(r.uri, r.postTimestamp)
+            // entry.uniqueId is already in the correct format
+            postTimestamps.set(r.uniqueId, r.postTimestamp)
           })
           
           resolve({
@@ -2368,8 +2377,8 @@ export async function mergeSecondaryToPrimary(
     for (let i = 0; i < secondaryPosts.length; i++) {
       const entry = secondaryPosts[i]
 
-      // Skip if already in primary (by URI)
-      const alreadyExists = await isInPrimaryCache(entry.uri)
+      // Skip if already in primary (by uniqueId)
+      const alreadyExists = await isInPrimaryCache(entry.uniqueId)
       if (alreadyExists) {
         skippedCount++
         continue

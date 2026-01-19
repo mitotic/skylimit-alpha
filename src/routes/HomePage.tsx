@@ -13,7 +13,7 @@ import RateLimitIndicator from '../components/RateLimitIndicator'
 import SkylimitHomeDialog from '../components/SkylimitHomeDialog'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getSummaryByUri, isSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
+import { initDB, getFilter, getSummaryByUniqueId, isSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
@@ -441,7 +441,7 @@ export default function HomePage() {
         const uniqueId = getPostUniqueId(post)
         
         // Look up curation information from summaries cache (single source of truth)
-        const summary = await getSummaryByUri(uniqueId)
+        const summary = await getSummaryByUniqueId(uniqueId)
         
         // Reconstruct full curation object from summary
         // Always create curation object (even if empty) so counter is clickable
@@ -1838,7 +1838,7 @@ export default function HomePage() {
   }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, pagedUpdatesEnabled, agent, session])
 
   // Idle timer for partial page display
-  // When maxWaitMinutes has elapsed since newestDisplayedPostTimestamp and there are partial posts,
+  // When fullPageWaitMinutes has elapsed since newestDisplayedPostTimestamp and there are partial posts,
   // trigger the "All n new posts" button for partial page display
   useEffect(() => {
     if (!pagedUpdatesEnabled || !newestDisplayedPostTimestamp || isInitialLoad) {
@@ -1847,16 +1847,16 @@ export default function HomePage() {
     }
 
     const checkIdleTime = async () => {
-      // Get maxWaitMinutes from settings
+      // Get fullPageWaitMinutes from settings
       const pagedSettings = await getPagedUpdatesSettings()
-      const maxWaitMs = pagedSettings.maxWaitMinutes * 60 * 1000
+      const fullPageWaitMs = pagedSettings.fullPageWaitMinutes * 60 * 1000
 
       // Calculate time since top post was displayed
       const timeSinceTopPost = Date.now() - newestDisplayedPostTimestamp
 
       // Trigger "All new posts" button if idle time exceeded and any posts available
       // This is independent of nextPageReady - shows "All new posts" even when "New Page" is active
-      if (timeSinceTopPost >= maxWaitMs && partialPageCount > 0) {
+      if (timeSinceTopPost >= fullPageWaitMs && partialPageCount > 0) {
         setIdleTimerTriggered(true)
         console.log(`[Idle Timer] Triggered: ${Math.round(timeSinceTopPost / 60000)} min elapsed, ${partialPageCount} posts available`)
       } else {
@@ -2913,15 +2913,18 @@ export default function HomePage() {
               <button
                 onClick={handlePrevPage}
                 disabled={syncInProgress}
-                className="btn btn-secondary"
+                className="btn btn-primary inline-flex items-center justify-center gap-2"
               >
                 {syncInProgress ? (
-                  <span className="flex items-center gap-2">
+                  <>
                     <Spinner size="sm" />
                     Synchronizing... {syncProgress}%
-                  </span>
+                  </>
                 ) : (
-                  'Prev Page'
+                  <>
+                    <span>📄</span>
+                    Prev Page
+                  </>
                 )}
               </button>
             ) : !isLoading && feed.length > 0 ? (

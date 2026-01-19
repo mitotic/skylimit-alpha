@@ -90,23 +90,16 @@ export async function curateSinglePost(
   currentProbs: UserFilter | null,
   secretKey: string,
   editionCount: number,
-  amplifyHighBoosts: boolean,
-  hideSelfReplies: boolean
+  amplifyHighBoosts: boolean
 ): Promise<CurationResult> {
   const summary = createPostSummary(post)
   const modStatus: CurationResult = { curation_msg: '' }
-  
+
   // Always show own posts
   if (summary.username === myUsername || summary.username === summary.orig_username) {
     return modStatus
   }
-  
-  // Hide self replies if enabled
-  if (hideSelfReplies && summary.selfReply) {
-    modStatus.curation_dropped = 'self reply'
-    return modStatus
-  }
-  
+
   // If no stats/probs available, still try to show basic info if user is followed
   // This allows statistics to show even when stats haven't been computed yet
   if (!currentProbs || !currentStats) {
@@ -137,7 +130,7 @@ export async function curateSinglePost(
   if (summary.username in currentProbs) {
     // Currently tracking user
     const userEntry = currentProbs[summary.username]
-    const randomNum = await hmacRandom(secretKey, 'filter_' + myUsername + '_' + summary.uri)
+    const randomNum = await hmacRandom(secretKey, 'filter_' + myUsername + '_' + summary.uniqueId)
     
     const follow = currentFollows[summary.username] || null
     let priority = isPriorityPost(summary, follow?.[USER_TOPICS_KEY] || '')
@@ -171,7 +164,7 @@ export async function curateSinglePost(
           
           const lastMotxId = follow[tag as keyof FollowInfo] as string | undefined
           
-          if (lastMotxId && lastMotxId !== summary.uri) {
+          if (lastMotxId && lastMotxId !== summary.uniqueId) {
             const lastMotxTime = new Date(lastMotxId) // Simplified - would need proper parsing
             if (isSamePeriod(statusTime, lastMotxTime, tag.toUpperCase() as 'MOTD' | 'MOTW' | 'MOTM', userTimezone)) {
               continue
@@ -180,9 +173,9 @@ export async function curateSinglePost(
           
           motxAccept = tag
           
-          if (!lastMotxId || lastMotxId !== summary.uri) {
+          if (!lastMotxId || lastMotxId !== summary.uniqueId) {
             // Record MOTx post
-            const updatedFollow = { ...follow, [tag]: summary.uri }
+            const updatedFollow = { ...follow, [tag]: summary.uniqueId }
             await saveFollow(updatedFollow)
           }
           break
@@ -249,7 +242,7 @@ export async function curateSinglePost(
     
     if (!handledStatus) {
       const tagStr = '#' + tagFollows.join('/')
-      const randomNum = await hmacRandom(secretKey, 'filter_' + tagStr + '_' + summary.uri)
+      const randomNum = await hmacRandom(secretKey, 'filter_' + tagStr + '_' + summary.uniqueId)
       const regularDrop = randomNum >= (totalPostProb / count)
       handledStatus = 'Tags: ' + tagStr
       modStatus.curation_tag = '#' + tagFollows[0]

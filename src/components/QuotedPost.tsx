@@ -7,6 +7,8 @@ import { getPostThread } from '../api/feed'
 import Avatar from './Avatar'
 import PostMedia from './PostMedia'
 import Spinner from './Spinner'
+import { getSettings } from '../curation/skylimitStore'
+import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
 
 // Request deduplication: track in-flight requests to avoid duplicate calls for the same post
 const inFlightRequests = new Map<string, Promise<AppBskyFeedDefs.PostView | null>>()
@@ -24,6 +26,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   const { agent } = useSession()
   const [fullPost, setFullPost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [isLoadingFullPost, setIsLoadingFullPost] = useState(false)
+  const [escapeToBlueSky, setEscapeToBlueSky] = useState(false)
 
   // Parse the record safely - do this before any early returns
   const recordAny = record.record && typeof record.record === 'object' ? record.record as any : null
@@ -121,6 +124,19 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
     }
   }, [postUri, agent, fullPost, isLoadingFullPost, post])
 
+  // Load escape to Bluesky setting
+  useEffect(() => {
+    const loadEscapeSetting = async () => {
+      try {
+        const settings = await getSettings()
+        setEscapeToBlueSky(settings?.escapeToBlueSky || false)
+      } catch (error) {
+        console.error('Error loading escape setting:', error)
+      }
+    }
+    loadEscapeSetting()
+  }, [])
+
   if (!record.record || typeof record.record !== 'object') {
     return (
       <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-800">
@@ -171,18 +187,28 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (displayPost.uri) {
-      const encodedUri = encodeURIComponent(displayPost.uri)
-      if (onClick) {
-        onClick(displayPost.uri)
+      if (escapeToBlueSky) {
+        // Open in Bluesky client
+        const url = getBlueSkyPostUrl(displayPost.uri, author.handle)
+        window.open(url, '_blank', 'noopener,noreferrer')
       } else {
-        navigate(`/post/${encodedUri}`)
+        const encodedUri = encodeURIComponent(displayPost.uri)
+        if (onClick) {
+          onClick(displayPost.uri)
+        } else {
+          navigate(`/post/${encodedUri}`)
+        }
       }
     }
   }
 
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    navigate(`/profile/${author.handle}`)
+    if (escapeToBlueSky) {
+      window.open(getBlueSkyProfileUrl(author.handle), '_blank', 'noopener,noreferrer')
+    } else {
+      navigate(`/profile/${author.handle}`)
+    }
   }
 
   return (

@@ -38,8 +38,7 @@ export async function recomputeCurationStatus(
     const editionCount = editionTimeStrs.length
     const secretKey = settings?.secretKey || 'default'
     const amplifyHighBoosts = settings?.amplifyHighBoosts || false
-    const hideSelfReplies = settings?.hideSelfReplies || false
-    
+
     const intervals = await getAllIntervals()
     let updatedCount = 0
     let skippedCount = 0
@@ -72,7 +71,7 @@ export async function recomputeCurationStatus(
       
       for (const summary of summaries) {
         // Try to find the post in feed cache
-        const cacheEntry = feedCacheMap.get(summary.uri)
+        const cacheEntry = feedCacheMap.get(summary.uniqueId)
         
         if (!cacheEntry) {
           // Post not in cache - skip (it's older than 24 hours or was never cached)
@@ -91,8 +90,7 @@ export async function recomputeCurationStatus(
           currentProbs,
           secretKey,
           editionCount,
-          amplifyHighBoosts,
-          hideSelfReplies
+          amplifyHighBoosts
         )
         
         // Update curation status in summary

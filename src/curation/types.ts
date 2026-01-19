@@ -55,22 +55,30 @@ export interface UserFilter {
   [username: string]: UserEntry
 }
 
+/**
+ * Summary of a post for curation purposes.
+ *
+ * IMPORTANT: uniqueId vs URI distinction:
+ * - uniqueId: For original posts, same as the post's URI. For reposts, it's
+ *   `${reposterDid}:${postUri}` to distinguish different users reposting the same post.
+ * - repostUri: The actual AT Protocol URI of the original post (for reposts only).
+ * - inReplyToUri: The actual AT Protocol URI of the parent post (for replies only).
+ */
 export interface PostSummary {
-  uri: string
+  uniqueId: string              // Unique identifier (see above for format)
   cid: string
   username: string
   accountDid: string
   tags: string[]
-  repostUri?: string
+  repostUri?: string            // Actual URI of the reposted post
   repostCount: number
-  inReplyToUri?: string
-  selfReply: boolean
+  inReplyToUri?: string         // Actual URI of the parent post
   timestamp: Date
   engaged: boolean
   orig_username?: string
-  curation_dropped?: string // Store if post was dropped by curation
-  curation_msg?: string // Store curation message for statistics display
-  curation_high_boost?: boolean // Store if post is a high boost post
+  curation_dropped?: string
+  curation_msg?: string
+  curation_high_boost?: boolean
 }
 
 export interface FollowInfo {
@@ -128,8 +136,6 @@ export interface SkylimitSettings {
   viewsPerDay: number
   showTime: boolean
   showAllStatus: boolean
-  hideSelfReplies: boolean
-  hideDuplicateReposts: boolean
   disabled: boolean
   daysOfData: number
   secretKey: string
@@ -144,11 +150,13 @@ export interface SkylimitSettings {
   // Paged fresh updates settings
   pagedUpdatesEnabled?: boolean // enable paged fresh updates, default true (enabled by default)
   pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 1.5
-  pagedUpdatesMaxWaitMinutes?: number // max wait time before showing partial page, default 30
+  pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 30
   // Lookback caching settings
   lookbackDays?: number // number of days to cache back from today, default 1
   // Feed display settings
   maxDisplayedFeedSize?: number // max posts in displayed feed, default 300
+  // Escape to Bluesky settings
+  escapeToBlueSky?: boolean // redirect posts/profiles to bsky.app, default false
 }
 
 // Extended FeedViewPost with curation metadata
@@ -167,10 +175,14 @@ export type CurationFeedViewPost = AppBskyFeedDefs.FeedViewPost & {
 }
 
 /**
- * Cache entry for a feed post
+ * Cache entry for a feed post.
+ *
+ * IMPORTANT: uniqueId is NOT the same as the post's URI for reposts.
+ * - For original posts: uniqueId equals post.post.uri
+ * - For reposts: uniqueId is `${reposterDid}:${post.post.uri}`
  */
 export interface FeedCacheEntry {
-  uri: string
+  uniqueId: string               // Unique identifier (see above for format)
   post: AppBskyFeedDefs.FeedViewPost
   timestamp: number              // feedReceivedTime (when batch was received)
   postTimestamp: number          // actual post creation/repost time

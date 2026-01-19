@@ -10,8 +10,6 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   viewsPerDay: 500,
   showTime: true, // Enable post numbering by default
   showAllStatus: false,
-  hideSelfReplies: false,
-  hideDuplicateReposts: false,
   disabled: false,
   daysOfData: 30,
   secretKey: 'default',

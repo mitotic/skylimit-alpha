@@ -123,16 +123,15 @@ function computeIntervalStats(
   postStats: Record<string, PostStats>
 ): void {
   for (const summary of summaries) {
-    summaryCache[summary.uri] = {
+    summaryCache[summary.uniqueId] = {
       username: summary.username,
       tags: summary.tags,
       repostUri: summary.repostUri,
       repostCount: summary.repostCount,
       inReplyToUri: summary.inReplyToUri,
-      selfReply: summary.selfReply,
       engaged: summary.engaged ? 1 : 0,
     }
-    
+
     if (summary.repostUri) {
       // This is a repost
       const repostedUri = summary.repostUri
@@ -141,14 +140,14 @@ function computeIntervalStats(
       }
       postStats[repostedUri].boost_count += 1
       postStats[repostedUri].repostCount = summary.repostCount
-      
+
       if (summary.username in currentFollows) {
         // Repost by followee
         postStats[repostedUri].fboost_count += 1
       }
     } else {
       // Original post
-      postStats[summary.uri] = { ...POST_STATS_PROTO }
+      postStats[summary.uniqueId] = { ...POST_STATS_PROTO }
     }
   }
 }

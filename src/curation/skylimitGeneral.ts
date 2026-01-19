@@ -155,25 +155,13 @@ export function getParentUri(post: AppBskyFeedDefs.PostView): string | undefined
 }
 
 /**
- * Check if reply is to own post
- */
-export function isSelfReply(post: AppBskyFeedDefs.FeedViewPost): boolean {
-  const record = post.post.record as any
-  if (!record?.reply?.parent) return false
-  
-  // Get parent author from embed if available, or need to fetch
-  // For now, we'll check if the reply author matches (simplified)
-  return false // Will be enhanced when we have parent post data
-}
-
-/**
  * Create post summary from FeedViewPost
  */
 export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceivedTime?: Date): PostSummary {
   const isReposted = isRepost(post)
 
   // Use single source of truth for unique ID generation
-  const uri = getPostUniqueId(post)
+  const uniqueId = getPostUniqueId(post)
 
   // For reposts: username is the reposter, orig_username is the original author
   // For original posts: username is the author, orig_username is undefined
@@ -185,7 +173,6 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   let cid: string
   let repostCount: number
   let inReplyToUri: string | undefined
-  let selfReply: boolean
   let engaged: boolean
 
   if (isReposted) {
@@ -211,7 +198,6 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
-    selfReply = false // Reposts are never self-replies
     engaged = !!(post.post.viewer?.like || post.post.viewer?.repost)
   } else {
     // This is an original post
@@ -223,7 +209,6 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
-    selfReply = isSelfReply(post)
     engaged = !!(post.post.viewer?.like || post.post.viewer?.repost)
   }
   
@@ -232,7 +217,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   const timestamp = getFeedViewPostTimestamp(post, feedReceivedTime)
   
   return {
-    uri,
+    uniqueId,
     cid,
     username,
     accountDid,
@@ -241,7 +226,6 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     repostUri,
     repostCount,
     inReplyToUri,
-    selfReply,
     timestamp,
     engaged,
   }
@@ -389,6 +373,31 @@ export function getPostUniqueId(post: AppBskyFeedDefs.FeedViewPost): string {
     return `${post.post.author.did}:${post.post.uri}`
   }
   return post.post.uri
+}
+
+/**
+ * Convert an AT Protocol URI to a Bluesky web URL
+ * AT URI format: at://did:plc:xxx/app.bsky.feed.post/rkey
+ * Bluesky URL format: https://bsky.app/profile/{handle}/post/{rkey}
+ *
+ * @param atUri - The AT Protocol URI
+ * @param handle - The author's handle
+ * @returns The Bluesky web URL
+ */
+export function getBlueSkyPostUrl(atUri: string, handle: string): string {
+  // Extract rkey from AT URI: at://did:plc:xxx/app.bsky.feed.post/rkey
+  const parts = atUri.replace('at://', '').split('/')
+  const rkey = parts[2] // The record key is the last segment
+  return `https://bsky.app/profile/${handle}/post/${rkey}`
+}
+
+/**
+ * Get the Bluesky profile URL for a handle
+ * @param handle - The user's handle
+ * @returns The Bluesky profile URL
+ */
+export function getBlueSkyProfileUrl(handle: string): string {
+  return `https://bsky.app/profile/${handle}`
 }
 
 /**

@@ -267,32 +267,49 @@ export default function SkylimitSettingsPage() {
             <label className="flex items-center space-x-3">
               <input
                 type="checkbox"
-                checked={settings.hideSelfReplies}
-                onChange={(e) => updateSetting('hideSelfReplies', e.target.checked)}
-                className="w-5 h-5"
-              />
-              <span>Hide self replies from home timeline</span>
-            </label>
-
-            <label className="flex items-center space-x-3">
-              <input
-                type="checkbox"
-                checked={settings.hideDuplicateReposts}
-                onChange={(e) => updateSetting('hideDuplicateReposts', e.target.checked)}
-                className="w-5 h-5"
-              />
-              <span>Hide duplicate reposts</span>
-            </label>
-
-            <label className="flex items-center space-x-3">
-              <input
-                type="checkbox"
                 checked={settings.disabled}
                 onChange={(e) => updateSetting('disabled', e.target.checked)}
                 className="w-5 h-5"
               />
               <span>Disable curation (temporarily turn off Skylimit)</span>
             </label>
+
+            <div>
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={settings.escapeToBlueSky || false}
+                  onChange={(e) => updateSetting('escapeToBlueSky', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Escape to Bluesky (open posts and profiles in Bluesky client)</span>
+              </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 ml-8 mt-1">
+                When enabled, clicking on posts or user profiles in the home feed will open them in the official Bluesky client (bsky.app) instead of within Websky.
+              </p>
+            </div>
+
+            <div>
+              <label className="block mb-2 font-medium">
+                Full Page Wait Time (minutes):
+              </label>
+              <input
+                type="number"
+                min="5"
+                max="120"
+                value={settings.pagedUpdatesFullPageWaitMinutes ?? 30}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value, 10)
+                  if (!isNaN(value) && value >= 5 && value <= 120) {
+                    updateSetting('pagedUpdatesFullPageWaitMinutes', value)
+                  }
+                }}
+                className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Time to wait for a full page before showing partial page. Range: 5-120 minutes.
+              </p>
+            </div>
 
             <div>
               <label className="block mb-2 font-medium">
@@ -514,28 +531,6 @@ export default function SkylimitSettingsPage() {
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     Multiplier for raw posts to fetch (accounts for filtering variability). Higher = more reliable page fill. Range: 1-3.
-                  </p>
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium mb-2">
-                    Max Wait Time (minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min="5"
-                    max="120"
-                    value={settings.pagedUpdatesMaxWaitMinutes ?? 30}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value, 10)
-                      if (!isNaN(value) && value >= 5 && value <= 120) {
-                        updateSetting('pagedUpdatesMaxWaitMinutes', value)
-                      }
-                    }}
-                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Maximum time to wait for a full page before showing partial page. Range: 5-120 minutes.
                   </p>
                 </div>
               </div>

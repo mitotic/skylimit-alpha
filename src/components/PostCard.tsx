@@ -8,7 +8,7 @@ import PostMedia from './PostMedia'
 import RootPost from './RootPost'
 import { getPostNumber } from '../curation/skylimitCounter'
 import { getSettings } from '../curation/skylimitStore'
-import { getFeedViewPostTimestamp, isRepost } from '../curation/skylimitGeneral'
+import { getFeedViewPostTimestamp, isRepost, getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost } from '../curation/types'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 
@@ -53,6 +53,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [debugMode, setDebugMode] = useState(false)
   const [curationDisabled, setCurationDisabled] = useState(false)
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
+  const [escapeToBlueSky, setEscapeToBlueSky] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
@@ -81,6 +82,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           const settings = await getSettings()
           // Track curation disabled state for styling
           setCurationDisabled(settings?.disabled || false)
+          // Load escape to Bluesky setting
+          setEscapeToBlueSky(settings?.escapeToBlueSky || false)
           // Get page length for page boundary indicator
           setFeedPageLength(settings?.feedPageLength || 25)
           // Show counter unless curation is disabled
@@ -223,21 +226,36 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const handlePostClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget || (e.target as HTMLElement).closest('button') === null) {
       if (actualPost.uri) {
-        const encodedUri = encodeURIComponent(actualPost.uri)
-        navigate(`/post/${encodedUri}`)
+        if (escapeToBlueSky) {
+          // Open in Bluesky client
+          const url = getBlueSkyPostUrl(actualPost.uri, author.handle)
+          window.open(url, '_blank', 'noopener,noreferrer')
+        } else {
+          // Navigate within Websky
+          const encodedUri = encodeURIComponent(actualPost.uri)
+          navigate(`/post/${encodedUri}`)
+        }
       }
     }
   }
 
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    navigate(`/profile/${author.handle}`)
+    if (escapeToBlueSky) {
+      window.open(getBlueSkyProfileUrl(author.handle), '_blank', 'noopener,noreferrer')
+    } else {
+      navigate(`/profile/${author.handle}`)
+    }
   }
 
   const handleReposterClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (repostedBy?.handle) {
-      navigate(`/profile/${repostedBy.handle}`)
+      if (escapeToBlueSky) {
+        window.open(getBlueSkyProfileUrl(repostedBy.handle), '_blank', 'noopener,noreferrer')
+      } else {
+        navigate(`/profile/${repostedBy.handle}`)
+      }
     }
   }
 

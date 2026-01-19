@@ -21,7 +21,7 @@ const MAX_PAGE_RAW = 100
 export const PAGED_UPDATES_DEFAULTS = {
   enabled: true,
   varFactor: 1.5,
-  maxWaitMinutes: 10,  // Time before showing partial page button
+  fullPageWaitMinutes: 10,  // Time to wait for full page before showing partial page button
 }
 
 /**
@@ -133,7 +133,6 @@ export async function probeForNewPosts(
     const editionCount = editionTimeStrs.length
     const secretKey = settings?.secretKey || 'default'
     const amplifyHighBoosts = settings?.amplifyHighBoosts || false
-    const hideSelfReplies = settings?.hideSelfReplies || false
 
     // Get all cached post IDs to skip already-displayed posts
     const cachedPostIds = await getCachedPostUniqueIds()
@@ -167,8 +166,7 @@ export async function probeForNewPosts(
         currentProbs,
         secretKey,
         editionCount,
-        amplifyHighBoosts,
-        hideSelfReplies
+        amplifyHighBoosts
       )
 
       // Return true if post would be displayed (not dropped)
@@ -233,7 +231,7 @@ export async function probeForNewPosts(
 export async function getPagedUpdatesSettings(): Promise<{
   enabled: boolean
   varFactor: number
-  maxWaitMinutes: number
+  fullPageWaitMinutes: number
   pageSize: number
 }> {
   const settings = await getSettings()
@@ -241,7 +239,7 @@ export async function getPagedUpdatesSettings(): Promise<{
   return {
     enabled: settings?.pagedUpdatesEnabled ?? PAGED_UPDATES_DEFAULTS.enabled,
     varFactor: settings?.pagedUpdatesVarFactor ?? PAGED_UPDATES_DEFAULTS.varFactor,
-    maxWaitMinutes: settings?.pagedUpdatesMaxWaitMinutes ?? PAGED_UPDATES_DEFAULTS.maxWaitMinutes,
+    fullPageWaitMinutes: settings?.pagedUpdatesFullPageWaitMinutes ?? PAGED_UPDATES_DEFAULTS.fullPageWaitMinutes,
     pageSize: settings?.feedPageLength ?? 25,
   }
 }
