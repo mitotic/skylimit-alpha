@@ -3,14 +3,13 @@
  */
 
 import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, FeedCacheEntry } from './types'
-import { getIntervalString } from './skylimitGeneral'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 
 const DB_NAME = 'skylimit_db'
-const DB_VERSION = 8 // Increment version: renamed uri to uniqueId in FeedCacheEntry (clears cache)
+const DB_VERSION = 9 // Increment version: migrated summaries to post_summaries store keyed by uniqueId
 
 // Store names
-const STORE_SUMMARIES = 'summaries'
+const STORE_POST_SUMMARIES = 'post_summaries'
 const STORE_FOLLOWS = 'follows'
 const STORE_FILTER = 'filter'
 const STORE_EDITIONS = 'editions'
@@ -35,10 +34,16 @@ export async function initDB(): Promise<IDBDatabase> {
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result
 
-      // Summaries store: indexed by interval string
-      if (!database.objectStoreNames.contains(STORE_SUMMARIES)) {
-        const summariesStore = database.createObjectStore(STORE_SUMMARIES, { keyPath: 'interval' })
-        summariesStore.createIndex('interval', 'interval', { unique: true })
+      // Delete old summaries store if it exists (migrating to post_summaries)
+      if (database.objectStoreNames.contains('summaries')) {
+        database.deleteObjectStore('summaries')
+      }
+
+      // Post summaries store: keyed by uniqueId with postTimestamp index
+      if (!database.objectStoreNames.contains(STORE_POST_SUMMARIES)) {
+        const postSummariesStore = database.createObjectStore(STORE_POST_SUMMARIES, { keyPath: 'uniqueId' })
+        postSummariesStore.createIndex('postTimestamp', 'postTimestamp', { unique: false })
+        postSummariesStore.createIndex('repostUri', 'repostUri', { unique: false })
       }
 
       // Follows store: indexed by username
@@ -118,106 +123,105 @@ export async function getDB(): Promise<IDBDatabase> {
 }
 
 /**
- * Save post summaries for an interval
- * Merges with existing summaries - existing entries take precedence to preserve first curation decision
+ * Save post summaries to IndexedDB
+ * Each summary is stored individually keyed by uniqueId
+ * Existing entries are preserved to maintain original curation decisions
  */
-export async function saveSummaries(interval: string, summaries: PostSummary[]): Promise<void> {
+export async function savePostSummaries(summaries: PostSummary[]): Promise<void> {
+  if (summaries.length === 0) return
+
   const database = await getDB()
-  const transaction = database.transaction([STORE_SUMMARIES], 'readwrite')
-  const store = transaction.objectStore(STORE_SUMMARIES)
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
 
-  // Get existing summaries for this interval to merge
-  const existing = await new Promise<PostSummary[] | null>((resolve, reject) => {
-    const request = store.get(interval)
-    request.onsuccess = () => {
-      const result = request.result
-      resolve(result ? result.summaries : null)
-    }
-    request.onerror = () => reject(request.error)
-  })
-
-  // Merge summaries: existing entries take precedence.
-  // This preserves original curation decisions when posts are re-fetched (e.g., during Load More).
-  // Rationale: When scrolling backwards through the feed, users should see the same posts they
-  // saw before. Preserving original curation ensures feed consistency and prevents posts from
-  // suddenly appearing/disappearing based on changed stats. Curation is only recomputed globally
-  // during initial curation via recomputeCurationStatus().
-  const summaryMap = new Map<string, PostSummary>()
-
-  // Add existing summaries first (they take precedence)
-  if (existing) {
-    for (const summary of existing) {
-      summaryMap.set(summary.uniqueId, summary)
-    }
-  }
-
-  // Add new summaries ONLY if not already present (preserve existing curation decisions)
   let skippedCount = 0
   for (const summary of summaries) {
-    if (!summaryMap.has(summary.uniqueId)) {
-      summaryMap.set(summary.uniqueId, summary)
+    // Check if already exists (preserve original curation decisions)
+    const existing = await new Promise<PostSummary | undefined>((resolve, reject) => {
+      const request = store.get(summary.uniqueId)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    if (!existing) {
+      await new Promise<void>((resolve, reject) => {
+        const request = store.put(summary)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
     } else {
       skippedCount++
     }
   }
 
   if (skippedCount > 0) {
-    console.log(`[Summary Cache] Skipping ${skippedCount} already-cached summaries for interval ${interval}`)
+    console.log(`[Post Summaries] Skipped ${skippedCount} already-cached summaries`)
   }
-
-  // Convert back to array
-  const mergedSummaries = Array.from(summaryMap.values())
-
-  await store.put({ interval, summaries: mergedSummaries, timestamp: Date.now() })
 }
 
 /**
- * Get post summaries for an interval
+ * Get post summaries within a time range using the postTimestamp index
  */
-export async function getSummaries(interval: string): Promise<PostSummary[] | null> {
+export async function getPostSummariesInRange(
+  startTime: number,
+  endTime: number
+): Promise<PostSummary[]> {
   const database = await getDB()
-  const transaction = database.transaction([STORE_SUMMARIES], 'readonly')
-  const store = transaction.objectStore(STORE_SUMMARIES)
-  
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+  const index = store.index('postTimestamp')
+  const range = IDBKeyRange.bound(startTime, endTime)
+
   return new Promise((resolve, reject) => {
-    const request = store.get(interval)
-    request.onsuccess = () => {
-      const result = request.result
-      resolve(result ? result.summaries : null)
-    }
+    const request = index.getAll(range)
+    request.onsuccess = () => resolve(request.result || [])
     request.onerror = () => reject(request.error)
   })
 }
 
 /**
- * Get all interval keys
+ * Get all post summaries from the cache
  */
-export async function getAllIntervals(): Promise<string[]> {
+export async function getAllPostSummaries(): Promise<PostSummary[]> {
   const database = await getDB()
-  const transaction = database.transaction([STORE_SUMMARIES], 'readonly')
-  const store = transaction.objectStore(STORE_SUMMARIES)
-  
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
   return new Promise((resolve, reject) => {
-    const request = store.getAllKeys()
-    request.onsuccess = () => resolve(request.result as string[])
+    const request = store.getAll()
+    request.onsuccess = () => resolve(request.result || [])
     request.onerror = () => reject(request.error)
   })
 }
 
 /**
- * Get all intervals sorted
+ * Check if post summaries cache is empty
  */
-export async function getAllIntervalsSorted(): Promise<string[]> {
-  const intervals = await getAllIntervals()
-  return intervals.sort()
+export async function isPostSummariesCacheEmpty(): Promise<boolean> {
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+  return new Promise((resolve, reject) => {
+    const request = store.count()
+    request.onsuccess = () => resolve(request.result === 0)
+    request.onerror = () => reject(request.error)
+  })
 }
 
 /**
- * Check if summaries cache is empty (no intervals stored)
+ * Get count of post summaries
  */
-export async function isSummariesCacheEmpty(): Promise<boolean> {
-  const intervals = await getAllIntervals()
-  return intervals.length === 0
+export async function getPostSummariesCount(): Promise<number> {
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+  return new Promise((resolve, reject) => {
+    const request = store.count()
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
 }
 
 /**
@@ -231,53 +235,43 @@ export interface CurationInitStats {
 }
 
 /**
- * Get curation statistics from summaries cache
+ * Get curation statistics from post summaries cache
  * Counts total posts and posts that were dropped by curation
  */
 export async function getCurationInitStats(): Promise<CurationInitStats> {
   try {
     const database = await getDB()
-    const transaction = database.transaction([STORE_SUMMARIES], 'readonly')
-    const store = transaction.objectStore(STORE_SUMMARIES)
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
 
     return new Promise((resolve, reject) => {
       const request = store.getAll()
 
       request.onsuccess = () => {
-        const results = request.result || []
-        let totalCount = 0
+        const summaries = request.result || []
         let droppedCount = 0
         let oldestTimestamp: number | null = null
         let newestTimestamp: number | null = null
 
-        // Process all intervals
-        for (const intervalData of results) {
-          const summaries = intervalData.summaries || []
+        for (const summary of summaries) {
+          // Count dropped posts (curation_dropped is truthy)
+          if (summary.curation_dropped) {
+            droppedCount++
+          }
 
-          for (const summary of summaries) {
-            totalCount++
+          // Track timestamps using postTimestamp field
+          const timestamp = summary.postTimestamp
 
-            // Count dropped posts (curation_dropped is truthy)
-            if (summary.curation_dropped) {
-              droppedCount++
-            }
-
-            // Track timestamps
-            const timestamp = summary.timestamp instanceof Date
-              ? summary.timestamp.getTime()
-              : new Date(summary.timestamp).getTime()
-
-            if (oldestTimestamp === null || timestamp < oldestTimestamp) {
-              oldestTimestamp = timestamp
-            }
-            if (newestTimestamp === null || timestamp > newestTimestamp) {
-              newestTimestamp = timestamp
-            }
+          if (oldestTimestamp === null || timestamp < oldestTimestamp) {
+            oldestTimestamp = timestamp
+          }
+          if (newestTimestamp === null || timestamp > newestTimestamp) {
+            newestTimestamp = timestamp
           }
         }
 
         resolve({
-          totalCount,
+          totalCount: summaries.length,
           droppedCount,
           oldestTimestamp,
           newestTimestamp,
@@ -299,86 +293,82 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
 
 /**
  * Get post summary by unique ID (post URI for originals, `${did}:${uri}` for reposts)
+ * Direct O(1) lookup by uniqueId key
  */
-export async function getSummaryByUniqueId(uniqueId: string): Promise<PostSummary | null> {
-  await getDB() // Ensure DB is initialized
-  const intervals = await getAllIntervals()
+export async function getPostSummary(uniqueId: string): Promise<PostSummary | null> {
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
 
-  // Search through all intervals to find the summary
-  for (const interval of intervals) {
-    const summaries = await getSummaries(interval)
-    if (summaries) {
-      const summary = summaries.find(s => s.uniqueId === uniqueId)
-      if (summary) {
-        return summary
-      }
-    }
-  }
-
-  return null
+  return new Promise((resolve, reject) => {
+    const request = store.get(uniqueId)
+    request.onsuccess = () => resolve(request.result || null)
+    request.onerror = () => reject(request.error)
+  })
 }
 
 /**
- * Check if a post exists in summary cache using interval-based lookup
- * More efficient than getSummaryByUniqueId which searches all intervals
+ * Check if a post exists in post summaries cache
+ * Direct O(1) lookup by uniqueId key
  *
  * @param uniqueId - Post unique ID (post URI for originals, `${did}:${uri}` for reposts)
- * @param postTimestamp - Timestamp of the post (used to determine which interval to check)
  * @returns true if summary exists, false otherwise
  */
-export async function checkSummaryExists(uniqueId: string, postTimestamp: Date): Promise<boolean> {
-  try {
-    const interval = getIntervalString(postTimestamp)
-    const summaries = await getSummaries(interval)
-    return summaries?.some(s => s.uniqueId === uniqueId) ?? false
-  } catch (error) {
-    console.warn('[checkSummaryExists] Error:', error)
-    return false
-  }
+export async function checkPostSummaryExists(uniqueId: string): Promise<boolean> {
+  const summary = await getPostSummary(uniqueId)
+  return summary !== null
 }
 
 /**
- * Update curation status for a post in summaries cache
+ * Update curation status for a post in post summaries cache
  * Called when curation parameters change
  */
-export async function updateSummaryCurationStatus(
+export async function updatePostSummaryCurationStatus(
   uniqueId: string,
-  curationStatus: string | undefined
+  curationStatus: string | undefined,
+  curationMsg?: string,
+  curationHighBoost?: boolean
 ): Promise<boolean> {
-  await getDB() // Ensure DB is initialized
-  const intervals = await getAllIntervals()
-  
-  // Find and update the summary in the appropriate interval
-  for (const interval of intervals) {
-    const summaries = await getSummaries(interval)
-    if (summaries) {
-      const index = summaries.findIndex(s => s.uniqueId === uniqueId)
-      if (index !== -1) {
-        summaries[index].curation_dropped = curationStatus
-        await saveSummaries(interval, summaries)
-        return true
-      }
-    }
-  }
-  
-  return false
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+  const summary = await getPostSummary(uniqueId)
+  if (!summary) return false
+
+  // Update curation fields
+  summary.curation_dropped = curationStatus
+  if (curationMsg !== undefined) summary.curation_msg = curationMsg
+  if (curationHighBoost !== undefined) summary.curation_high_boost = curationHighBoost
+
+  return new Promise((resolve, reject) => {
+    const request = store.put(summary)
+    request.onsuccess = () => resolve(true)
+    request.onerror = () => reject(request.error)
+  })
 }
 
 /**
- * Clear all post summaries (useful for fixing interval format issues)
+ * Clear all post summaries
  */
-export async function clearSummaries(): Promise<void> {
+export async function clearPostSummaries(): Promise<void> {
   try {
     const database = await getDB()
-    const transaction = database.transaction([STORE_SUMMARIES], 'readwrite')
-    const store = transaction.objectStore(STORE_SUMMARIES)
-    await store.clear()
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+    await new Promise<void>((resolve, reject) => {
+      const request = store.clear()
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+
     // Clear sessionStorage feed state to maintain consistency
     sessionStorage.removeItem('websky9_home_feed_state')
     sessionStorage.removeItem('websky9_home_scroll_state')
     console.log('Cleared all post summaries')
   } catch (error) {
-    console.error('Failed to clear summaries:', error)
+    console.error('Failed to clear post summaries:', error)
     throw error
   }
 }
@@ -529,39 +519,30 @@ export async function clearEditionPosts(): Promise<void> {
 }
 
 /**
- * Remove old summaries before a given interval
+ * Remove old post summaries before a given timestamp
+ * Uses the postTimestamp index for efficient deletion
  */
-export async function removeSummariesBefore(beforeInterval: string): Promise<number> {
+export async function removePostSummariesBefore(beforeTimestamp: number): Promise<number> {
   const database = await getDB()
-  const transaction = database.transaction([STORE_SUMMARIES], 'readwrite')
-  const store = transaction.objectStore(STORE_SUMMARIES)
-  
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+  const index = store.index('postTimestamp')
+  const range = IDBKeyRange.upperBound(beforeTimestamp, true) // exclusive
+
   return new Promise((resolve, reject) => {
-    const request = store.getAllKeys()
+    let deletedCount = 0
+    const request = index.openCursor(range)
+
     request.onsuccess = () => {
-      const keys = request.result as string[]
-      let deletedCount = 0
-      
-      // Delete all intervals older than beforeInterval
-      const deletePromises = keys
-        .filter(interval => interval < beforeInterval)
-        .map(interval => {
-          return new Promise<void>((resolveDelete, rejectDelete) => {
-            const deleteRequest = store.delete(interval)
-            deleteRequest.onsuccess = () => {
-              deletedCount++
-              resolveDelete()
-            }
-            deleteRequest.onerror = () => rejectDelete(deleteRequest.error)
-          })
-        })
-      
-      Promise.all(deletePromises)
-        .then(() => {
-          console.log(`Removed ${deletedCount} old summary intervals before ${beforeInterval}`)
-          resolve(deletedCount)
-        })
-        .catch(reject)
+      const cursor = request.result
+      if (cursor) {
+        cursor.delete()
+        deletedCount++
+        cursor.continue()
+      } else {
+        console.log(`Removed ${deletedCount} old post summaries before ${new Date(beforeTimestamp).toISOString()}`)
+        resolve(deletedCount)
+      }
     }
     request.onerror = () => reject(request.error)
   })
@@ -683,61 +664,50 @@ export function newUserAccum(obj: Partial<UserAccumulator>): UserAccumulator {
 }
 
 /**
- * Get statistics about summaries cache
+ * Get statistics about post summaries cache
  */
-export interface SummariesCacheStats {
+export interface PostSummariesCacheStats {
   totalCount: number
   oldestTimestamp: number | null
   newestTimestamp: number | null
   droppedCount: number
 }
 
-export async function getSummariesCacheStats(): Promise<SummariesCacheStats> {
+export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheStats> {
   try {
     const database = await getDB()
-    const transaction = database.transaction([STORE_SUMMARIES], 'readonly')
-    const summariesStore = transaction.objectStore(STORE_SUMMARIES)
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
 
     return new Promise((resolve, reject) => {
-      const request = summariesStore.getAll()
+      const request = store.getAll()
 
       request.onsuccess = () => {
-        const results = request.result || []
-        let totalCount = 0
+        const summaries = request.result || []
         let oldestTimestamp: number | null = null
         let newestTimestamp: number | null = null
         let droppedCount = 0
         const now = Date.now()
         const recentCutoff = now - FEED_CACHE_RETENTION_MS
 
-        // Process all intervals
-        for (const intervalData of results) {
-          const summaries = intervalData.summaries || []
-          totalCount += summaries.length
+        for (const summary of summaries) {
+          const timestamp = summary.postTimestamp
 
-          // Track timestamps and count dropped posts
-          for (const summary of summaries) {
-            const timestamp = summary.timestamp instanceof Date
-              ? summary.timestamp.getTime()
-              : new Date(summary.timestamp).getTime()
+          if (oldestTimestamp === null || timestamp < oldestTimestamp) {
+            oldestTimestamp = timestamp
+          }
+          if (newestTimestamp === null || timestamp > newestTimestamp) {
+            newestTimestamp = timestamp
+          }
 
-            if (oldestTimestamp === null || timestamp < oldestTimestamp) {
-              oldestTimestamp = timestamp
-            }
-            if (newestTimestamp === null || timestamp > newestTimestamp) {
-              newestTimestamp = timestamp
-            }
-
-            // Count as dropped if recent (within last 48 hours) and has curation_dropped flag
-            // This matches the logic used in getCurationInitStats for consistency
-            if (timestamp >= recentCutoff && summary.curation_dropped) {
-              droppedCount++
-            }
+          // Count as dropped if recent (within last 48 hours) and has curation_dropped flag
+          if (timestamp >= recentCutoff && summary.curation_dropped) {
+            droppedCount++
           }
         }
 
         resolve({
-          totalCount,
+          totalCount: summaries.length,
           oldestTimestamp,
           newestTimestamp,
           droppedCount,
@@ -747,7 +717,7 @@ export async function getSummariesCacheStats(): Promise<SummariesCacheStats> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get summaries cache stats:', error)
+    console.error('Failed to get post summaries cache stats:', error)
     return {
       totalCount: 0,
       oldestTimestamp: null,

@@ -10,7 +10,7 @@ import { getSettings, updateSettings } from '../curation/skylimitStore'
 import { SkylimitSettings } from '../curation/types'
 import Button from '../components/Button'
 import SkylimitStatistics from '../components/SkylimitStatistics'
-import { getSummariesCacheStats, SummariesCacheStats, clearSkylimitSettings, resetEverything } from '../curation/skylimitCache'
+import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
 import { getFeedCacheStats, FeedCacheStats } from '../curation/skylimitFeedCache'
 
@@ -62,7 +62,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
-  const [summariesStats, setSummariesStats] = useState<SummariesCacheStats | null>(null)
+  const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
   const [showCleanResetModal, setShowCleanResetModal] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
@@ -70,6 +70,9 @@ export default function SettingsPage() {
   const [isClearingSettings, setIsClearingSettings] = useState(false)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [clickToBlueSky, setClickToBlueSky] = useState(() =>
+    localStorage.getItem('websky_click_to_bluesky') === 'true'
+  )
 
   // Load settings and cache stats on mount
   useEffect(() => {
@@ -121,7 +124,7 @@ export default function SettingsPage() {
     try {
       const [feedStats, summariesCacheStats] = await Promise.all([
         getFeedCacheStats(),
-        getSummariesCacheStats(),
+        getPostSummariesCacheStats(),
       ])
       setFeedCacheStats(feedStats)
       setSummariesStats(summariesCacheStats)
@@ -253,6 +256,28 @@ export default function SettingsPage() {
       </div>
 
       <div className="card space-y-4">
+        <h2 className="text-lg font-semibold">Navigation</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-medium">Click to Bluesky</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Open posts, profiles, and notifications in Bluesky. Return to Skylimit by using back navigation repeatedly.
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const newValue = !clickToBlueSky
+              localStorage.setItem('websky_click_to_bluesky', newValue.toString())
+              setClickToBlueSky(newValue)
+            }}
+            className="btn btn-secondary"
+          >
+            {clickToBlueSky ? 'Disable' : 'Enable'}
+          </button>
+        </div>
+      </div>
+
+      <div className="card space-y-4">
         <h2 className="text-lg font-semibold">Account</h2>
         <div>
           <div className="font-medium">Logged in as</div>
@@ -281,10 +306,12 @@ export default function SettingsPage() {
       <div className="card space-y-4">
         <h2 className="text-lg font-semibold">About</h2>
         <div className="text-sm text-gray-500 dark:text-gray-400 space-y-2">
-          <p>Websky - A Bluesky web client</p>
-          <p>Version 1.0.0</p>
+          <p>Skylimit – A curating Bluesky client (alpha version)</p>
           <p>
             Built with Vite, React, TypeScript, and Tailwind CSS
+          </p>
+          <p>
+            Source code <a href="https://github.com/mitotic/skylimit-alpha#readme" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">on Github</a>
           </p>
         </div>
       </div>
@@ -378,21 +405,6 @@ export default function SettingsPage() {
                 />
                 <span>Disable curation (temporarily turn off Skylimit)</span>
               </label>
-
-              <div>
-                <label className="flex items-center space-x-3">
-                  <input
-                    type="checkbox"
-                    checked={settings.clickToBlueSky || false}
-                    onChange={(e) => updateSetting('clickToBlueSky', e.target.checked)}
-                    className="w-5 h-5"
-                  />
-                  <span>Click to Bluesky (open posts and profiles in Bluesky client)</span>
-                </label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 ml-8 mt-1">
-                  When enabled, clicking on posts or user profiles in the home feed will open them in the official Bluesky client (bsky.app) instead of within Websky.
-                </p>
-              </div>
 
               <div>
                 <label className="block mb-2 font-medium">

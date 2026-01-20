@@ -3,15 +3,13 @@
  * Shows posting statistics for all followed accounts
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getFilterWithTimestamp, getAllFollows, getAllIntervalsSorted } from '../curation/skylimitCache'
+import { getFilterWithTimestamp, getAllFollows } from '../curation/skylimitCache'
 import { GlobalStats, UserFilter, UserEntry, FollowInfo } from '../curation/types'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
 import { getSettings } from '../curation/skylimitStore'
 import { useSession } from '../auth/SessionContext'
-import { getCachedPostCount, getLastCachedPostTimestamp } from '../curation/skylimitFeedCache'
-import { nextInterval } from '../curation/skylimitGeneral'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 
 interface AccountStatistics {
@@ -26,6 +24,9 @@ interface AccountStatistics {
   isSelf: boolean
 }
 
+type SortField = 'username' | 'postsPerDay' | 'shownPerDay' | 'name'
+type SortDirection = 'asc' | 'desc'
+
 export default function SkylimitStatistics() {
   const { session } = useSession()
   const navigate = useNavigate()
@@ -35,16 +36,15 @@ export default function SkylimitStatistics() {
   const [accountStats, setAccountStats] = useState<AccountStatistics[]>([])
   const [loading, setLoading] = useState(true)
   const [anonymize, setAnonymize] = useState(false)
-  const [cachedPostCount, setCachedPostCount] = useState<number>(0)
-  const [lastCachedPostTime, setLastCachedPostTime] = useState<number | null>(null)
   const [filterTimestamp, setFilterTimestamp] = useState<number | null>(null)
-  const [analysisEndTime, setAnalysisEndTime] = useState<string>('')
   const [followedTags, setFollowedTags] = useState<string[]>([])
   const [curationTimezone, setCurationTimezone] = useState<string>('')
   const [viewsPerDay, setViewsPerDay] = useState<number>(0)
   const [showPopup, setShowPopup] = useState<string | null>(null) // username of account to show popup for
   const [popupPosition, setPopupPosition] = useState<'above' | 'below'>('below') // Position of popup relative to cell
   const [loadingAmp, setLoadingAmp] = useState(false)
+  const [sortField, setSortField] = useState<SortField>('postsPerDay')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const popupRef = useRef<HTMLDivElement>(null)
   const cellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map())
   const myUsername = session?.handle || ''
@@ -56,15 +56,7 @@ export default function SkylimitStatistics() {
   const loadStatistics = async () => {
     try {
       setLoading(true)
-      
-      // Load cache statistics
-      const [postCount, lastCachedTime] = await Promise.all([
-        getCachedPostCount(),
-        getLastCachedPostTimestamp()
-      ])
-      setCachedPostCount(postCount)
-      setLastCachedPostTime(lastCachedTime)
-      
+
       // Get settings for anonymization and views per day
       const settings = await getSettings()
       setAnonymize(settings?.anonymizeUsernames || false)
@@ -81,18 +73,7 @@ export default function SkylimitStatistics() {
       setStats(globalStats)
       setUserFilter(userFilterData)
       setFilterTimestamp(timestamp)
-      
-      // Get last interval to compute analysis end time
-      const intervals = await getAllIntervalsSorted()
-      if (intervals.length > 0) {
-        const lastInterval = intervals[intervals.length - 1]
-        const finalIntervalEndStr = nextInterval(lastInterval)
-        // Convert interval string to Date: "YYYY-MM-DD-HH"
-        const [year, month, day, hour] = finalIntervalEndStr.split('-').map(Number)
-        const endDate = new Date(Date.UTC(year, month - 1, day, hour))
-        setAnalysisEndTime(endDate.toLocaleString())
-      }
-      
+
       // Get followed hashtags and most common timezone
       const allFollows = await getAllFollows()
       const tags: string[] = []
@@ -209,8 +190,11 @@ export default function SkylimitStatistics() {
         }
       }
       
+      // Filter out followees with zero posts
+      const activeAccounts = accounts.filter(a => a.postsPerDay > 0)
+
       // Sort by posts per day (descending) - highest first (like Mahoot)
-      accounts.sort((a, b) => {
+      activeAccounts.sort((a, b) => {
         // Primary sort: posts per day descending
         const diff = b.postsPerDay - a.postsPerDay
         if (Math.abs(diff) > 0.01) {
@@ -219,8 +203,8 @@ export default function SkylimitStatistics() {
         // Secondary sort: username ascending
         return a.username.localeCompare(b.username)
       })
-      
-      setAccountStats(accounts)
+
+      setAccountStats(activeAccounts)
     } catch (error) {
       console.error('Failed to load statistics:', error)
     } finally {
@@ -310,6 +294,51 @@ export default function SkylimitStatistics() {
     return Math.round(percent).toString()
   }
 
+  // Sort handler for table columns
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      // Default to descending for numeric fields, ascending for text fields
+      setSortDirection(field === 'username' || field === 'name' ? 'asc' : 'desc')
+    }
+  }
+
+  // Sorted account stats
+  const sortedAccountStats = useMemo(() => {
+    return [...accountStats].sort((a, b) => {
+      let comparison = 0
+
+      switch (sortField) {
+        case 'username':
+          comparison = a.username.localeCompare(b.username)
+          break
+        case 'postsPerDay':
+          comparison = a.postsPerDay - b.postsPerDay
+          break
+        case 'shownPerDay':
+          const shownA = a.postsPerDay * (a.displayProbability / 100)
+          const shownB = b.postsPerDay * (b.displayProbability / 100)
+          comparison = shownA - shownB
+          break
+        case 'name':
+          const nameA = a.followInfo?.displayName || a.username
+          const nameB = b.followInfo?.displayName || b.username
+          comparison = nameA.localeCompare(nameB)
+          break
+      }
+
+      return sortDirection === 'asc' ? comparison : -comparison
+    })
+  }, [accountStats, sortField, sortDirection])
+
+  // Get sort indicator for column header
+  const getSortIndicator = (field: SortField): string => {
+    if (sortField !== field) return ''
+    return sortDirection === 'asc' ? ' ↑' : ' ↓'
+  }
+
   if (loading) {
     return (
       <div className="p-4 text-center text-gray-500 dark:text-gray-400">
@@ -359,22 +388,60 @@ export default function SkylimitStatistics() {
                   <strong>Following tags: #{followedTags.join(', #')}</strong>
                 </div>
               )}
+              {/* Posts/day breakdown with original vs reposts */}
               <div>
-                Analyzed {stats.status_daily.toFixed(0)} posts/day by {Object.keys(userFilter || {}).length} followees over last {stats.day_total.toFixed(2)} days ending {analysisEndTime || 'N/A'}.
+                Analyzed {stats.status_daily.toFixed(0)} posts/day
+                {stats.original_posts_daily !== undefined && stats.reposts_daily !== undefined && (
+                  <> ({stats.original_posts_daily.toFixed(0)} original, {stats.reposts_daily.toFixed(0)} reposts)</>
+                )}
+                {' '}by {Object.keys(userFilter || {}).length} followees over{' '}
+                {stats.complete_intervals_days !== undefined && stats.complete_intervals_days > 0 ? (
+                  <>a non-contiguous period of {stats.day_total.toFixed(2)} days ({stats.intervals_complete} complete {stats.interval_length_hours}-hour intervals)</>
+                ) : (
+                  <>last {stats.day_total.toFixed(2)} days</>
+                )}
+                {stats.days_of_data !== undefined && <> within the last {stats.days_of_data} days</>}.
               </div>
+              {/* Interval diagnostics with complete/incomplete breakdown */}
+              {stats.intervals_expected !== undefined && stats.intervals_processed !== undefined && (
+                <div>
+                  Intervals: {stats.intervals_processed} of {stats.intervals_expected} expected ({((stats.intervals_processed / stats.intervals_expected) * 100).toFixed(1)}% coverage)
+                  {stats.intervals_complete !== undefined && stats.intervals_incomplete !== undefined && (
+                    <> ({stats.intervals_complete} complete, {stats.intervals_incomplete} incomplete)</>
+                  )}
+                </div>
+              )}
+              {stats.posts_per_interval_avg !== undefined && (
+                <div>
+                  Posts/interval: avg {stats.posts_per_interval_avg.toFixed(1)}
+                  {stats.posts_per_interval_max !== undefined && <>, max {stats.posts_per_interval_max}</>}
+                </div>
+              )}
+              {stats.intervals_sparse !== undefined && stats.intervals_sparse > 0 && stats.posts_per_interval_avg !== undefined && (
+                <div className="text-yellow-600 dark:text-yellow-400">
+                  Warning: {stats.intervals_sparse} intervals have &lt; {(stats.posts_per_interval_avg * 0.1).toFixed(0)} posts
+                </div>
+              )}
+              {/* Cache vs accumulated diagnostics */}
+              {stats.summaries_total !== undefined && (
+                <div>
+                  Summaries (complete intervals): {stats.summaries_total} total, {stats.summaries_accumulated ?? 0} processed (from followees), {stats.summaries_skipped ?? 0} skipped (from non-followees)
+                </div>
+              )}
+              {/* Total cached summaries (all intervals) */}
+              {stats.summaries_total_cached !== undefined && (
+                <div>
+                  Summaries: total {stats.summaries_total_cached}, dropped {stats.summaries_dropped_cached ?? 0} ({stats.summaries_total_cached > 0 ? ((stats.summaries_dropped_cached ?? 0) / stats.summaries_total_cached * 100).toFixed(1) : 0}%)
+                </div>
+              )}
+              {/* Summaries cache timestamps */}
+              {stats.summaries_oldest_time && stats.summaries_newest_time && (
+                <div>
+                  Summaries time range: {new Date(stats.summaries_oldest_time).toLocaleString()} - {new Date(stats.summaries_newest_time).toLocaleString()}
+                </div>
+              )}
             </>
           )}
-          <div>
-            No. of cached posts: {cachedPostCount}
-          </div>
-          <div>
-            Date+Time of last cached post: {lastCachedPostTime 
-              ? new Date(lastCachedPostTime).toLocaleString()
-              : 'N/A'}
-          </div>
-          <div>
-            Total Follows: {accountStats.length}
-          </div>
         </div>
       </div>
 
@@ -386,14 +453,34 @@ export default function SkylimitStatistics() {
             <thead>
               <tr className="bg-gray-100 dark:bg-gray-700">
                 <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">#</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Followee</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Posts</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Shown</th>
-                <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">Name</th>
+                <th
+                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
+                  onClick={() => handleSort('username')}
+                >
+                  Followee{getSortIndicator('username')}
+                </th>
+                <th
+                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
+                  onClick={() => handleSort('postsPerDay')}
+                >
+                  Posts{getSortIndicator('postsPerDay')}
+                </th>
+                <th
+                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
+                  onClick={() => handleSort('shownPerDay')}
+                >
+                  Shown{getSortIndicator('shownPerDay')}
+                </th>
+                <th
+                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
+                  onClick={() => handleSort('name')}
+                >
+                  Name{getSortIndicator('name')}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {accountStats.map((account, index) => {
+              {sortedAccountStats.map((account, index) => {
                 // For Name column: use displayName if available, otherwise altname if anonymized, otherwise username
                 let name: string
                 if (anonymize && !account.isSelf) {

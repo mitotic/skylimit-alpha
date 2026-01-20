@@ -4,7 +4,7 @@
 
 import { BskyAgent } from '@atproto/api'
 import { curateSinglePost } from './skylimitFilter'
-import { getFilter, getAllFollows, saveSummaries, saveEditionPost, getEditionPosts, clearEditionPosts, getSummaries } from './skylimitCache'
+import { getFilter, getAllFollows, savePostSummaries, saveEditionPost, getEditionPosts, clearEditionPosts, getPostSummary } from './skylimitCache'
 import { createPostSummary } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { scheduleCleanup } from './skylimitCleanup'
@@ -42,20 +42,15 @@ export async function curatePosts(
   const curationDisabled = !settings || settings.disabled
 
   const result: CurationFeedViewPost[] = []
-  // Group summaries by interval since posts may span multiple intervals
-  const summariesByInterval = new Map<string, PostSummary[]>()
+  // Collect new summaries to save (not already in cache)
+  const newSummaries: PostSummary[] = []
 
-  // Pre-load existing summaries for all relevant intervals (for preserving curation decisions)
-  const intervalsNeeded = new Set(entries.map(e => e.interval))
-  const existingSummariesByInterval = new Map<string, Map<string, PostSummary>>()
-  for (const interval of intervalsNeeded) {
-    const summaries = await getSummaries(interval)
-    if (summaries) {
-      const uniqueIdMap = new Map<string, PostSummary>()
-      for (const s of summaries) {
-        uniqueIdMap.set(s.uniqueId, s)
-      }
-      existingSummariesByInterval.set(interval, uniqueIdMap)
+  // Pre-load existing summaries for all entries by uniqueId (for preserving curation decisions)
+  const existingSummariesMap = new Map<string, PostSummary>()
+  for (const entry of entries) {
+    const existingSummary = await getPostSummary(entry.uniqueId)
+    if (existingSummary) {
+      existingSummariesMap.set(entry.uniqueId, existingSummary)
     }
   }
 
@@ -65,8 +60,7 @@ export async function curatePosts(
     const postTimestamp = new Date(entry.postTimestamp)
 
     // Check if this post already has a cached summary (preserves original curation decisions)
-    const existingMap = existingSummariesByInterval.get(entry.interval)
-    const existingSummary = existingMap?.get(entry.uniqueId)
+    const existingSummary = existingSummariesMap.get(entry.uniqueId)
 
     let curation: CurationResult
     let summary: PostSummary
@@ -101,14 +95,8 @@ export async function curatePosts(
       summary.curation_msg = curation.curation_msg
       summary.curation_high_boost = curation.curation_high_boost
 
-      // Use interval from entry (calculated by createFeedCacheEntries)
-      const summaryInterval = entry.interval
-
-      // Group new summaries by their interval (only new ones need saving)
-      if (!summariesByInterval.has(summaryInterval)) {
-        summariesByInterval.set(summaryInterval, [])
-      }
-      summariesByInterval.get(summaryInterval)!.push(summary)
+      // Add to list of new summaries to save
+      newSummaries.push(summary)
 
       // Save for edition if needed (only for newly curated posts)
       if (curation.curation_save) {
@@ -129,14 +117,9 @@ export async function curatePosts(
     result.push(curatedPost)
   }
 
-  // Save summaries grouped by interval
-  for (const [interval, summaries] of summariesByInterval.entries()) {
-    if (summaries.length > 0) {
-      await saveSummaries(interval, summaries)
-    }
-  }
-
-  if (summariesByInterval.size > 0) {
+  // Save all new summaries at once
+  if (newSummaries.length > 0) {
+    await savePostSummaries(newSummaries)
     // Schedule cleanup after saving new summaries
     scheduleCleanup()
   }

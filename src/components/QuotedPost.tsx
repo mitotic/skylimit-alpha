@@ -7,7 +7,6 @@ import { getPostThread } from '../api/feed'
 import Avatar from './Avatar'
 import PostMedia from './PostMedia'
 import Spinner from './Spinner'
-import { getSettings } from '../curation/skylimitStore'
 import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
 
 // Request deduplication: track in-flight requests to avoid duplicate calls for the same post
@@ -26,7 +25,9 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   const { agent } = useSession()
   const [fullPost, setFullPost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [isLoadingFullPost, setIsLoadingFullPost] = useState(false)
-  const [clickToBlueSky, setEscapeToBlueSky] = useState(false)
+  const [clickToBlueSky, setClickToBlueSky] = useState(() =>
+    localStorage.getItem('websky_click_to_bluesky') === 'true'
+  )
 
   // Parse the record safely - do this before any early returns
   const recordAny = record.record && typeof record.record === 'object' ? record.record as any : null
@@ -124,17 +125,9 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
     }
   }, [postUri, agent, fullPost, isLoadingFullPost, post])
 
-  // Load escape to Bluesky setting
+  // Reload click to Bluesky setting when component mounts (in case it changed)
   useEffect(() => {
-    const loadEscapeSetting = async () => {
-      try {
-        const settings = await getSettings()
-        setEscapeToBlueSky(settings?.clickToBlueSky || false)
-      } catch (error) {
-        console.error('Error loading escape setting:', error)
-      }
-    }
-    loadEscapeSetting()
+    setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
   }, [])
 
   if (!record.record || typeof record.record !== 'object') {

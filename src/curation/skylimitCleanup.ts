@@ -3,9 +3,8 @@
  * Removes old post summaries and edition posts to prevent unbounded growth
  */
 
-import { removeSummariesBefore, removeOldEditionPosts, getAllIntervalsSorted } from './skylimitCache'
+import { removePostSummariesBefore, removeOldEditionPosts } from './skylimitCache'
 import { getSettings } from './skylimitStore'
-import { oldestInterval, nextInterval } from './skylimitGeneral'
 
 // Cleanup constants (matching Mahoot's approach)
 const CURATION_DELAY = 5 * 60 * 1000 // 5 minutes debounce delay
@@ -19,33 +18,22 @@ let cleanupTimeoutId: number | null = null
 export async function performCleanup(): Promise<void> {
   try {
     console.log('Starting Skylimit cleanup...')
-    
+
     const settings = await getSettings()
     const daysOfData = settings?.daysOfData || 30
-    
-    // Get all intervals to find the most recent one
-    const intervals = await getAllIntervalsSorted()
-    
-    if (intervals.length === 0) {
-      console.log('No intervals to clean up')
-      return
-    }
-    
-    // Find the most recent interval
-    const lastInterval = intervals[intervals.length - 1]
-    const nextIntervalStr = nextInterval(lastInterval)
-    
-    // Calculate oldest interval to keep (based on daysOfData setting)
-    const oldestIntervalStr = oldestInterval(nextIntervalStr, daysOfData)
-    
-    // Remove summaries older than oldestIntervalStr
-    const deletedSummaries = await removeSummariesBefore(oldestIntervalStr)
-    
+
+    // Calculate cutoff timestamp based on daysOfData setting
+    const retentionMs = daysOfData * 24 * 60 * 60 * 1000
+    const cutoffTimestamp = Date.now() - retentionMs
+
+    // Remove post summaries older than cutoff
+    const deletedSummaries = await removePostSummariesBefore(cutoffTimestamp)
+
     // Remove edition posts older than 2 days
-    const cutoffTime = Date.now() - EDITION_POSTS_AGO
-    const deletedEditions = await removeOldEditionPosts(cutoffTime)
-    
-    console.log(`Cleanup complete: removed ${deletedSummaries} summary intervals and ${deletedEditions} edition posts`)
+    const editionCutoffTime = Date.now() - EDITION_POSTS_AGO
+    const deletedEditions = await removeOldEditionPosts(editionCutoffTime)
+
+    console.log(`Cleanup complete: removed ${deletedSummaries} post summaries and ${deletedEditions} edition posts`)
   } catch (error) {
     console.error('Error during cleanup:', error)
   }

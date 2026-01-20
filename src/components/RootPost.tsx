@@ -6,7 +6,6 @@ import { useSession } from '../auth/SessionContext'
 import { getPostThread } from '../api/feed'
 import { getCachedRootPost, saveCachedRootPost } from '../curation/parentPostCache'
 import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
-import { getSettings } from '../curation/skylimitStore'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
 
@@ -21,7 +20,9 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
   const { agent } = useSession()
   const [rootPost, setRootPost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [clickToBlueSky, setClickToBlueSky] = useState(false)
+  const [clickToBlueSky, setClickToBlueSky] = useState(() =>
+    localStorage.getItem('websky_click_to_bluesky') === 'true'
+  )
 
   useEffect(() => {
     if (!agent || !rootUri) return
@@ -61,17 +62,9 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
     fetchRoot()
   }, [agent, rootUri])
 
-  // Load click to Bluesky setting
+  // Reload click to Bluesky setting when component mounts (in case it changed)
   useEffect(() => {
-    const loadSetting = async () => {
-      try {
-        const settings = await getSettings()
-        setClickToBlueSky(settings?.clickToBlueSky || false)
-      } catch (error) {
-        console.error('Error loading click to Bluesky setting:', error)
-      }
-    }
-    loadSetting()
+    setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
   }, [])
 
   if (isLoading) {

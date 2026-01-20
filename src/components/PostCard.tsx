@@ -82,8 +82,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           const settings = await getSettings()
           // Track curation disabled state for styling
           setCurationDisabled(settings?.disabled || false)
-          // Load click to Bluesky setting
-          setClickToBlueSky(settings?.clickToBlueSky || false)
+          // Load click to Bluesky setting from localStorage
+          setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
           // Get page length for page boundary indicator
           setFeedPageLength(settings?.feedPageLength || 25)
           // Show counter unless curation is disabled

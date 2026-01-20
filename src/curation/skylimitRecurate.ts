@@ -4,11 +4,12 @@
  */
 
 import { BskyAgent } from '@atproto/api'
-import { getAllIntervals, getSummaries, saveSummaries, getFilter, getAllFollows, initDB } from './skylimitCache'
+import { getAllPostSummaries, getFilter, getAllFollows, initDB } from './skylimitCache'
 import { getSettings } from './skylimitStore'
 import { curateSinglePost } from './skylimitFilter'
 import { getEditionTimeStrs } from './skylimitGeneral'
 import { getPostUniqueIdFromCache } from './skylimitFeedCache'
+import { PostSummary } from './types'
 
 /**
  * Recompute curation status for all posts in summaries cache
@@ -39,21 +40,22 @@ export async function recomputeCurationStatus(
     const secretKey = settings?.secretKey || 'default'
     const amplifyHighBoosts = settings?.amplifyHighBoosts || false
 
-    const intervals = await getAllIntervals()
+    // Get all post summaries
+    const allSummaries = await getAllPostSummaries()
     let updatedCount = 0
     let skippedCount = 0
-    
+
     // Get feed cache to look up full post data
     const database = await initDB()
     const transaction = database.transaction(['feed_cache'], 'readonly')
     const feedStore = transaction.objectStore('feed_cache')
-    
+
     const feedCacheEntries = await new Promise<any[]>((resolve, reject) => {
       const request = feedStore.getAll()
       request.onsuccess = () => resolve(request.result || [])
       request.onerror = () => reject(request.error)
     })
-    
+
     // Build a map of unique ID -> feed cache entry
     // Use getPostUniqueIdFromCache for consistent ID generation that matches summaries
     const feedCacheMap = new Map<string, any>()
@@ -61,53 +63,60 @@ export async function recomputeCurationStatus(
       const uniqueId = getPostUniqueIdFromCache(entry)
       feedCacheMap.set(uniqueId, entry)
     }
-    
-    // Process each interval
-    for (const interval of intervals) {
-      const summaries = await getSummaries(interval)
-      if (!summaries) continue
-      
-      let intervalUpdated = false
-      
-      for (const summary of summaries) {
-        // Try to find the post in feed cache
-        const cacheEntry = feedCacheMap.get(summary.uniqueId)
-        
-        if (!cacheEntry) {
-          // Post not in cache - skip (it's older than 24 hours or was never cached)
-          skippedCount++
-          continue
-        }
-        
-        // Re-curate the post
-        const post = cacheEntry.post
-        const curation = await curateSinglePost(
-          post,
-          myUsername,
-          myDid,
-          followMap,
-          currentStats,
-          currentProbs,
-          secretKey,
-          editionCount,
-          amplifyHighBoosts
-        )
-        
+
+    // Track updated summaries to save
+    const updatedSummaries: PostSummary[] = []
+
+    // Process all summaries
+    for (const summary of allSummaries) {
+      // Try to find the post in feed cache
+      const cacheEntry = feedCacheMap.get(summary.uniqueId)
+
+      if (!cacheEntry) {
+        // Post not in cache - skip (it's older than 24 hours or was never cached)
+        skippedCount++
+        continue
+      }
+
+      // Re-curate the post
+      const post = cacheEntry.post
+      const curation = await curateSinglePost(
+        post,
+        myUsername,
+        myDid,
+        followMap,
+        currentStats,
+        currentProbs,
+        secretKey,
+        editionCount,
+        amplifyHighBoosts
+      )
+
+      // Check if curation status changed
+      const oldStatus = summary.curation_dropped
+      if (oldStatus !== curation.curation_dropped) {
         // Update curation status in summary
-        const oldStatus = summary.curation_dropped
         summary.curation_dropped = curation.curation_dropped
         summary.curation_msg = curation.curation_msg
         summary.curation_high_boost = curation.curation_high_boost
-
-        if (oldStatus !== curation.curation_dropped) {
-          intervalUpdated = true
-          updatedCount++
-        }
+        updatedSummaries.push(summary)
+        updatedCount++
       }
-      
-      // Save updated summaries if any changes were made
-      if (intervalUpdated) {
-        await saveSummaries(interval, summaries)
+    }
+
+    // Save all updated summaries
+    // Note: savePostSummaries will update existing entries since they already exist
+    if (updatedSummaries.length > 0) {
+      // For updates, we need to force overwrite existing entries
+      const database2 = await initDB()
+      const transaction2 = database2.transaction(['post_summaries'], 'readwrite')
+      const store = transaction2.objectStore('post_summaries')
+      for (const summary of updatedSummaries) {
+        await new Promise<void>((resolve, reject) => {
+          const request = store.put(summary)
+          request.onsuccess = () => resolve()
+          request.onerror = () => reject(request.error)
+        })
       }
     }
     

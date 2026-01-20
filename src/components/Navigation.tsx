@@ -13,6 +13,7 @@ export default function Navigation() {
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [clickToBlueSky, setClickToBlueSky] = useState(false)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
   const isActive = (path: string) => {
@@ -72,16 +73,32 @@ export default function Navigation() {
     return () => clearInterval(intervalRef.current)
   }, [agent, session, location.pathname])
 
+  // Load click to Bluesky setting from localStorage
+  useEffect(() => {
+    setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
+  }, [location.pathname]) // Reload on navigation to pick up settings changes
+
   const navItems = [
     { path: '/', label: 'Home', icon: '🏠' },
-    { path: '/notifications', label: 'Notifications', icon: '🔔', badge: unreadCount > 0 ? unreadCount : undefined },
     { path: '/search', label: 'Search', icon: '🔍' },
     { path: '/settings?tab=basic', label: 'Settings', icon: '⚙️' },
   ]
 
   const handleProfileClick = () => {
     if (session) {
-      navigate(`/profile/${session.handle}`)
+      if (clickToBlueSky) {
+        window.location.href = `https://bsky.app/profile/${session.handle}`
+      } else {
+        navigate(`/profile/${session.handle}`)
+      }
+    }
+  }
+
+  const handleNotificationsClick = () => {
+    if (clickToBlueSky) {
+      window.location.href = 'https://bsky.app/notifications'
+    } else {
+      navigate('/notifications')
     }
   }
 
@@ -104,13 +121,26 @@ export default function Navigation() {
         >
           <span className="text-xl">{item.icon}</span>
           <span className="hidden md:inline font-medium">{item.label}</span>
-          {item.badge !== undefined && item.badge > 0 && (
-            <span className="md:ml-auto absolute -top-1 -right-1 md:static bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">
-              {item.badge > 99 ? '99+' : item.badge}
-            </span>
-          )}
         </Link>
       ))}
+
+      {/* Notifications - uses button for Click to Bluesky support */}
+      <button
+        onClick={handleNotificationsClick}
+        className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
+          isActive('/notifications')
+            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+            : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+        }`}
+      >
+        <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>🔔</span>
+        <span className="hidden md:inline font-medium">Notifications</span>
+        {unreadCount > 0 && (
+          <span className="md:ml-auto absolute -top-1 -right-1 md:static bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
+        )}
+      </button>
 
       {session && (
         <>
@@ -122,7 +152,7 @@ export default function Navigation() {
                 : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
             }`}
           >
-            <span className="text-xl">👤</span>
+            <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>👤</span>
             <span className="hidden md:inline font-medium">Profile</span>
           </button>
 

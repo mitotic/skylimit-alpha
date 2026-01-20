@@ -3,21 +3,21 @@
  */
 
 import { PostSummary, UserEntry, UserFilter, GlobalStats, UserAccumulator, FollowInfo, PostStats } from './types'
-import { 
-  getSummaries, 
-  getAllIntervals, 
-  saveFilter, 
-  newUserEntry, 
+import {
+  getAllPostSummaries,
+  saveFilter,
+  newUserEntry,
   newUserAccum,
-  getAllFollows 
+  getAllFollows
 } from './skylimitCache'
-import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral } from './skylimitGeneral'
+import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral, getIntervalString } from './skylimitGeneral'
 import {
   INTERVALS_PER_DAY,
   MOTD_MIN_SKYLIMIT_NUMBER,
   MAX_AMP_FACTOR,
   MIN_AMP_FACTOR,
-  MOT_TAGS
+  MOT_TAGS,
+  UPDATE_INTERVAL_MINUTES
 } from './types'
 // countTotalPosts is defined in this file
 import { hmacHex } from '../utils/hmac'
@@ -32,6 +32,34 @@ export function countTotalPostsForUser(userEntry: UserEntry): number {
 }
 
 /**
+ * Interval diagnostics for tracking data quality
+ */
+interface IntervalDiagnostics {
+  expected: number
+  processed: number
+  sparse: number
+  avgPostsPerInterval: number
+  maxPostsPerInterval: number
+  startTime: Date
+  endTime: Date
+  // Cache diagnostics
+  summariesTotalCached: number
+  summariesDroppedCached: number
+  summariesTotal: number
+  summariesAccumulated: number
+  summariesSkipped: number
+  // Timestamp range
+  summariesOldestTime: Date | null
+  summariesNewestTime: Date | null
+  // Complete intervals algorithm
+  completeCount: number
+  incompleteCount: number
+  completeIntervalsDays: number
+  intervalLengthHours: number
+  daysOfData: number
+}
+
+/**
  * Compute posting statistics from stored data
  */
 export async function computePostStats(
@@ -41,29 +69,48 @@ export async function computePostStats(
   myDid: string,
   secretKey: string
 ): Promise<[GlobalStats, UserFilter] | null> {
-  const intervals = await getAllIntervals()
+  // Get all post summaries from the new cache
+  const allSummaries = await getAllPostSummaries()
+  if (allSummaries.length === 0) {
+    return null
+  }
+
+  // Group summaries by computed interval for the complete intervals algorithm
+  const summariesByInterval = new Map<string, PostSummary[]>()
+  for (const summary of allSummaries) {
+    // Compute interval from postTimestamp
+    const intervalStr = getIntervalString(new Date(summary.postTimestamp))
+    if (!summariesByInterval.has(intervalStr)) {
+      summariesByInterval.set(intervalStr, [])
+    }
+    summariesByInterval.get(intervalStr)!.push(summary)
+  }
+
+  // Get the interval range from the data
+  const intervals = Array.from(summariesByInterval.keys()).sort()
   if (intervals.length === 0) {
     return null
   }
 
-  // Get the most recent interval
-  const sortedIntervals = intervals.sort()
-  const lastInterval = sortedIntervals[sortedIntervals.length - 1]
-  
+  const lastInterval = intervals[intervals.length - 1]
   const finalIntervalEndStr = nextIntervalGeneral(lastInterval)
   const oldestIntervalStr = oldestIntervalGeneral(lastInterval, daysOfData)
-  
+
   // Convert interval string to Date for finalIntervalEnd
   // Interval format: "YYYY-MM-DD-HH"
   const [year, month, day, hour] = finalIntervalEndStr.split('-').map(Number)
   const finalIntervalEnd = new Date(Date.UTC(year, month - 1, day, hour))
-  
+
+  // Convert oldest interval to Date for analysis start time
+  const [startYear, startMonth, startDay, startHour] = oldestIntervalStr.split('-').map(Number)
+  const analysisStartTime = new Date(Date.UTC(startYear, startMonth - 1, startDay, startHour))
+
   const currentFollows = await getCurrentFollows()
   const summaryCache: Record<string, any> = {}
   const postStats: Record<string, PostStats> = {}
-  
+
   const userAccum: Record<string, UserAccumulator> = {}
-  
+
   // Track stats for self-user
   const selfUserEntry = newUserEntry({
     altname: 'user_0000',
@@ -72,30 +119,129 @@ export async function computePostStats(
     amp_factor: 1,
   })
   userAccum[myUsername] = newUserAccum({ userEntry: selfUserEntry })
-  
-  let intervalCount = 0
+
+  // ============================================================
+  // TWO-PASS APPROACH: Only use complete intervals for statistics
+  // ============================================================
+
+  // PASS 1: Collect all interval post counts (without processing)
+  let expectedIntervals = 0
   let intervalStr = oldestIntervalStr
-  
-  // Process all intervals - build up summaryCache and postStats
+  // Track post counts by interval key (interval key = start time of interval)
+  const intervalPostCounts: Record<string, number> = {}
+  // Count dropped summaries across all intervals
+  let droppedCount = 0
+
   while (intervalStr < finalIntervalEndStr) {
-    const nextIntervalStr = nextIntervalGeneral(intervalStr)
-    const summaries = await getSummaries(intervalStr)
-    
-    if (summaries && summaries.length > 0) {
-      computeIntervalStats(currentFollows, summaries, summaryCache, postStats)
-      intervalCount++
+    expectedIntervals++
+    const summaries = summariesByInterval.get(intervalStr)
+    intervalPostCounts[intervalStr] = summaries?.length || 0
+    // Count dropped summaries (curation_dropped is a non-empty string when dropped)
+    if (summaries) {
+      droppedCount += summaries.filter(s => s.curation_dropped).length
     }
-    
-    intervalStr = nextIntervalStr
+    intervalStr = nextIntervalGeneral(intervalStr)
   }
-  
+
+  // Sort intervals chronologically by start time
+  // Interval format: "YYYY-MM-DD-HH" (start time of each 2-hour interval)
+  // This format sorts correctly in lexicographic order
+  const sortedIntervalKeys = Object.keys(intervalPostCounts).sort()
+
+  // Determine which intervals are complete
+  // An interval is complete if: non-zero posts, non-zero neighbors, not at boundary
+  const completeIntervalSet = new Set<string>()
+  let incompleteCount = 0
+
+  for (let i = 0; i < sortedIntervalKeys.length; i++) {
+    const intervalKey = sortedIntervalKeys[i]
+    const count = intervalPostCounts[intervalKey]
+
+    // Skip if zero posts (not a "processed" interval)
+    if (count === 0) continue
+
+    // Boundary intervals are incomplete (oldest and newest)
+    if (i === 0 || i === sortedIntervalKeys.length - 1) {
+      incompleteCount++
+      continue
+    }
+
+    // Check chronologically adjacent neighbors
+    const prevCount = intervalPostCounts[sortedIntervalKeys[i - 1]] || 0
+    const nextCount = intervalPostCounts[sortedIntervalKeys[i + 1]] || 0
+
+    if (prevCount > 0 && nextCount > 0) {
+      completeIntervalSet.add(intervalKey)
+    } else {
+      incompleteCount++
+    }
+  }
+
+  const completeCount = completeIntervalSet.size
+  const completeIntervalsDays = completeCount / INTERVALS_PER_DAY
+  const intervalLengthHours = UPDATE_INTERVAL_MINUTES / 60
+
+  // Count total non-empty intervals (for reporting)
+  const intervalCount = Object.values(intervalPostCounts).filter(c => c > 0).length
+
   if (intervalCount === 0) {
     return null
   }
-  
+
+  // Track oldest/newest timestamps across all summaries (from complete intervals only)
+  const timestampRange: TimestampRange = { oldest: null, newest: null }
+
+  // PASS 2: Only process complete intervals into summaryCache and postStats
+  for (const intervalKey of completeIntervalSet) {
+    const summaries = summariesByInterval.get(intervalKey)
+    if (summaries && summaries.length > 0) {
+      computeIntervalStats(currentFollows, summaries, summaryCache, postStats, timestampRange)
+    }
+  }
+
+  // Calculate interval diagnostics using ONLY complete intervals
+  const completeIntervalCounts = [...completeIntervalSet].map(k => intervalPostCounts[k])
+  const avgPostsPerInterval = completeIntervalCounts.length > 0
+    ? completeIntervalCounts.reduce((sum, c) => sum + c, 0) / completeIntervalCounts.length
+    : 0
+  const maxPostsPerInterval = completeIntervalCounts.length > 0
+    ? Math.max(...completeIntervalCounts)
+    : 0
+  const sparseThreshold = avgPostsPerInterval * 0.1
+  const sparseIntervals = completeIntervalCounts.filter(c => c < sparseThreshold).length
+
   // Accumulate status counts ONCE after all intervals are processed (like Mahoot)
-  await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername)
-  
+  const { accumulated, skipped } = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername)
+
+  const summariesTotal = Object.keys(summaryCache).length
+  // Total cached summaries across ALL intervals (complete + incomplete)
+  const summariesTotalCached = Object.values(intervalPostCounts).reduce((sum, c) => sum + c, 0)
+
+  const intervalDiagnostics: IntervalDiagnostics = {
+    expected: expectedIntervals,
+    processed: intervalCount,
+    sparse: sparseIntervals,
+    avgPostsPerInterval,
+    maxPostsPerInterval,
+    startTime: analysisStartTime,
+    endTime: finalIntervalEnd,
+    // Cache diagnostics
+    summariesTotalCached,
+    summariesDroppedCached: droppedCount,
+    summariesTotal,
+    summariesAccumulated: accumulated,
+    summariesSkipped: skipped,
+    // Timestamp range
+    summariesOldestTime: timestampRange.oldest,
+    summariesNewestTime: timestampRange.newest,
+    // Complete intervals algorithm
+    completeCount,
+    incompleteCount,
+    completeIntervalsDays,
+    intervalLengthHours,
+    daysOfData,
+  }
+
   // Compute probabilities
   const [globalStats, userFilter] = computeUserProbabilities(
     currentFollows,
@@ -104,23 +250,34 @@ export async function computePostStats(
     postStats,
     userAccum,
     viewsPerDay,
-    myUsername
+    myUsername,
+    intervalDiagnostics
   )
-  
+
   // Save computed filter
   await saveFilter(globalStats, userFilter)
-  
+
   return [globalStats, userFilter]
 }
 
 /**
+ * Timestamp range for summaries
+ */
+interface TimestampRange {
+  oldest: Date | null
+  newest: Date | null
+}
+
+/**
  * Compute statistics for an interval
+ * Returns the oldest and newest timestamps found in the summaries
  */
 function computeIntervalStats(
   currentFollows: Record<string, FollowInfo>,
   summaries: PostSummary[],
   summaryCache: Record<string, any>,
-  postStats: Record<string, PostStats>
+  postStats: Record<string, PostStats>,
+  timestampRange: TimestampRange
 ): void {
   for (const summary of summaries) {
     summaryCache[summary.uniqueId] = {
@@ -130,6 +287,17 @@ function computeIntervalStats(
       repostCount: summary.repostCount,
       inReplyToUri: summary.inReplyToUri,
       engaged: summary.engaged ? 1 : 0,
+    }
+
+    // Track oldest and newest timestamps
+    if (summary.timestamp) {
+      const ts = new Date(summary.timestamp)
+      if (!timestampRange.oldest || ts < timestampRange.oldest) {
+        timestampRange.oldest = ts
+      }
+      if (!timestampRange.newest || ts > timestampRange.newest) {
+        timestampRange.newest = ts
+      }
     }
 
     if (summary.repostUri) {
@@ -153,6 +321,14 @@ function computeIntervalStats(
 }
 
 /**
+ * Result of accumulating status counts
+ */
+interface AccumulateResult {
+  accumulated: number  // Posts that were accumulated (from current followees)
+  skipped: number      // Posts skipped (from non-followees)
+}
+
+/**
  * Accumulate status counts per user
  */
 async function accumulateStatusCounts(
@@ -162,32 +338,35 @@ async function accumulateStatusCounts(
   postStats: Record<string, PostStats>,
   secretKey: string,
   _myUsername: string
-): Promise<void> {
+): Promise<AccumulateResult> {
+  let accumulated = 0
+  let skipped = 0
+
   // Process all summaries in the cache for this interval
   for (const uri of Object.keys(summaryCache)) {
     const summaryInfo = summaryCache[uri]
     const username = summaryInfo.username
-    
+
     const follow = currentFollows[username] || null
-    
+
     const trackingNames: string[] = []
-    
+
     if (username in userAccum) {
       // Tracking user (self)
       trackingNames.push(username)
     } else if (follow) {
       // Post/repost from followee
       const altname = 'user_' + (await hmacHex(secretKey, 'anonymize_' + username)).slice(-4)
-      
+
       const userEntry = newUserEntry({
         altname,
         acct_id: follow.accountDid,
         topics: follow.topics || '',
         amp_factor: Math.min(MAX_AMP_FACTOR, Math.max(MIN_AMP_FACTOR, follow.amp_factor)),
       })
-      userAccum[username] = newUserAccum({ 
-        userEntry, 
-        followed_at: follow.followed_at 
+      userAccum[username] = newUserAccum({
+        userEntry,
+        followed_at: follow.followed_at
       })
       trackingNames.push(username)
     } else {
@@ -203,20 +382,23 @@ async function accumulateStatusCounts(
               topics: '',
               amp_factor: Math.min(MAX_AMP_FACTOR, Math.max(MIN_AMP_FACTOR, tagFollow.amp_factor)),
             })
-            userAccum[trackName] = newUserAccum({ 
-              userEntry, 
-              followed_at: tagFollow.followed_at 
+            userAccum[trackName] = newUserAccum({
+              userEntry,
+              followed_at: tagFollow.followed_at
             })
           }
           trackingNames.push(trackName)
         }
       }
     }
-    
+
     if (trackingNames.length === 0) {
       // Ignore non-followed non-tagged post
+      skipped++
       continue
     }
+
+    accumulated++
     
     const motx = summaryInfo.tags.some((tag: string) => MOT_TAGS.includes(tag))
     const accumFac = 1 / trackingNames.length // Split post among different followed tags
@@ -248,6 +430,8 @@ async function accumulateStatusCounts(
       }
     }
   }
+
+  return { accumulated, skipped }
 }
 
 /**
@@ -281,9 +465,13 @@ function computeUserProbabilities(
   _postStats: Record<string, PostStats>,
   userAccum: Record<string, UserAccumulator>,
   maxViewsPerDay: number,
-  myUsername: string
+  myUsername: string,
+  intervalDiagnostics: IntervalDiagnostics
 ): [GlobalStats, UserFilter] {
-  let dayTotal = intervalCount / INTERVALS_PER_DAY
+  // Use complete intervals for dayTotal if available, fallback to all processed intervals
+  let dayTotal = intervalDiagnostics.completeIntervalsDays > 0
+    ? intervalDiagnostics.completeIntervalsDays
+    : (intervalCount / INTERVALS_PER_DAY)
   
   const accumEntries = Object.entries(userAccum)
   
@@ -412,10 +600,18 @@ function computeUserProbabilities(
   }
   
   // Calculate global stats
-  const statusTotal = Object.values(userAccum).reduce((sum, accum) => 
+  const statusTotal = Object.values(userAccum).reduce((sum, accum) =>
     sum + accum.post_total + accum.boost_total + accum.motx_total + accum.priority_total, 0
   )
-  
+
+  // Calculate original posts vs reposts breakdown
+  const originalPostsTotal = Object.values(userAccum).reduce((sum, accum) =>
+    sum + accum.post_total + accum.motx_total + accum.priority_total, 0
+  )
+  const repostsTotal = Object.values(userAccum).reduce((sum, accum) =>
+    sum + accum.boost_total, 0
+  )
+
   const globalStats: GlobalStats = {
     skylimit_number: skylimitNumber,
     status_daily: statusTotal / dayTotal,
@@ -424,6 +620,39 @@ function computeUserProbabilities(
     day_total: dayTotal,
     status_lastday: 0, // Will be calculated separately
     shown_lastday: 0, // Will be calculated separately
+
+    // Interval diagnostics
+    intervals_expected: intervalDiagnostics.expected,
+    intervals_processed: intervalDiagnostics.processed,
+    intervals_sparse: intervalDiagnostics.sparse,
+    posts_per_interval_avg: intervalDiagnostics.avgPostsPerInterval,
+    posts_per_interval_max: intervalDiagnostics.maxPostsPerInterval,
+
+    // Time range
+    analysis_start_time: intervalDiagnostics.startTime.toISOString(),
+    analysis_end_time: intervalDiagnostics.endTime.toISOString(),
+
+    // Posts breakdown
+    original_posts_daily: originalPostsTotal / dayTotal,
+    reposts_daily: repostsTotal / dayTotal,
+
+    // Cache diagnostics
+    summaries_total_cached: intervalDiagnostics.summariesTotalCached,
+    summaries_dropped_cached: intervalDiagnostics.summariesDroppedCached,
+    summaries_total: intervalDiagnostics.summariesTotal,
+    summaries_accumulated: intervalDiagnostics.summariesAccumulated,
+    summaries_skipped: intervalDiagnostics.summariesSkipped,
+
+    // Summaries timestamps
+    summaries_oldest_time: intervalDiagnostics.summariesOldestTime?.toISOString(),
+    summaries_newest_time: intervalDiagnostics.summariesNewestTime?.toISOString(),
+
+    // Complete intervals algorithm
+    intervals_complete: intervalDiagnostics.completeCount,
+    intervals_incomplete: intervalDiagnostics.incompleteCount,
+    complete_intervals_days: intervalDiagnostics.completeIntervalsDays,
+    interval_length_hours: intervalDiagnostics.intervalLengthHours,
+    days_of_data: intervalDiagnostics.daysOfData,
   }
   
   const userFilter: UserFilter = Object.entries(userAccum).reduce(

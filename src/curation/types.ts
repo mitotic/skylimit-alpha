@@ -31,6 +31,39 @@ export interface GlobalStats {
   day_total: number
   status_lastday: number
   shown_lastday: number
+
+  // Interval diagnostics
+  intervals_expected?: number           // Total intervals in daysOfData range
+  intervals_processed?: number          // Intervals with data (non-empty)
+  intervals_sparse?: number             // Intervals with < 10% of average posts
+  posts_per_interval_avg?: number       // Average posts per processed interval
+  posts_per_interval_max?: number       // Maximum posts in any single interval
+
+  // Time range display
+  analysis_start_time?: string          // ISO string of analysis start (UTC)
+  analysis_end_time?: string            // ISO string of analysis end (UTC)
+
+  // Posts breakdown
+  original_posts_daily?: number         // motx + priority + post (excluding boosts)
+  reposts_daily?: number                // boost_total / dayTotal
+
+  // Cache vs accumulated diagnostics
+  summaries_total_cached?: number       // Total summaries across all intervals (complete + incomplete)
+  summaries_dropped_cached?: number     // Total dropped summaries across all intervals
+  summaries_total?: number              // Total posts in summaries cache (complete intervals only)
+  summaries_accumulated?: number        // Posts accumulated (from current followees)
+  summaries_skipped?: number            // Posts skipped (from non-followees)
+
+  // Summaries cache timestamps
+  summaries_oldest_time?: string        // ISO string of oldest post in summaries
+  summaries_newest_time?: string        // ISO string of newest post in summaries
+
+  // Complete intervals algorithm
+  intervals_complete?: number           // Intervals with non-zero neighbors (not at boundary)
+  intervals_incomplete?: number         // Non-zero intervals that are incomplete
+  complete_intervals_days?: number      // completeCount / INTERVALS_PER_DAY
+  interval_length_hours?: number        // UPDATE_INTERVAL_MINUTES / 60 (for UI display)
+  days_of_data?: number                 // daysOfData setting (summaries cache retention period)
 }
 
 export interface UserEntry {
@@ -60,7 +93,8 @@ export interface UserFilter {
  *
  * IMPORTANT: uniqueId vs URI distinction:
  * - uniqueId: For original posts, same as the post's URI. For reposts, it's
- *   `${reposterDid}:${postUri}` to distinguish different users reposting the same post.
+ *   reason.uri (the AT Protocol repost URI) if available, otherwise a synthetic
+ *   ID in the format `sl://repost/${reposterDid}:${postUri}`.
  * - repostUri: The actual AT Protocol URI of the original post (for reposts only).
  * - inReplyToUri: The actual AT Protocol URI of the parent post (for replies only).
  */
@@ -74,6 +108,7 @@ export interface PostSummary {
   repostCount: number
   inReplyToUri?: string         // Actual URI of the parent post
   timestamp: Date
+  postTimestamp: number         // Numeric timestamp for IndexedDB indexing (timestamp.getTime())
   engaged: boolean
   orig_username?: string
   curation_dropped?: string
@@ -155,8 +190,6 @@ export interface SkylimitSettings {
   lookbackDays?: number // number of days to cache back from today, default 1
   // Feed display settings
   maxDisplayedFeedSize?: number // max posts in displayed feed, default 300
-  // Click to Bluesky settings
-  clickToBlueSky?: boolean // redirect posts/profiles to bsky.app, default false
 }
 
 // Extended FeedViewPost with curation metadata
@@ -179,7 +212,8 @@ export type CurationFeedViewPost = AppBskyFeedDefs.FeedViewPost & {
  *
  * IMPORTANT: uniqueId is NOT the same as the post's URI for reposts.
  * - For original posts: uniqueId equals post.post.uri
- * - For reposts: uniqueId is `${reposterDid}:${post.post.uri}`
+ * - For reposts: uniqueId is reason.uri (the AT Protocol repost URI) if available,
+ *   otherwise a synthetic ID in the format `sl://repost/${reposterDid}:${post.post.uri}`
  */
 export interface FeedCacheEntry {
   uniqueId: string               // Unique identifier (see above for format)

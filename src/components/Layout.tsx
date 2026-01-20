@@ -5,7 +5,6 @@ import BurgerMenu from './BurgerMenu'
 import Avatar from './Avatar'
 import { useSession } from '../auth/SessionContext'
 import { getProfile } from '../api/profile'
-import { getSettings } from '../curation/skylimitStore'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -16,7 +15,9 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const { session, agent } = useSession()
   const [userAvatar, setUserAvatar] = useState<string | undefined>()
-  const [clickToBlueSky, setClickToBlueSky] = useState(false)
+  const [clickToBlueSky, setClickToBlueSky] = useState(() =>
+    localStorage.getItem('websky_click_to_bluesky') === 'true'
+  )
 
   const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications'
 
@@ -41,15 +42,7 @@ export default function Layout({ children }: LayoutProps) {
 
   // Load click to Bluesky setting (reload on navigation to pick up changes from settings page)
   useEffect(() => {
-    const loadClickToBlueskySetting = async () => {
-      try {
-        const settings = await getSettings()
-        setClickToBlueSky(settings?.clickToBlueSky || false)
-      } catch (error) {
-        console.error('Error loading click to Bluesky setting:', error)
-      }
-    }
-    loadClickToBlueskySetting()
+    setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
   }, [location.pathname])
 
   const handleBack = () => {

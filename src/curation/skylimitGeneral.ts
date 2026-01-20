@@ -227,6 +227,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     repostCount,
     inReplyToUri,
     timestamp,
+    postTimestamp: timestamp.getTime(),
     engaged,
   }
 }
@@ -358,19 +359,24 @@ export function getPostTimestamp(post: AppBskyFeedDefs.PostView): Date {
 /**
  * Get unique ID for a post (for looking up in summaries cache)
  * - Original posts: use post.post.uri
- * - Reposts: use `${reposterDid}:${post.post.uri}`
+ * - Reposts: use reason.uri if available (AT Protocol repost URI),
+ *   otherwise fallback to `sl://repost/${reposterDid}:${post.post.uri}`
  *
- * IMPORTANT: Must match how createPostSummary generates uri
+ * IMPORTANT: Must match how createPostSummary generates uniqueId
  */
 export function getPostUniqueId(post: AppBskyFeedDefs.FeedViewPost): string {
   if (isRepost(post)) {
+    // Use reason.uri if available (newer AT Protocol API)
+    const reasonUri = (post.reason as any)?.uri
+    if (reasonUri && typeof reasonUri === 'string') {
+      return reasonUri
+    }
+    // Fallback: construct synthetic repost ID
     const reposter = (post.reason as any)?.by
     if (reposter?.did) {
-      return `${reposter.did}:${post.post.uri}`
+      return `sl://repost/${reposter.did}:${post.post.uri}`
     }
-    // Fallback if reposter info not available - use original author DID
-    // This matches createPostSummary which uses accountDid = post.post.author.did
-    return `${post.post.author.did}:${post.post.uri}`
+    return `sl://repost/${post.post.author.did}:${post.post.uri}`
   }
   return post.post.uri
 }

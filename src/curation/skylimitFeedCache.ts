@@ -6,8 +6,8 @@
 import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
 import {
   initDB,
-  getSummaryByUniqueId,
-  clearSummaries,
+  getPostSummary,
+  clearPostSummaries,
   clearSecondaryFeedCache,
   getAllSecondaryPostsOldestFirst,
   getSecondaryCacheStats,
@@ -54,7 +54,7 @@ export async function validateFeedCacheIntegrity(): Promise<{ valid: boolean; cl
     let missingCount = 0
     for (const entry of entries) {
       const uniqueId = getPostUniqueIdFromCache(entry)
-      const summary = await getSummaryByUniqueId(uniqueId)
+      const summary = await getPostSummary(uniqueId)
       if (!summary) {
         missingCount++
         console.log(`[Cache Integrity] Missing summary for feed entry: ${uniqueId}`)
@@ -103,7 +103,7 @@ export async function clearFeedMetadata(): Promise<void> {
  */
 export async function clearAllCaches(): Promise<void> {
   await clearFeedCache()
-  await clearSummaries()
+  await clearPostSummaries()
   await clearFeedMetadata()
   console.log('[Cache] Cleared all caches (feed, summaries, metadata)')
 }
@@ -1153,28 +1153,26 @@ export async function limitedLookbackToMidnight(
  */
 export async function detectSummaryCacheGap(beforeTimestamp: number): Promise<boolean> {
   try {
-    const { getSummaries } = await import('./skylimitCache')
+    const { getPostSummariesInRange } = await import('./skylimitCache')
 
-    // Get the interval for the timestamp (getIntervalString is already imported from skylimitGeneral)
-    const targetDate = new Date(beforeTimestamp)
-    const interval = getIntervalString(targetDate)
+    // Check for summaries in a window around the target timestamp
+    // Window: 2 hours before to the target timestamp
+    const GAP_THRESHOLD = 2 * 60 * 60 * 1000  // 2 hours (one interval)
+    const windowStart = beforeTimestamp - GAP_THRESHOLD
+    const windowEnd = beforeTimestamp
 
-    // Check if there are summaries for this interval
-    const summaries = await getSummaries(interval)
+    // Check if there are summaries in this time window
+    const summaries = await getPostSummariesInRange(windowStart, windowEnd)
 
     if (!summaries || summaries.length === 0) {
-      // No summaries for this interval - potential gap
-      console.log(`[Gap Detection] No summaries found for interval ${interval}`)
+      // No summaries in this window - potential gap
+      console.log(`[Gap Detection] No summaries found in time window before ${new Date(beforeTimestamp).toLocaleTimeString()}`)
       return true
     }
 
     // Check if the oldest summary timestamp is close to our beforeTimestamp
-    // If there's a large gap (more than 2 hours = one interval), return true
-    const summaryTimestamps = summaries.map(s =>
-      s.timestamp instanceof Date ? s.timestamp.getTime() : new Date(s.timestamp).getTime()
-    )
+    const summaryTimestamps = summaries.map(s => s.postTimestamp)
     const oldestSummaryTimestamp = Math.min(...summaryTimestamps)
-    const GAP_THRESHOLD = 2 * 60 * 60 * 1000  // 2 hours (one interval)
 
     const hasGap = (beforeTimestamp - oldestSummaryTimestamp) > GAP_THRESHOLD
     if (hasGap) {

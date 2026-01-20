@@ -12,7 +12,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getSummaryByUniqueId, isSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
+import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
@@ -313,7 +313,7 @@ export default function HomePage() {
       }
 
       // Check if summaries cache is empty (initial curation needed)
-      const summariesEmpty = await isSummariesCacheEmpty()
+      const summariesEmpty = await isPostSummariesCacheEmpty()
       if (summariesEmpty) {
         console.log('[Init] Summaries cache is empty - initial curation will be performed')
         isInitialCurationRef.current = true
@@ -439,7 +439,7 @@ export default function HomePage() {
         const uniqueId = getPostUniqueId(post)
         
         // Look up curation information from summaries cache (single source of truth)
-        const summary = await getSummaryByUniqueId(uniqueId)
+        const summary = await getPostSummary(uniqueId)
         
         // Reconstruct full curation object from summary
         // Always create curation object (even if empty) so counter is clickable
