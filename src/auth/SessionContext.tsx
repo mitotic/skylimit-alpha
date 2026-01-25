@@ -52,14 +52,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const login = useCallback(async (identifier: string, password: string, rememberMe: boolean) => {
-    try {
-      const { session: newSession, agent: newAgent } = await loginAPI(identifier, password)
-      setSession(newSession)
-      setAgent(newAgent)
-      saveSession(newSession, rememberMe)
-    } catch (error) {
-      throw error
-    }
+    const { session: newSession, agent: newAgent } = await loginAPI(identifier, password)
+    setSession(newSession)
+    setAgent(newAgent)
+    saveSession(newSession, rememberMe)
   }, [])
 
   const logout = useCallback(() => {

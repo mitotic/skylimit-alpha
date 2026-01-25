@@ -26,9 +26,17 @@ import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitG
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { clearCounters } from '../curation/skylimitCounter'
 
-// Saved feed state constant
-const WEBSKY9_HOME_FEED_STATE = 'websky9_home_feed_state'
-const SCROLL_STATE_KEY = 'websky9_home_scroll_state'
+// Tab type for home page
+type HomeTab = 'curated' | 'editions'
+
+// Storage key for active tab
+const HOME_TAB_STATE_KEY = 'websky_home_active_tab'
+
+// Helper functions for per-tab storage keys
+const getFeedStateKey = (tab: HomeTab) =>
+  tab === 'curated' ? 'websky_home_feed_state' : 'websky_home_editions_feed_state'
+const getScrollStateKey = (tab: HomeTab) =>
+  tab === 'curated' ? 'websky_home_scroll_state' : 'websky_home_editions_scroll_state'
 
 // Default maximum number of posts to keep in displayed feed (approximately 12 pages)
 // Can be overridden via settings.maxDisplayedFeedSize
@@ -111,7 +119,7 @@ function filterSameUserReplies(feed: AppBskyFeedDefs.FeedViewPost[]): AppBskyFee
   })
   
   // Now filter: keep a reply only if its parent is NOT in the feed, or if parent is by different author
-  return feed.filter((item, _index) => {
+  return feed.filter((item) => {
     const record = item.post.record as any
     
     // Check if this is a reply
@@ -202,45 +210,62 @@ export default function HomePage() {
   const scrollSaveBlockedRef = useRef(false)  // Blocks scroll saves during restoration phase
   const prevPageLastCallRef = useRef<number>(0)  // For debouncing Prev Page button
 
+  // Tab state - initialize from sessionStorage
+  const getInitialTab = (): HomeTab => {
+    const savedTab = sessionStorage.getItem(HOME_TAB_STATE_KEY)
+    if (savedTab === 'editions') return 'editions'
+    return 'curated'
+  }
+  const [activeTab, setActiveTab] = useState<HomeTab>(getInitialTab)
+
+  // Save active tab to sessionStorage when it changes
+  useEffect(() => {
+    sessionStorage.setItem(HOME_TAB_STATE_KEY, activeTab)
+  }, [activeTab])
+
   // Save feed state when navigating away from home page
   useEffect(() => {
     const wasOnHome = previousPathnameRef.current === '/'
     const isOnHome = location.pathname === '/'
-    
+
     // If we were on home page and are now navigating away, save feed state
     if (wasOnHome && !isOnHome) {
       // Reset scroll restoration flag for next visit
       scrollRestoredRef.current = false
-      // Find the timestamp of the lowest visible post for feed pruning
-      const lowestVisiblePostTimestamp = findLowestVisiblePostTimestamp(feed)
-      
-      const feedState: SavedFeedState = {
-        displayedFeed: feed,
-        previousPageFeed,
-        newestDisplayedPostTimestamp,
-        oldestDisplayedPostTimestamp,
-        hasMorePosts,
-        cursor,
-        savedAt: Date.now(),
-        lowestVisiblePostTimestamp,
-        newPostsCount,
-        showNewPostsButton,
-        sessionDid: session?.did || '' // Save session DID to ensure we only restore for the same user
-      }
 
-      try {
-        // Also save the current scroll position
-        const currentScrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
-        sessionStorage.setItem(SCROLL_STATE_KEY, currentScrollY.toString())
+      // Save scroll position for current tab
+      const currentScrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+      sessionStorage.setItem(getScrollStateKey(activeTab), currentScrollY.toString())
 
-        sessionStorage.setItem(WEBSKY9_HOME_FEED_STATE, JSON.stringify(feedState))
-      } catch (error) {
-        console.warn('Failed to save feed state:', error)
+      // Only save feed state for curated tab (editions is placeholder)
+      if (activeTab === 'curated') {
+        // Find the timestamp of the lowest visible post for feed pruning
+        const lowestVisiblePostTimestamp = findLowestVisiblePostTimestamp(feed)
+
+        const feedState: SavedFeedState = {
+          displayedFeed: feed,
+          previousPageFeed,
+          newestDisplayedPostTimestamp,
+          oldestDisplayedPostTimestamp,
+          hasMorePosts,
+          cursor,
+          savedAt: Date.now(),
+          lowestVisiblePostTimestamp,
+          newPostsCount,
+          showNewPostsButton,
+          sessionDid: session?.did || '' // Save session DID to ensure we only restore for the same user
+        }
+
+        try {
+          sessionStorage.setItem(getFeedStateKey(activeTab), JSON.stringify(feedState))
+        } catch (error) {
+          console.warn('Failed to save feed state:', error)
+        }
       }
     }
-    
+
     previousPathnameRef.current = location.pathname
-  }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, newPostsCount, showNewPostsButton, session])
+  }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, newPostsCount, showNewPostsButton, session, activeTab])
 
   // Disable browser scroll restoration
   useEffect(() => {
@@ -300,7 +325,7 @@ export default function HomePage() {
         }
         // Clear sessionStorage saved feed state to force fresh load
         // Otherwise redisplayFeed would restore posts without curation data
-        sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+        sessionStorage.removeItem(getFeedStateKey('curated'))
         console.log('[Init] Cleared sessionStorage saved feed state')
       }
 
@@ -359,17 +384,18 @@ export default function HomePage() {
     return () => clearInterval(flushInterval)
   }, [dbInitialized])
 
-  // Save feed state whenever it changes (debounced)
+  // Save feed state whenever it changes (debounced) - only for curated tab
   useEffect(() => {
     if (location.pathname !== '/') return
-    
+    if (activeTab !== 'curated') return // Only save for curated tab
+
     // Don't save during initial load
     if (isLoading) return
-    
+
     // Debounce saves to avoid excessive writes
     const timeoutId = setTimeout(() => {
       const lowestVisiblePostTimestamp = findLowestVisiblePostTimestamp(feed)
-      
+
       const feedState: SavedFeedState = {
         displayedFeed: feed,
         previousPageFeed,
@@ -385,14 +411,14 @@ export default function HomePage() {
       }
 
       try {
-        sessionStorage.setItem(WEBSKY9_HOME_FEED_STATE, JSON.stringify(feedState))
+        sessionStorage.setItem(getFeedStateKey(activeTab), JSON.stringify(feedState))
       } catch (error) {
         console.warn('Failed to save feed state:', error)
       }
     }, 1000) // 1 second debounce
-    
+
     return () => clearTimeout(timeoutId)
-  }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, isLoading, newPostsCount, showNewPostsButton, session])
+  }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, isLoading, newPostsCount, showNewPostsButton, session, activeTab])
 
   // Load Skylimit statistics
   const loadSkylimitStats = useCallback(async () => {
@@ -920,7 +946,7 @@ export default function HomePage() {
                         // Clear counter cache and sessionStorage to force fresh load from feed cache
                         // This ensures the feed is re-numbered with all lookback posts
                         clearCounters()
-                        sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+                        sessionStorage.removeItem(getFeedStateKey('curated'))
 
                         // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
                         console.log('[Curation Init] Reloading feed with curation data...')
@@ -1126,7 +1152,7 @@ export default function HomePage() {
                   // Clear counter cache and sessionStorage to force fresh load from feed cache
                   // This ensures the feed is re-numbered with all lookback posts
                   clearCounters()
-                  sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+                  sessionStorage.removeItem(getFeedStateKey('curated'))
 
                   // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
                   console.log('[Curation Init] Reloading feed with curation data...')
@@ -1188,20 +1214,20 @@ export default function HomePage() {
     if (!agent || !session || !dbInitialized) return
 
     try {
-      // Get saved feed state
-      const savedStateJson = sessionStorage.getItem(WEBSKY9_HOME_FEED_STATE)
+      // Get saved feed state (use curated tab key since this function is for curated feed)
+      const savedStateJson = sessionStorage.getItem(getFeedStateKey('curated'))
       if (!savedStateJson) {
         console.log('[Redisplay] No saved feed state, falling back to loadFeed')
         return loadFeed()
       }
 
       const savedState: SavedFeedState = JSON.parse(savedStateJson)
-      
+
       // Check if saved state is for the same user session
       if (savedState.sessionDid !== session.did) {
         console.log('[Redisplay] Saved state is for different user, falling back to loadFeed')
         // Clear saved state for different user
-        sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+        sessionStorage.removeItem(getFeedStateKey('curated'))
         return loadFeed()
       }
       
@@ -1357,9 +1383,12 @@ export default function HomePage() {
     console.log('[Debug] clearCacheAndReloadHomePage: Starting...')
 
     try {
-      // 1. Clear sessionStorage feed state
-      sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
-      sessionStorage.removeItem(SCROLL_STATE_KEY)
+      // 1. Clear sessionStorage feed state (clear both tabs)
+      sessionStorage.removeItem(getFeedStateKey('curated'))
+      sessionStorage.removeItem(getScrollStateKey('curated'))
+      sessionStorage.removeItem(getFeedStateKey('editions'))
+      sessionStorage.removeItem(getScrollStateKey('editions'))
+      sessionStorage.removeItem(HOME_TAB_STATE_KEY)
       console.log('[Debug] Cleared sessionStorage')
 
       // 2. Clear IndexedDB caches
@@ -1485,7 +1514,7 @@ export default function HomePage() {
       console.log('[HomePage] Detected refilter flag, triggering refilterFeedFromCache')
       sessionStorage.removeItem('skylimit_needs_refilter')
       // Clear saved feed state so it doesn't interfere with refilter
-      sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+      sessionStorage.removeItem(getFeedStateKey('curated'))
       refilterFeedFromCache()
       return // Don't continue with shouldRedisplay - let refilter handle the feed
     }
@@ -1496,7 +1525,7 @@ export default function HomePage() {
     // Clear thread scroll position when navigating to home to prevent interference
     // Thread pages use a different key, but clearing it ensures no conflicts
     try {
-      sessionStorage.removeItem('websky9_thread_scroll_position')
+      sessionStorage.removeItem('websky_thread_scroll_position')
     } catch (error) {
       // Ignore errors
     }
@@ -1514,31 +1543,36 @@ export default function HomePage() {
     }
 
     const shouldRedisplay = async () => {
+      // Only try to redisplay for curated tab (editions is placeholder)
+      if (activeTab !== 'curated') {
+        return // Editions tab just shows placeholder, no feed to load
+      }
+
       try {
         // Get saved feed state
-        const savedStateJson = sessionStorage.getItem(WEBSKY9_HOME_FEED_STATE)
+        const savedStateJson = sessionStorage.getItem(getFeedStateKey('curated'))
         if (!savedStateJson) {
           console.log('[Navigation] No saved feed state, calling loadFeed')
           return loadFeed()
         }
 
         const savedState: SavedFeedState = JSON.parse(savedStateJson)
-        
+
         // Check if saved state is for the same user session
         if (savedState.sessionDid !== session?.did) {
           console.log('[Navigation] Saved state is for different user, calling loadFeed')
           // Clear saved state for different user
-          sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+          sessionStorage.removeItem(getFeedStateKey('curated'))
           return loadFeed()
         }
-        
+
         // Get idle interval from settings
         const settings = await getSettings()
         const idleInterval = settings?.feedRedisplayIdleInterval || 5 * 60 * 1000 // default 5 minutes
-        
+
         const timeSinceSave = Date.now() - savedState.savedAt
         const isWithinIdleInterval = timeSinceSave < idleInterval
-        
+
         if (isWithinIdleInterval && savedState.displayedFeed && savedState.displayedFeed.length > 0) {
           console.log('[Navigation] Within idle interval, redisplaying feed:', {
             timeSinceSave: Math.round(timeSinceSave / 1000) + 's',
@@ -1552,7 +1586,7 @@ export default function HomePage() {
             hasFeed: !!savedState.displayedFeed && savedState.displayedFeed.length > 0
           })
           // Clear scroll state if feed state expired
-          sessionStorage.removeItem(SCROLL_STATE_KEY)
+          sessionStorage.removeItem(getScrollStateKey('curated'))
           return loadFeed()
         }
       } catch (error) {
@@ -1563,7 +1597,7 @@ export default function HomePage() {
     }
 
     shouldRedisplay()
-  }, [loadFeed, redisplayFeed, refilterFeedFromCache, location.pathname, session])
+  }, [loadFeed, redisplayFeed, refilterFeedFromCache, location.pathname, session, activeTab])
 
   // Restore scroll position when feed state is restored
   // Note: Scroll restoration works regardless of infinite scrolling setting
@@ -1588,17 +1622,17 @@ export default function HomePage() {
       return // Wait for feed to load
     }
 
-    // Check if feed state was restored (not initial load)
-    const savedStateJson = sessionStorage.getItem(WEBSKY9_HOME_FEED_STATE)
-    if (!savedStateJson) {
-      // No saved feed state, don't restore scroll - unblock saves and mark as restored
+    // Check if feed state was restored (not initial load) - use current tab's key
+    const savedStateJson = sessionStorage.getItem(getFeedStateKey(activeTab))
+    if (!savedStateJson && activeTab === 'curated') {
+      // No saved feed state for curated tab, don't restore scroll - unblock saves and mark as restored
       scrollRestoredRef.current = true
       scrollSaveBlockedRef.current = false
       return
     }
 
-    // Check for saved scroll position
-    const savedScrollY = sessionStorage.getItem(SCROLL_STATE_KEY)
+    // Check for saved scroll position - use current tab's key
+    const savedScrollY = sessionStorage.getItem(getScrollStateKey(activeTab))
     if (!savedScrollY) {
       // No saved scroll position - unblock saves and mark as restored
       scrollRestoredRef.current = true
@@ -1694,7 +1728,7 @@ export default function HomePage() {
     }
     
     attemptRestore()
-  }, [location.pathname, isLoading, feed.length])
+  }, [location.pathname, isLoading, feed.length, activeTab])
 
   // Check for new posts periodically
   // Check for new posts - uses different logic based on paged updates mode
@@ -2089,20 +2123,20 @@ export default function HomePage() {
         if (isProgrammaticScrollRef.current || scrollSaveBlockedRef.current) {
           return
         }
-        
+
         // Clear saved position when scrolled to top
         if (scrollY < 50) {
           try {
-            sessionStorage.removeItem(SCROLL_STATE_KEY)
+            sessionStorage.removeItem(getScrollStateKey(activeTab))
           } catch (error) {
             console.warn('Failed to clear scroll position:', error)
           }
           return
         }
-        
+
         // Save scroll position (always save, always restore when feed state is restored)
         try {
-          sessionStorage.setItem(SCROLL_STATE_KEY, scrollY.toString())
+          sessionStorage.setItem(getScrollStateKey(activeTab), scrollY.toString())
         } catch (error) {
           console.warn('Failed to save scroll position:', error)
         }
@@ -2200,7 +2234,7 @@ export default function HomePage() {
           lastDisplayTimeRef.current = Date.now()
 
           // Clear session storage to force fresh load from cache (not restore old feed)
-          sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE)
+          sessionStorage.removeItem(getFeedStateKey('curated'))
 
           // Load feed fresh from cache (redisplayFeed will fall through to loadFeed)
           await redisplayFeed()
@@ -2683,32 +2717,28 @@ export default function HomePage() {
   ) => {
     if (!agent) return
 
-    try {
-      if (quotePost) {
-        await createQuotePost(agent, {
-          text,
-          quotedPost: {
-            uri: quotePost.uri,
-            cid: quotePost.cid,
-          },
-          embed: images && images.length > 0 ? { images } : undefined,
-        })
-        addToast('Quote post created!', 'success')
-      } else {
-        await createPost(agent, {
-          text,
-          replyTo,
-          embed: images && images.length > 0 ? { images } : undefined,
-        })
-        addToast('Post created!', 'success')
-      }
-      // Clear cache and reload feed
-      await clearFeedCache()
-      sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE) // Clear saved state
-      loadFeed(undefined, false)
-    } catch (error) {
-      throw error
+    if (quotePost) {
+      await createQuotePost(agent, {
+        text,
+        quotedPost: {
+          uri: quotePost.uri,
+          cid: quotePost.cid,
+        },
+        embed: images && images.length > 0 ? { images } : undefined,
+      })
+      addToast('Quote post created!', 'success')
+    } else {
+      await createPost(agent, {
+        text,
+        replyTo,
+        embed: images && images.length > 0 ? { images } : undefined,
+      })
+      addToast('Post created!', 'success')
     }
+    // Clear cache and reload feed
+    await clearFeedCache()
+    sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
+    loadFeed(undefined, false)
   }
 
   // Filter out immediate same-user replies
@@ -2717,9 +2747,49 @@ export default function HomePage() {
   const handleAmpChange = () => {
     // Clear cache and reload feed when amp factor changes
     clearFeedCache()
-    sessionStorage.removeItem(WEBSKY9_HOME_FEED_STATE) // Clear saved state
+    sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
     loadFeed(undefined, false)
   }
+
+  // Handle tab change - saves current tab's state and switches to new tab
+  const handleTabChange = useCallback((newTab: HomeTab) => {
+    if (newTab === activeTab) return
+
+    // Save current tab's scroll position
+    const currentScrollKey = getScrollStateKey(activeTab)
+    const currentScrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+    sessionStorage.setItem(currentScrollKey, currentScrollY.toString())
+
+    // Save current tab's feed state (only for curated tab since editions is placeholder)
+    if (activeTab === 'curated') {
+      const currentFeedStateKey = getFeedStateKey(activeTab)
+      const lowestVisiblePostTimestamp = findLowestVisiblePostTimestamp(feed)
+      const feedState: SavedFeedState = {
+        displayedFeed: feed,
+        previousPageFeed,
+        newestDisplayedPostTimestamp,
+        oldestDisplayedPostTimestamp,
+        hasMorePosts,
+        cursor,
+        savedAt: Date.now(),
+        lowestVisiblePostTimestamp,
+        newPostsCount,
+        showNewPostsButton,
+        sessionDid: session?.did || ''
+      }
+      try {
+        sessionStorage.setItem(currentFeedStateKey, JSON.stringify(feedState))
+      } catch (error) {
+        console.warn('Failed to save feed state on tab change:', error)
+      }
+    }
+
+    // Reset scroll restoration flag for new tab
+    scrollRestoredRef.current = false
+
+    // Switch tabs
+    setActiveTab(newTab)
+  }, [activeTab, feed, previousPageFeed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, newPostsCount, showNewPostsButton, session])
 
   if (isLoading) {
     return (
@@ -2757,6 +2827,25 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Tab Bar */}
+      <div className="flex border-b border-gray-200 dark:border-gray-700">
+        {(['curated', 'editions'] as HomeTab[]).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => handleTabChange(tab)}
+            className={`flex-1 px-4 py-3 text-center font-medium transition-colors ${
+              activeTab === tab
+                ? 'border-b-2 border-blue-500 text-blue-500'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            {tab === 'curated' ? 'Curated Follow' : 'Periodic Editions'}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'curated' ? (
       <div>
         {filteredFeed.length === 0 ? (
           <div className="text-center py-12 text-gray-500 dark:text-gray-400">
@@ -2934,10 +3023,16 @@ export default function HomePage() {
           </div>
         )}
       </div>
+      ) : (
+        /* Periodic Editions placeholder */
+        <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+          <p className="text-lg font-medium mb-2">Periodic Editions</p>
+          <p>(To be implemented)</p>
+        </div>
+      )}
 
-      {/* Scroll to top arrow - shown when scrolled down */}
-      {/* Show arrow whenever scrolled down, but hide it if new posts button is showing (to avoid overlap) */}
-      {isScrolledDown && (
+      {/* Scroll to top arrow - shown when scrolled down (only for curated tab) */}
+      {activeTab === 'curated' && isScrolledDown && (
         <button
           onClick={handleScrollToTop}
           className="fixed bottom-6 left-6 md:bottom-8 md:left-8 bg-gray-500 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-12 h-12"
@@ -2947,14 +3042,16 @@ export default function HomePage() {
         </button>
       )}
 
-      {/* Floating compose button in bottom right */}
-      <button
-        onClick={() => setShowCompose(true)}
-        className="fixed bottom-20 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
-        aria-label="Compose new post"
-      >
-        <span className="text-2xl">✏️</span>
-      </button>
+      {/* Floating compose button in bottom right (only for curated tab) */}
+      {activeTab === 'curated' && (
+        <button
+          onClick={() => setShowCompose(true)}
+          className="fixed bottom-20 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
+          aria-label="Compose new post"
+        >
+          <span className="text-2xl">✏️</span>
+        </button>
+      )}
 
       <Compose
         isOpen={showCompose}

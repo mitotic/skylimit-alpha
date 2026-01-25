@@ -11,7 +11,6 @@ import './styles/index.css'
 const urlParams = new URLSearchParams(window.location.search)
 if (urlParams.get('reset') === '1') {
   console.log('[Reset] Reset flag detected in main.tsx, showing confirm dialog')
-  // eslint-disable-next-line no-restricted-globals
   if (confirm('Reset ALL curation settings and cached data? This will also log you out.')) {
     console.log('[Reset] User confirmed, clearing all data')
     sessionStorage.clear()

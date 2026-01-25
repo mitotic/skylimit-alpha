@@ -362,8 +362,8 @@ export async function clearPostSummaries(): Promise<void> {
     })
 
     // Clear sessionStorage feed state to maintain consistency
-    sessionStorage.removeItem('websky9_home_feed_state')
-    sessionStorage.removeItem('websky9_home_scroll_state')
+    sessionStorage.removeItem('websky_home_feed_state')
+    sessionStorage.removeItem('websky_home_scroll_state')
     console.log('Cleared all post summaries')
   } catch (error) {
     console.error('Failed to clear post summaries:', error)
@@ -608,6 +608,7 @@ export async function getSettings(): Promise<any> {
     request.onsuccess = () => {
       const result = request.result
       if (result) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { id, timestamp, ...settings } = result
         resolve(settings)
       } else {

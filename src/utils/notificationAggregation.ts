@@ -102,7 +102,7 @@ export function aggregateNotifications(
   // Convert groups to aggregated notifications
   const aggregated: AggregatedNotification[] = []
   
-  groups.forEach((groupNotifications, _key) => {
+  groups.forEach((groupNotifications) => {
     if (groupNotifications.length === 0) return
     
     const first = groupNotifications[0]
@@ -224,12 +224,13 @@ export function formatAggregatedText(
     
     switch (normalizedReason) {
       case 'like':
-      case 'like-via-repost':
+      case 'like-via-repost': {
         // If the post being liked is a repost, say "liked your repost"
         // "like-via-repost" explicitly indicates a like on a repost
         // Use isRepostPost flag OR check if reason is "like-via-repost"
         const isLikeOnRepost = isRepostPost || normalizedReason === 'like-via-repost'
         return isLikeOnRepost ? 'liked your repost' : 'liked your post'
+      }
       case 'repost':
       case 'repost-via-repost':
         return 'reposted your post'

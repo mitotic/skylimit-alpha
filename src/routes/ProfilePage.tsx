@@ -295,24 +295,20 @@ export default function ProfilePage() {
   const handlePost = async (text: string) => {
     if (!agent) return
 
-    try {
-      if (quotePost) {
-        await createQuotePost(agent, {
-          text,
-          quotedPost: {
-            uri: quotePost.uri,
-            cid: quotePost.cid,
-          },
-        })
-        addToast('Quote post created!', 'success')
-      } else {
-        await createPost(agent, { text })
-        addToast('Post created!', 'success')
-      }
-      loadFeed(undefined, activeTab)
-    } catch (error) {
-      throw error
+    if (quotePost) {
+      await createQuotePost(agent, {
+        text,
+        quotedPost: {
+          uri: quotePost.uri,
+          cid: quotePost.cid,
+        },
+      })
+      addToast('Quote post created!', 'success')
+    } else {
+      await createPost(agent, { text })
+      addToast('Post created!', 'success')
     }
+    loadFeed(undefined, activeTab)
   }
 
   if (isLoading) {

@@ -40,7 +40,7 @@ interface PostCardProps {
   engagementStats?: React.ReactNode
 }
 
-export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, showCounter = false, onAmpChange, highlighted: _highlighted = false, showRootPost = true, engagementStats }: PostCardProps) {
+export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, showCounter = false, onAmpChange, showRootPost = true, engagementStats }: PostCardProps) {
   const navigate = useNavigate()
   const record = post.post.record as any
   const author = post.post.author

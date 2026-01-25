@@ -32,7 +32,7 @@ export default function SkylimitStatistics() {
   const navigate = useNavigate()
   const [stats, setStats] = useState<GlobalStats | null>(null)
   const [userFilter, setUserFilter] = useState<UserFilter | null>(null)
-  const [_follows, setFollows] = useState<FollowInfo[]>([])
+  const [, setFollows] = useState<FollowInfo[]>([])
   const [accountStats, setAccountStats] = useState<AccountStatistics[]>([])
   const [loading, setLoading] = useState(true)
   const [anonymize, setAnonymize] = useState(false)
@@ -317,16 +317,18 @@ export default function SkylimitStatistics() {
         case 'postsPerDay':
           comparison = a.postsPerDay - b.postsPerDay
           break
-        case 'shownPerDay':
+        case 'shownPerDay': {
           const shownA = a.postsPerDay * (a.displayProbability / 100)
           const shownB = b.postsPerDay * (b.displayProbability / 100)
           comparison = shownA - shownB
           break
-        case 'name':
+        }
+        case 'name': {
           const nameA = a.followInfo?.displayName || a.username
           const nameB = b.followInfo?.displayName || b.username
           comparison = nameA.localeCompare(nameB)
           break
+        }
       }
 
       return sortDirection === 'asc' ? comparison : -comparison

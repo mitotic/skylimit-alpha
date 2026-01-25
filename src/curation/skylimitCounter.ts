@@ -137,9 +137,11 @@ async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void>
 export async function getPostNumber(
   postUri: string,
   postedAt: Date,
-  _isRepost: boolean = false,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _isRepost = false,
+   
   _reposterDid?: string,
-  isDropped: boolean = false
+  isDropped = false
 ): Promise<number> {
   resetIfNewDay()
 
@@ -179,7 +181,9 @@ export async function getPostNumber(
 export async function getPostNumberIfExists(
   postUri: string,
   postedAt: Date,
-  _isRepost: boolean = false,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _isRepost = false,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _reposterDid?: string
 ): Promise<number | null> {
   resetIfNewDay()

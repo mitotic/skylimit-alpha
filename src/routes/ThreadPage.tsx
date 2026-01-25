@@ -12,7 +12,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import EngagementList from '../components/EngagementList'
 
 // Scroll state preservation constant for thread pages
-const WEBSKY9_THREAD_SCROLL_POSITION = 'websky9_thread_scroll_position'
+const WEBSKY_THREAD_SCROLL_POSITION = 'websky_thread_scroll_position'
 
 // Pagination constants for replies
 const REPLIES_PAGE_LENGTH = 25
@@ -137,7 +137,7 @@ export default function ThreadPage() {
     if (wasOnThread && !isOnThread) {
       const scrollY = window.scrollY || document.documentElement.scrollTop
       try {
-        sessionStorage.setItem(WEBSKY9_THREAD_SCROLL_POSITION, scrollY.toString())
+        sessionStorage.setItem(WEBSKY_THREAD_SCROLL_POSITION, scrollY.toString())
         console.log('Saved thread scroll position before navigation:', scrollY)
       } catch (error) {
         console.warn('Failed to save thread scroll position:', error)
@@ -154,7 +154,7 @@ export default function ThreadPage() {
     
     // Check if we're returning to thread page via back navigation
     if (!wasOnThread && isOnThread && navigationType === 'POP') {
-      const savedScrollPosition = sessionStorage.getItem(WEBSKY9_THREAD_SCROLL_POSITION)
+      const savedScrollPosition = sessionStorage.getItem(WEBSKY_THREAD_SCROLL_POSITION)
       if (savedScrollPosition) {
         // Just prevent scroll to top, don't restore yet (content might not be loaded)
         scrollRestoredRef.current = false
@@ -183,13 +183,13 @@ export default function ThreadPage() {
     // Only restore once when thread is loaded
     if (!isLoading && !scrollRestoredRef.current && thread) {
       try {
-        const savedScrollPosition = sessionStorage.getItem(WEBSKY9_THREAD_SCROLL_POSITION)
+        const savedScrollPosition = sessionStorage.getItem(WEBSKY_THREAD_SCROLL_POSITION)
         const isReturning = navigationType === 'POP' && savedScrollPosition
         
         // If this is a new thread (not returning), clear saved scroll position
         if (!isReturning && savedScrollPosition) {
           try {
-            sessionStorage.removeItem(WEBSKY9_THREAD_SCROLL_POSITION)
+            sessionStorage.removeItem(WEBSKY_THREAD_SCROLL_POSITION)
             console.log('Cleared saved thread scroll position for new thread')
           } catch (error) {
             console.warn('Failed to clear thread scroll position:', error)
@@ -276,7 +276,7 @@ export default function ThreadPage() {
       // Clear saved position if scrolled to top
       if (scrollY < 50) {
         try {
-          sessionStorage.removeItem(WEBSKY9_THREAD_SCROLL_POSITION)
+          sessionStorage.removeItem(WEBSKY_THREAD_SCROLL_POSITION)
         } catch (error) {
           console.warn('Failed to clear thread scroll position:', error)
         }
@@ -289,7 +289,7 @@ export default function ThreadPage() {
       }
       scrollSaveTimeoutRef.current = setTimeout(() => {
         try {
-          sessionStorage.setItem(WEBSKY9_THREAD_SCROLL_POSITION, scrollY.toString())
+          sessionStorage.setItem(WEBSKY_THREAD_SCROLL_POSITION, scrollY.toString())
         } catch (error) {
           console.warn('Failed to save thread scroll position:', error)
         }
@@ -442,32 +442,28 @@ export default function ThreadPage() {
   const handlePost = async (text: string, replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string }, quotePost?: AppBskyFeedDefs.PostView) => {
     if (!agent || !thread) return
 
-    try {
-      if (quotePost) {
-        await createQuotePost(agent, {
-          text,
-          quotedPost: {
-            uri: quotePost.uri,
-            cid: quotePost.cid,
-          },
-        })
-        addToast('Quote post created!', 'success')
-      } else {
-        await createPost(agent, {
-          text,
-          replyTo: replyTo || {
-            uri: thread.post.uri,
-            cid: thread.post.cid,
-            rootUri: thread.post.uri,
-            rootCid: thread.post.cid,
-          },
-        })
-        addToast('Reply posted!', 'success')
-      }
-      loadThread()
-    } catch (error) {
-      throw error
+    if (quotePost) {
+      await createQuotePost(agent, {
+        text,
+        quotedPost: {
+          uri: quotePost.uri,
+          cid: quotePost.cid,
+        },
+      })
+      addToast('Quote post created!', 'success')
+    } else {
+      await createPost(agent, {
+        text,
+        replyTo: replyTo || {
+          uri: thread.post.uri,
+          cid: thread.post.cid,
+          rootUri: thread.post.uri,
+          rootCid: thread.post.cid,
+        },
+      })
+      addToast('Reply posted!', 'success')
     }
+    loadThread()
   }
 
   // Helper function to count nested replies recursively

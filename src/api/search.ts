@@ -57,9 +57,12 @@ export async function searchActors(
  * This is a placeholder for future implementation
  */
 export async function searchPosts(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _agent: BskyAgent,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _query: string,
-  _limit: number = 25
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _limit?: number
 ): Promise<any> {
   // TODO: Implement post search if/when AT Protocol adds this endpoint
   // For now, this is a placeholder

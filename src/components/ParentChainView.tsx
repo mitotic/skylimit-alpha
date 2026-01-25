@@ -7,7 +7,7 @@ import Spinner from './Spinner'
 
 interface ParentChainViewProps {
   parents: AppBskyFeedDefs.PostView[]
-  rootUri: string | null
+  rootUri?: string | null
   isLoading: boolean
 }
 
@@ -119,7 +119,7 @@ function ZigzagBreak({ onClick, count }: { onClick: () => void; count: number })
   )
 }
 
-export default function ParentChainView({ parents, rootUri: _rootUri, isLoading }: ParentChainViewProps) {
+export default function ParentChainView({ parents, isLoading }: ParentChainViewProps) {
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState(false)
 
@@ -180,7 +180,7 @@ export default function ParentChainView({ parents, rootUri: _rootUri, isLoading 
   // Expanded view or <= 2 parents: show all
   return (
     <div className="border-b border-gray-200 dark:border-gray-700">
-      {parents.map((parent, _index) => (
+      {parents.map((parent) => (
         <ParentPost
           key={parent.uri}
           post={parent}

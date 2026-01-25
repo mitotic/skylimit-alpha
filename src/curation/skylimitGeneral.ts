@@ -56,14 +56,12 @@ export function parseEditionLayout(layoutText: string): EditionLayout {
   const lines = layoutText.split('\n').map(l => l.trim()).filter(l => l)
   
   let currentSection = ''
-  let sectionIndex = 0
   let userIndex = 0
-  
+
   for (const line of lines) {
     // Check if this is a section name (not starting with @ or #)
     if (!line.startsWith('@') && !line.startsWith('#')) {
       currentSection = line
-      sectionIndex++
       userIndex = 0
       continue
     }

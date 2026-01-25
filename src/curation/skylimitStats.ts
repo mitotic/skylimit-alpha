@@ -337,8 +337,10 @@ async function accumulateStatusCounts(
   currentFollows: Record<string, FollowInfo>,
   userAccum: Record<string, UserAccumulator>,
   summaryCache: Record<string, any>,
+   
   _postStats: Record<string, PostStats>,
   secretKey: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _myUsername: string
 ): Promise<number> {
   let accumulated = 0
@@ -442,8 +444,7 @@ function computeUserProbabilities(
   const accumEntries = Object.entries(userAccum)
   
   let totalUserWeight = 0
-  let totalWeightedDaily = 0
-  
+
   // Calculate daily rates and weights
   for (const [, accum] of accumEntries) {
     const userEntry = accum.userEntry
@@ -482,7 +483,6 @@ function computeUserProbabilities(
     accum.normalized_daily = accum.weight ? userEntry.total_daily / accum.weight : 0
     
     totalUserWeight += accum.weight
-    totalWeightedDaily += accum.weight * accum.normalized_daily
   }
   
   // Sort by normalized view count

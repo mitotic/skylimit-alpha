@@ -2161,8 +2161,8 @@ export async function clearFeedCache(): Promise<void> {
       request.onerror = () => reject(request.error)
     })
     // Clear sessionStorage feed state to maintain consistency
-    sessionStorage.removeItem('websky9_home_feed_state')
-    sessionStorage.removeItem('websky9_home_scroll_state')
+    sessionStorage.removeItem('websky_home_feed_state')
+    sessionStorage.removeItem('websky_home_scroll_state')
   } catch (error) {
     console.warn('Failed to clear feed cache:', error)
   }
