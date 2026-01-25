@@ -18,18 +18,56 @@ export const USER_TIMEZONE_KEY = 'timezone'
 export const MAX_AMP_FACTOR = 8.0
 export const MIN_AMP_FACTOR = 0.125
 
-// Analysis period settings
-export const UPDATE_INTERVAL_MINUTES = 120 // 2 hours
-export const INTERVALS_PER_DAY = 24 * 60 / UPDATE_INTERVAL_MINUTES // 12 intervals per day
+// Analysis period settings - default interval (used as fallback)
+const DEFAULT_INTERVAL_HOURS = 2
+
+// Valid interval values (factors of 24 between 1-12)
+export const VALID_INTERVAL_HOURS = [1, 2, 3, 4, 6, 8, 12] as const
+
 export const MOTD_MIN_SKYLIMIT_NUMBER = 1.0
 
+// Forward declaration for settings type (full interface defined below)
+type SkylimitSettingsForInterval = { curationIntervalHours?: number }
+
+/**
+ * Get the curation interval in hours from settings.
+ * Validates that the value is a factor of 24 and between 1-12.
+ */
+export function getIntervalHoursSync(settings: SkylimitSettingsForInterval): number {
+  const hours = settings.curationIntervalHours ?? DEFAULT_INTERVAL_HOURS
+  return VALID_INTERVAL_HOURS.includes(hours as typeof VALID_INTERVAL_HOURS[number])
+    ? hours
+    : DEFAULT_INTERVAL_HOURS
+}
+
+/**
+ * Get the curation interval in minutes from settings.
+ */
+export function getIntervalMinutesSync(settings: SkylimitSettingsForInterval): number {
+  return getIntervalHoursSync(settings) * 60
+}
+
+/**
+ * Get the number of intervals per day from settings.
+ */
+export function getIntervalsPerDaySync(settings: SkylimitSettingsForInterval): number {
+  return 24 / getIntervalHoursSync(settings)
+}
+
+/**
+ * Global statistics for curation across all followed users.
+ *
+ * Skylimit Number: The core metric determining guaranteed views per day.
+ * Computed to balance viewing capacity across all followed accounts based
+ * on their posting frequency and amplification factors.
+ */
 export interface GlobalStats {
   skylimit_number: number
-  status_daily: number
+  post_daily: number           // Daily post count across all users (renamed from status_daily)
   shown_daily: number
-  status_total: number
+  post_total: number           // Total posts in analysis period (renamed from status_total)
   day_total: number
-  status_lastday: number
+  post_lastday: number         // Posts from the last day (renamed from status_lastday)
   shown_lastday: number
 
   // Interval diagnostics
@@ -52,7 +90,6 @@ export interface GlobalStats {
   summaries_dropped_cached?: number     // Total dropped summaries across all intervals
   summaries_total?: number              // Total posts in summaries cache (complete intervals only)
   summaries_accumulated?: number        // Posts accumulated (from current followees)
-  summaries_skipped?: number            // Posts skipped (from non-followees)
 
   // Summaries cache timestamps
   summaries_oldest_time?: string        // ISO string of oldest post in summaries
@@ -61,11 +98,18 @@ export interface GlobalStats {
   // Complete intervals algorithm
   intervals_complete?: number           // Intervals with non-zero neighbors (not at boundary)
   intervals_incomplete?: number         // Non-zero intervals that are incomplete
-  complete_intervals_days?: number      // completeCount / INTERVALS_PER_DAY
-  interval_length_hours?: number        // UPDATE_INTERVAL_MINUTES / 60 (for UI display)
+  complete_intervals_days?: number      // completeCount / intervalsPerDay
+  interval_length_hours?: number        // Curation interval length in hours (from settings)
   days_of_data?: number                 // daysOfData setting (summaries cache retention period)
 }
 
+/**
+ * Per-user curation statistics and probabilities.
+ *
+ * Amplification Factor (amp_factor): A per-user multiplier (0.125 to 8.0)
+ * that increases or decreases visibility of posts from specific accounts.
+ * Higher values = more posts shown from that user.
+ */
 export interface UserEntry {
   altname: string
   acct_id: string
@@ -74,14 +118,12 @@ export interface UserEntry {
   motx_daily: number
   priority_daily: number
   post_daily: number
-  boost_daily: number
-  reblog2_daily: number
+  repost_daily: number         // Daily repost count for this user
   engaged_daily: number
   total_daily: number
   net_prob: number
   priority_prob: number
   post_prob: number
-  reblog2_avg: number
 }
 
 export interface UserFilter {
@@ -113,7 +155,6 @@ export interface PostSummary {
   orig_username?: string
   curation_dropped?: string
   curation_msg?: string
-  curation_high_boost?: boolean
 }
 
 export interface FollowInfo {
@@ -129,20 +170,24 @@ export interface FollowInfo {
   [MOTM_TAG]?: string
 }
 
+/**
+ * Result of curating a single post - metadata attached to posts after curation.
+ */
 export interface CurationResult {
   curation_dropped?: string
   curation_msg?: string
-  curation_high_boost?: boolean
   curation_edition?: boolean
   curation_save?: string
   curation_id?: string
-  curation_tag?: string
 }
 
+/**
+ * Accumulator for computing per-user statistics during interval processing.
+ * Used in the two-pass statistics algorithm to gather data before probability computation.
+ */
 export interface UserAccumulator {
   userEntry: UserEntry
-  boost_total: number
-  reblog2_total: number
+  repost_total: number         // Total reposts accumulated
   motx_total: number
   priority_total: number
   post_total: number
@@ -153,10 +198,13 @@ export interface UserAccumulator {
   followed_at?: string
 }
 
+/**
+ * Statistics for tracking repost counts during interval processing.
+ */
 export interface PostStats {
-  boost_count: number
-  fboost_count: number
-  repostCount: number
+  repost_count: number           // Number of times post was reposted (renamed from boost_count)
+  followed_repost_count: number  // Reposts by followed users (renamed from fboost_count)
+  repostCount: number            // Original repost count from post metadata
 }
 
 export interface EditionLayout {
@@ -176,7 +224,6 @@ export interface SkylimitSettings {
   secretKey: string
   editionTimes: string
   editionLayout: string
-  amplifyHighBoosts: boolean
   anonymizeUsernames: boolean
   debugMode: boolean
   feedRedisplayIdleInterval?: number // in milliseconds, default 5 minutes
@@ -190,17 +237,19 @@ export interface SkylimitSettings {
   lookbackDays?: number // number of days to cache back from today, default 1
   // Feed display settings
   maxDisplayedFeedSize?: number // max posts in displayed feed, default 300
+  // Curation interval settings
+  curationIntervalHours?: number // curation interval in hours, default 2, must be 1-12 and factor of 24 (1, 2, 3, 4, 6, 8, 12)
 }
 
-// Extended FeedViewPost with curation metadata
+/**
+ * Curation metadata attached to FeedViewPost for display purposes.
+ */
 export interface CurationMetadata {
   curation_dropped?: string
   curation_msg?: string
-  curation_high_boost?: boolean
   curation_edition?: boolean
   curation_save?: string
   curation_id?: string
-  curation_tag?: string
 }
 
 export type CurationFeedViewPost = AppBskyFeedDefs.FeedViewPost & {

@@ -2,7 +2,7 @@
  * Settings Page - Combined Basic and Curation Settings with Tabs
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -59,6 +59,7 @@ export default function SettingsPage() {
 
   // Curation tab state
   const [settings, setSettings] = useState<SkylimitSettings | null>(null)
+  const [originalSettings, setOriginalSettings] = useState<SkylimitSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
@@ -73,6 +74,81 @@ export default function SettingsPage() {
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
+
+  // Detect unsaved changes by comparing current settings to original
+  const hasUnsavedChanges = useMemo(() => {
+    if (!settings || !originalSettings) return false
+    return JSON.stringify(settings) !== JSON.stringify(originalSettings)
+  }, [settings, originalSettings])
+
+  // Warn user before leaving page with unsaved changes (browser navigation/close)
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+      return ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedChanges])
+
+  // Warn user before in-app navigation with unsaved changes
+  // (useBlocker requires data router, so we intercept link clicks manually)
+  useEffect(() => {
+    if (!hasUnsavedChanges || activeTab !== 'curation') return
+
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+
+      // Check for navigation links (React Router <Link> renders as <a>)
+      const link = target.closest('a[href]') as HTMLAnchorElement | null
+
+      // Also check for navigation buttons (like the logo button)
+      const navButton = target.closest('button[aria-label="Go to home"]') as HTMLButtonElement | null
+
+      // Handle navigation button (logo)
+      if (navButton) {
+        const confirmed = window.confirm(
+          'You have unsaved curation settings. Are you sure you want to leave without saving?'
+        )
+        if (!confirmed) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+        return
+      }
+
+      if (!link) return
+
+      // Get the href attribute (relative path) rather than resolved href property
+      const href = link.getAttribute('href')
+      if (!href) return
+
+      // Skip external links (opening in new tab or absolute URLs to other domains)
+      if (link.target === '_blank') return
+      if (href.startsWith('http://') || href.startsWith('https://')) return
+
+      // Skip if staying within settings
+      if (href.startsWith('/settings')) return
+
+      // Show confirmation for navigation away from settings
+      const confirmed = window.confirm(
+        'You have unsaved curation settings. Are you sure you want to leave without saving?'
+      )
+
+      if (!confirmed) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+
+    // Use capture phase to intercept before React Router
+    document.addEventListener('click', handleClick, true)
+    return () => document.removeEventListener('click', handleClick, true)
+  }, [hasUnsavedChanges, activeTab])
 
   // Load settings and cache stats on mount
   useEffect(() => {
@@ -139,6 +215,7 @@ export default function SettingsPage() {
     try {
       const s = await getSettings()
       setSettings(s)
+      setOriginalSettings(structuredClone(s))
     } catch (error) {
       console.error('Failed to load settings:', error)
     } finally {
@@ -159,6 +236,9 @@ export default function SettingsPage() {
       const newDisabled = settings.disabled ?? false
 
       await updateSettings(settings)
+
+      // Mark settings as saved (no longer dirty)
+      setOriginalSettings(structuredClone(settings))
 
       // Trigger feed refilter if showAllStatus OR disabled changed
       // Both settings affect which posts are displayed
@@ -496,16 +576,6 @@ export default function SettingsPage() {
               <label className="flex items-center space-x-3">
                 <input
                   type="checkbox"
-                  checked={settings.amplifyHighBoosts}
-                  onChange={(e) => updateSetting('amplifyHighBoosts', e.target.checked)}
-                  className="w-5 h-5"
-                />
-                <span>Amplify high reposts (increase probability for highly reposted content)</span>
-              </label>
-
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
                   checked={settings.anonymizeUsernames}
                   onChange={(e) => updateSetting('anonymizeUsernames', e.target.checked)}
                   className="w-5 h-5"
@@ -648,6 +718,36 @@ export default function SettingsPage() {
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                       Multiplier for raw posts to fetch (accounts for filtering variability). Higher = more reliable page fill. Range: 1-3.
+                    </p>
+                  </div>
+
+                  <h3 className="text-lg font-semibold mb-4 mt-6">Curation Interval</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                    Time period used for grouping posts in statistics calculations.
+                  </p>
+
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium mb-2">
+                      Curation Interval (hours)
+                    </label>
+                    <select
+                      value={settings.curationIntervalHours ?? 2}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10)
+                        updateSetting('curationIntervalHours', value)
+                      }}
+                      className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                    >
+                      <option value={1}>1 hour</option>
+                      <option value={2}>2 hours</option>
+                      <option value={3}>3 hours</option>
+                      <option value={4}>4 hours</option>
+                      <option value={6}>6 hours</option>
+                      <option value={8}>8 hours</option>
+                      <option value={12}>12 hours</option>
+                    </select>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Length of curation intervals. Default: 2 hours. Must be a factor of 24 (1-12). Changing this affects statistics calculations.
                     </p>
                   </div>
                 </div>
@@ -892,6 +992,25 @@ This cannot be undone.`}
         {activeTab === 'curation' && renderCurationTab()}
         {activeTab === 'following' && renderFollowingTab()}
       </div>
-    </div>
+
+      {/* Sticky save bar - shown when there are unsaved curation changes */}
+      {hasUnsavedChanges && activeTab === 'curation' && (
+        <div className="fixed bottom-0 left-0 right-0 bg-amber-50 dark:bg-amber-900/30 border-t border-amber-200 dark:border-amber-700 p-3 shadow-lg z-50">
+          <div className="max-w-2xl mx-auto flex items-center justify-between gap-4">
+            <span className="text-amber-800 dark:text-amber-200 text-sm font-medium">
+              You have unsaved changes
+            </span>
+            <Button
+              variant="primary"
+              disabled={saving}
+              onClick={handleSave}
+            >
+              {saving ? 'Saving...' : 'Update Curation Settings'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      </div>
   )
 }

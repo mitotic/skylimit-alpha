@@ -15,12 +15,12 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   secretKey: 'default',
   editionTimes: '',
   editionLayout: '',
-  amplifyHighBoosts: false,
   anonymizeUsernames: false,
   debugMode: false,
   feedRedisplayIdleInterval: 5 * 60 * 1000, // 5 minutes in milliseconds
   feedPageLength: 25, // number of posts per page, default 25
   infiniteScrollingOption: false, // default to "Load More" button
+  curationIntervalHours: 2, // curation interval in hours, must be factor of 24 (1, 2, 3, 4, 6, 8, 12)
 }
 
 /**

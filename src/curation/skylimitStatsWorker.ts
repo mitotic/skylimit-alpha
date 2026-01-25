@@ -7,6 +7,7 @@ import { computePostStats } from './skylimitStats'
 import { getSettings } from './skylimitStore'
 import { refreshFollows } from './skylimitFollows'
 import { scheduleCleanup } from './skylimitCleanup'
+import { getIntervalHoursSync } from './types'
 
 /**
  * Compute statistics in the background
@@ -47,32 +48,47 @@ export async function computeStatsInBackground(
 
 /**
  * Schedule periodic statistics computation
+ * Uses curation interval from settings to determine scheduling frequency
  */
 export function scheduleStatsComputation(
   agent: BskyAgent,
   myUsername: string,
-  myDid: string,
-  // Run every 2 hours
-  intervalMs: number = 2 * 60 * 60 * 1000
+  myDid: string
 ): () => void {
-  // Don't run immediately on page load - wait for the interval
-  // This prevents excessive API calls when navigating back to home page
-  
-  // Schedule periodic runs
-  const intervalId = setInterval(() => {
-    computeStatsInBackground(agent, myUsername, myDid, false)
-  }, intervalMs)
-  
-  // Run once after a short delay to initialize (but don't force follow refresh)
-  // This allows initial stats computation without hitting rate limits
-  const initialTimeout = setTimeout(() => {
-    computeStatsInBackground(agent, myUsername, myDid, false)
-  }, 5000) // Wait 5 seconds after page load
-  
+  // Track cleanup state
+  let intervalId: ReturnType<typeof setInterval> | null = null
+  let initialTimeout: ReturnType<typeof setTimeout> | null = null
+  let isCleanedUp = false
+
+  // Initialize scheduling asynchronously
+  getSettings().then(settings => {
+    if (isCleanedUp) return // Don't schedule if already cleaned up
+
+    const intervalHours = getIntervalHoursSync(settings)
+    const intervalMs = intervalHours * 60 * 60 * 1000
+
+    // Don't run immediately on page load - wait for the interval
+    // This prevents excessive API calls when navigating back to home page
+
+    // Schedule periodic runs
+    intervalId = setInterval(() => {
+      computeStatsInBackground(agent, myUsername, myDid, false)
+    }, intervalMs)
+
+    // Run once after a short delay to initialize (but don't force follow refresh)
+    // This allows initial stats computation without hitting rate limits
+    initialTimeout = setTimeout(() => {
+      computeStatsInBackground(agent, myUsername, myDid, false)
+    }, 5000) // Wait 5 seconds after page load
+  }).catch(err => {
+    console.warn('Failed to get settings for stats scheduling:', err)
+  })
+
   // Return cleanup function
   return () => {
-    clearInterval(intervalId)
-    clearTimeout(initialTimeout)
+    isCleanedUp = true
+    if (intervalId !== null) clearInterval(intervalId)
+    if (initialTimeout !== null) clearTimeout(initialTimeout)
   }
 }
 

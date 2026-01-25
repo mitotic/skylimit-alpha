@@ -68,24 +68,17 @@ export function parseEditionLayout(layoutText: string): EditionLayout {
       continue
     }
     
-    // Parse account/hashtag entries
+    // Parse account entries
     const entries = line.split(/\s+/).filter(e => e)
     for (const entry of entries) {
       if (entry.startsWith('@')) {
         // Account entry: @user.bsky.social or @user.bsky.social#hashtag
         const [account, tag] = entry.split('#')
         const username = account.substring(1)
-        
+
         layout[username] = {
           section: currentSection || '*default',
           tag: tag || undefined,
-          index: userIndex++,
-        }
-      } else if (entry.startsWith('#')) {
-        // Hashtag entry: #hashtag
-        const hashtag = entry.substring(1)
-        layout['#' + hashtag] = {
-          section: currentSection || '*default',
           index: userIndex++,
         }
       }
@@ -254,48 +247,45 @@ export function extractTimezone(profile: AppBskyActorDefs.ProfileViewDetailed): 
 }
 
 /**
- * Get followed hashtags in a post
- */
-export function getFollowedHashtagsInPost(
-  post: PostSummary,
-  followedHashtags: string[]
-): string[] {
-  return post.tags.filter(tag => followedHashtags.includes('#' + tag))
-}
-
-/**
  * Get interval string from date
+ * @param date - The date to convert to interval string
+ * @param intervalHours - The interval length in hours (must be factor of 24)
  */
-export function getIntervalString(date: Date): string {
+export function getIntervalString(date: Date, intervalHours: number): string {
   const year = date.getUTCFullYear()
   const month = String(date.getUTCMonth() + 1).padStart(2, '0')
   const day = String(date.getUTCDate()).padStart(2, '0')
-  // Round hour down to nearest 2-hour block (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
+  // Round hour down to nearest interval block
   const hour = date.getUTCHours()
-  const intervalHour = Math.floor(hour / 2) * 2
+  const intervalHour = Math.floor(hour / intervalHours) * intervalHours
   const intervalHourStr = String(intervalHour).padStart(2, '0')
-  
+
   return `${year}-${month}-${day}-${intervalHourStr}`
 }
 
 /**
  * Get next interval string
+ * @param intervalStr - The current interval string
+ * @param intervalHours - The interval length in hours (must be factor of 24)
  */
-export function nextInterval(intervalStr: string): string {
+export function nextInterval(intervalStr: string, intervalHours: number): string {
   const [year, month, day, hour] = intervalStr.split('-').map(Number)
   const date = new Date(Date.UTC(year, month - 1, day, hour))
-  date.setUTCHours(date.getUTCHours() + 2) // Add 2 hours
-  return getIntervalString(date)
+  date.setUTCHours(date.getUTCHours() + intervalHours)
+  return getIntervalString(date, intervalHours)
 }
 
 /**
  * Get oldest interval to analyze
+ * @param lastInterval - The most recent interval string
+ * @param daysOfData - Number of days to look back
+ * @param intervalHours - The interval length in hours (must be factor of 24)
  */
-export function oldestInterval(lastInterval: string, daysOfData: number): string {
+export function oldestInterval(lastInterval: string, daysOfData: number, intervalHours: number): string {
   const [year, month, day, hour] = lastInterval.split('-').map(Number)
   const date = new Date(Date.UTC(year, month - 1, day, hour))
   date.setUTCDate(date.getUTCDate() - daysOfData)
-  return getIntervalString(date)
+  return getIntervalString(date, intervalHours)
 }
 
 /**

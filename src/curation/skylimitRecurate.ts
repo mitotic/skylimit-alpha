@@ -38,7 +38,6 @@ export async function recomputeCurationStatus(
     const editionTimeStrs = await getEditionTimeStrs()
     const editionCount = editionTimeStrs.length
     const secretKey = settings?.secretKey || 'default'
-    const amplifyHighBoosts = settings?.amplifyHighBoosts || false
 
     // Get all post summaries
     const allSummaries = await getAllPostSummaries()
@@ -88,8 +87,7 @@ export async function recomputeCurationStatus(
         currentStats,
         currentProbs,
         secretKey,
-        editionCount,
-        amplifyHighBoosts
+        editionCount
       )
 
       // Check if curation status changed
@@ -98,7 +96,6 @@ export async function recomputeCurationStatus(
         // Update curation status in summary
         summary.curation_dropped = curation.curation_dropped
         summary.curation_msg = curation.curation_msg
-        summary.curation_high_boost = curation.curation_high_boost
         updatedSummaries.push(summary)
         updatedCount++
       }

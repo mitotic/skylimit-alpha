@@ -326,8 +326,7 @@ export async function checkPostSummaryExists(uniqueId: string): Promise<boolean>
 export async function updatePostSummaryCurationStatus(
   uniqueId: string,
   curationStatus: string | undefined,
-  curationMsg?: string,
-  curationHighBoost?: boolean
+  curationMsg?: string
 ): Promise<boolean> {
   const database = await getDB()
   const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
@@ -339,7 +338,6 @@ export async function updatePostSummaryCurationStatus(
   // Update curation fields
   summary.curation_dropped = curationStatus
   if (curationMsg !== undefined) summary.curation_msg = curationMsg
-  if (curationHighBoost !== undefined) summary.curation_high_boost = curationHighBoost
 
   return new Promise((resolve, reject) => {
     const request = store.put(summary)
@@ -623,6 +621,10 @@ export async function getSettings(): Promise<any> {
 /**
  * Create new user entry
  */
+/**
+ * Create new user entry with default values.
+ * Used for initializing per-user curation statistics.
+ */
 export function newUserEntry(obj: Partial<UserEntry>): UserEntry {
   return {
     altname: obj.altname || '',
@@ -632,26 +634,24 @@ export function newUserEntry(obj: Partial<UserEntry>): UserEntry {
     motx_daily: 0,
     priority_daily: 0,
     post_daily: 0,
-    boost_daily: 0,
-    reblog2_daily: 0,
+    repost_daily: 0,
     engaged_daily: 0,
     total_daily: 0,
     net_prob: 0,
     priority_prob: 0,
     post_prob: 0,
-    reblog2_avg: 0,
     ...obj,
   }
 }
 
 /**
- * Create new user accumulator
+ * Create new user accumulator with default values.
+ * Used for accumulating per-user statistics during interval processing.
  */
 export function newUserAccum(obj: Partial<UserAccumulator>): UserAccumulator {
   return {
     userEntry: obj.userEntry || newUserEntry({}),
-    boost_total: 0,
-    reblog2_total: 0,
+    repost_total: 0,
     motx_total: 0,
     priority_total: 0,
     post_total: 0,

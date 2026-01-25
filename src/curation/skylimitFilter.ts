@@ -23,20 +23,21 @@ import { hmacRandom } from '../utils/hmac'
 import {
   createPostSummary,
   isSamePeriod,
-  getFeedViewPostTimestamp,
-  getFollowedHashtagsInPost
+  getFeedViewPostTimestamp
 } from './skylimitGeneral'
 import { saveFollow } from './skylimitCache'
 
-const BOOST_AMPLIFY_FAC = 2
-const BOOST_AMPLIFY_MIN = 4
 const DIGEST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000  // 7 days - posts within this window are digestible
 
 /**
  * Count total posts for a user entry
  */
-export function countTotalPosts(userEntry: { motx_daily: number; priority_daily: number; post_daily: number; boost_daily: number }): number {
-  return userEntry.motx_daily + userEntry.priority_daily + userEntry.post_daily + userEntry.boost_daily
+/**
+ * Count total posts per day for a user entry.
+ * Includes: MOTx posts + priority posts + regular posts + reposts.
+ */
+export function countTotalPosts(userEntry: { motx_daily: number; priority_daily: number; post_daily: number; repost_daily: number }): number {
+  return userEntry.motx_daily + userEntry.priority_daily + userEntry.post_daily + userEntry.repost_daily
 }
 
 /**
@@ -89,8 +90,7 @@ export async function curateSinglePost(
   currentStats: GlobalStats | null,
   currentProbs: UserFilter | null,
   secretKey: string,
-  editionCount: number,
-  amplifyHighBoosts: boolean
+  editionCount: number
 ): Promise<CurationResult> {
   const summary = createPostSummary(post)
   const modStatus: CurationResult = { curation_msg: '' }
@@ -125,7 +125,6 @@ export async function curateSinglePost(
   
   let handledStatus = ''
   let userSave = ''
-  let tagSave = ''
   
   if (summary.username in currentProbs) {
     // Currently tracking user
@@ -138,10 +137,10 @@ export async function curateSinglePost(
     
     // Format statistics on separate lines
     const postingCount = Math.round(countTotalPosts(userEntry))
-    const repostingCount = Math.round(userEntry.boost_daily)
+    const repostingCount = Math.round(userEntry.repost_daily)
     const showProb = (userEntry.post_prob * 100).toFixed(1) // Convert to percent
     const ampFactor = follow ? follow.amp_factor : null
-    
+
     handledStatus = `Posting ${postingCount}/day (reposting ${repostingCount}/day)\nShow probability: ${showProb}%`
     if (ampFactor !== null) {
       handledStatus += `\nAmp factor: ${ampFactor}`
@@ -188,16 +187,8 @@ export async function curateSinglePost(
     }
     
     const priorityDrop = randomNum >= userEntry.priority_prob
-    let regularDrop = randomNum >= userEntry.post_prob
-    
-    // Amplify high boosts
-    if (regularDrop && amplifyHighBoosts && summary.repostCount > Math.max(2 ** userEntry.reblog2_avg - 1, BOOST_AMPLIFY_MIN)) {
-      regularDrop = randomNum >= BOOST_AMPLIFY_FAC * userEntry.post_prob
-      if (!regularDrop) {
-        modStatus.curation_high_boost = true
-      }
-    }
-    
+    const regularDrop = randomNum >= userEntry.post_prob
+
     if (motxAccept) {
       // Periodic post accepted
       modStatus.curation_dropped = ''
@@ -218,52 +209,19 @@ export async function curateSinglePost(
     }
   }
   
-  // Check for followed hashtags
-  const followedHashtags = Object.keys(currentFollows).filter(k => k.startsWith('#'))
-  const tagFollows = getFollowedHashtagsInPost(summary, followedHashtags)
-  
-  if (tagFollows.length > 0) {
-    let count = 0
-    let totalPostProb = 0
-    
-    for (const tag of tagFollows) {
-      const trackName = '#' + tag
-      const editionUser = editionLayout[trackName] || null
-      if (digestible && editionUser && !tagSave) {
-        tagSave = editionUser.section
-      }
-      
-      if (trackName in currentProbs) {
-        const tagEntry = currentProbs[trackName]
-        totalPostProb += tagEntry.post_prob
-        count += 1
-      }
-    }
-    
-    if (!handledStatus) {
-      const tagStr = '#' + tagFollows.join('/')
-      const randomNum = await hmacRandom(secretKey, 'filter_' + tagStr + '_' + summary.uniqueId)
-      const regularDrop = randomNum >= (totalPostProb / count)
-      handledStatus = 'Tags: ' + tagStr
-      modStatus.curation_tag = '#' + tagFollows[0]
-      modStatus.curation_dropped = regularDrop ? 'random (tag) ' + tagStr : ''
-    }
-  }
-  
   // Set curation_msg - use handledStatus if available, otherwise show basic info
   if (handledStatus) {
     modStatus.curation_msg = handledStatus
     if (modStatus.curation_dropped) {
       // Add newline before dropped message so it appears on next line
       modStatus.curation_msg += '\n[Dropped ' + modStatus.curation_dropped + ']'
-    } else if (userSave || tagSave) {
-      modStatus.curation_save = userSave || tagSave
-      modStatus.curation_dropped = 'saved for edition ' + (userSave || tagSave)
+    } else if (userSave) {
+      modStatus.curation_save = userSave
+      modStatus.curation_dropped = 'saved for edition ' + userSave
       modStatus.curation_msg += '\n[Dropped ' + modStatus.curation_dropped + ']'
     }
   } else {
-    // No statistics available - user not tracked and no followed hashtags
-    // Still show if user is followed (basic info)
+    // No statistics available - user not tracked yet
     const follow = currentFollows[summary.username] || null
     if (follow) {
       modStatus.curation_msg = `User followed\nAmp factor: ${follow.amp_factor}`

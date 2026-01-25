@@ -2,7 +2,15 @@
  * Statistics computation for Skylimit curation
  */
 
-import { PostSummary, UserEntry, UserFilter, GlobalStats, UserAccumulator, FollowInfo, PostStats } from './types'
+import {
+  PostSummary, UserEntry, UserFilter, GlobalStats, UserAccumulator, FollowInfo, PostStats,
+  MOTD_MIN_SKYLIMIT_NUMBER,
+  MAX_AMP_FACTOR,
+  MIN_AMP_FACTOR,
+  MOT_TAGS,
+  getIntervalHoursSync,
+  getIntervalsPerDaySync
+} from './types'
 import {
   getAllPostSummaries,
   saveFilter,
@@ -11,24 +19,22 @@ import {
   getAllFollows
 } from './skylimitCache'
 import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral, getIntervalString } from './skylimitGeneral'
-import {
-  INTERVALS_PER_DAY,
-  MOTD_MIN_SKYLIMIT_NUMBER,
-  MAX_AMP_FACTOR,
-  MIN_AMP_FACTOR,
-  MOT_TAGS,
-  UPDATE_INTERVAL_MINUTES
-} from './types'
+import { getSettings } from './skylimitStore'
 // countTotalPosts is defined in this file
 import { hmacHex } from '../utils/hmac'
 
-const POST_STATS_PROTO: PostStats = { boost_count: 0, fboost_count: 0, repostCount: 0 }
+// Prototype for PostStats - tracks repost counts during interval processing
+const POST_STATS_PROTO: PostStats = { repost_count: 0, followed_repost_count: 0, repostCount: 0 }
 
 /**
  * Count total posts for a user entry
  */
+/**
+ * Count total posts per day for a user entry.
+ * Includes: MOTx posts + priority posts + regular posts + reposts.
+ */
 export function countTotalPostsForUser(userEntry: UserEntry): number {
-  return userEntry.motx_daily + userEntry.priority_daily + userEntry.post_daily + userEntry.boost_daily
+  return userEntry.motx_daily + userEntry.priority_daily + userEntry.post_daily + userEntry.repost_daily
 }
 
 /**
@@ -47,7 +53,6 @@ interface IntervalDiagnostics {
   summariesDroppedCached: number
   summariesTotal: number
   summariesAccumulated: number
-  summariesSkipped: number
   // Timestamp range
   summariesOldestTime: Date | null
   summariesNewestTime: Date | null
@@ -69,6 +74,11 @@ export async function computePostStats(
   myDid: string,
   secretKey: string
 ): Promise<[GlobalStats, UserFilter] | null> {
+  // Get settings for interval configuration
+  const settings = await getSettings()
+  const intervalHours = getIntervalHoursSync(settings)
+  const intervalsPerDay = getIntervalsPerDaySync(settings)
+
   // Get all post summaries from the new cache
   const allSummaries = await getAllPostSummaries()
   if (allSummaries.length === 0) {
@@ -79,7 +89,7 @@ export async function computePostStats(
   const summariesByInterval = new Map<string, PostSummary[]>()
   for (const summary of allSummaries) {
     // Compute interval from postTimestamp
-    const intervalStr = getIntervalString(new Date(summary.postTimestamp))
+    const intervalStr = getIntervalString(new Date(summary.postTimestamp), intervalHours)
     if (!summariesByInterval.has(intervalStr)) {
       summariesByInterval.set(intervalStr, [])
     }
@@ -93,8 +103,8 @@ export async function computePostStats(
   }
 
   const lastInterval = intervals[intervals.length - 1]
-  const finalIntervalEndStr = nextIntervalGeneral(lastInterval)
-  const oldestIntervalStr = oldestIntervalGeneral(lastInterval, daysOfData)
+  const finalIntervalEndStr = nextIntervalGeneral(lastInterval, intervalHours)
+  const oldestIntervalStr = oldestIntervalGeneral(lastInterval, daysOfData, intervalHours)
 
   // Convert interval string to Date for finalIntervalEnd
   // Interval format: "YYYY-MM-DD-HH"
@@ -140,7 +150,7 @@ export async function computePostStats(
     if (summaries) {
       droppedCount += summaries.filter(s => s.curation_dropped).length
     }
-    intervalStr = nextIntervalGeneral(intervalStr)
+    intervalStr = nextIntervalGeneral(intervalStr, intervalHours)
   }
 
   // Sort intervals chronologically by start time
@@ -178,8 +188,7 @@ export async function computePostStats(
   }
 
   const completeCount = completeIntervalSet.size
-  const completeIntervalsDays = completeCount / INTERVALS_PER_DAY
-  const intervalLengthHours = UPDATE_INTERVAL_MINUTES / 60
+  const completeIntervalsDays = completeCount / intervalsPerDay
 
   // Count total non-empty intervals (for reporting)
   const intervalCount = Object.values(intervalPostCounts).filter(c => c > 0).length
@@ -210,8 +219,8 @@ export async function computePostStats(
   const sparseThreshold = avgPostsPerInterval * 0.1
   const sparseIntervals = completeIntervalCounts.filter(c => c < sparseThreshold).length
 
-  // Accumulate status counts ONCE after all intervals are processed (like Mahoot)
-  const { accumulated, skipped } = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername)
+  // Accumulate status counts ONCE after all intervals are processed
+  const summariesAccumulated = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername)
 
   const summariesTotal = Object.keys(summaryCache).length
   // Total cached summaries across ALL intervals (complete + incomplete)
@@ -229,8 +238,7 @@ export async function computePostStats(
     summariesTotalCached,
     summariesDroppedCached: droppedCount,
     summariesTotal,
-    summariesAccumulated: accumulated,
-    summariesSkipped: skipped,
+    summariesAccumulated,
     // Timestamp range
     summariesOldestTime: timestampRange.oldest,
     summariesNewestTime: timestampRange.newest,
@@ -238,7 +246,7 @@ export async function computePostStats(
     completeCount,
     incompleteCount,
     completeIntervalsDays,
-    intervalLengthHours,
+    intervalLengthHours: intervalHours,
     daysOfData,
   }
 
@@ -251,7 +259,8 @@ export async function computePostStats(
     userAccum,
     viewsPerDay,
     myUsername,
-    intervalDiagnostics
+    intervalDiagnostics,
+    intervalsPerDay
   )
 
   // Save computed filter
@@ -301,17 +310,17 @@ function computeIntervalStats(
     }
 
     if (summary.repostUri) {
-      // This is a repost
+      // This is a repost - track repost statistics for the original post
       const repostedUri = summary.repostUri
       if (!(repostedUri in postStats)) {
         postStats[repostedUri] = { ...POST_STATS_PROTO }
       }
-      postStats[repostedUri].boost_count += 1
+      postStats[repostedUri].repost_count += 1
       postStats[repostedUri].repostCount = summary.repostCount
 
       if (summary.username in currentFollows) {
-        // Repost by followee
-        postStats[repostedUri].fboost_count += 1
+        // Repost by a followed user
+        postStats[repostedUri].followed_repost_count += 1
       }
     } else {
       // Original post
@@ -321,117 +330,73 @@ function computeIntervalStats(
 }
 
 /**
- * Result of accumulating status counts
- */
-interface AccumulateResult {
-  accumulated: number  // Posts that were accumulated (from current followees)
-  skipped: number      // Posts skipped (from non-followees)
-}
-
-/**
- * Accumulate status counts per user
+ * Accumulate status counts per user.
+ * Returns the number of posts accumulated.
  */
 async function accumulateStatusCounts(
   currentFollows: Record<string, FollowInfo>,
   userAccum: Record<string, UserAccumulator>,
   summaryCache: Record<string, any>,
-  postStats: Record<string, PostStats>,
+  _postStats: Record<string, PostStats>,
   secretKey: string,
   _myUsername: string
-): Promise<AccumulateResult> {
+): Promise<number> {
   let accumulated = 0
-  let skipped = 0
 
-  // Process all summaries in the cache for this interval
+  // Process all summaries in the cache
   for (const uri of Object.keys(summaryCache)) {
     const summaryInfo = summaryCache[uri]
     const username = summaryInfo.username
 
-    const follow = currentFollows[username] || null
+    // Get or create user accumulator
+    let accum = userAccum[username]
+    if (!accum) {
+      const follow = currentFollows[username] || null
+      if (follow) {
+        // Post/repost from followee - create new accumulator
+        const altname = 'user_' + (await hmacHex(secretKey, 'anonymize_' + username)).slice(-4)
 
-    const trackingNames: string[] = []
-
-    if (username in userAccum) {
-      // Tracking user (self)
-      trackingNames.push(username)
-    } else if (follow) {
-      // Post/repost from followee
-      const altname = 'user_' + (await hmacHex(secretKey, 'anonymize_' + username)).slice(-4)
-
-      const userEntry = newUserEntry({
-        altname,
-        acct_id: follow.accountDid,
-        topics: follow.topics || '',
-        amp_factor: Math.min(MAX_AMP_FACTOR, Math.max(MIN_AMP_FACTOR, follow.amp_factor)),
-      })
-      userAccum[username] = newUserAccum({
-        userEntry,
-        followed_at: follow.followed_at
-      })
-      trackingNames.push(username)
-    } else {
-      // Post from non-followed user; check if following tags in post
-      for (const tag of summaryInfo.tags) {
-        const trackName = '#' + tag
-        const tagFollow = currentFollows[trackName] || null
-        if (tagFollow) {
-          if (!(trackName in userAccum)) {
-            const userEntry = newUserEntry({
-              altname: trackName,
-              acct_id: '',
-              topics: '',
-              amp_factor: Math.min(MAX_AMP_FACTOR, Math.max(MIN_AMP_FACTOR, tagFollow.amp_factor)),
-            })
-            userAccum[trackName] = newUserAccum({
-              userEntry,
-              followed_at: tagFollow.followed_at
-            })
-          }
-          trackingNames.push(trackName)
-        }
+        const userEntry = newUserEntry({
+          altname,
+          acct_id: follow.accountDid,
+          topics: follow.topics || '',
+          amp_factor: Math.min(MAX_AMP_FACTOR, Math.max(MIN_AMP_FACTOR, follow.amp_factor)),
+        })
+        userAccum[username] = newUserAccum({
+          userEntry,
+          followed_at: follow.followed_at
+        })
+        accum = userAccum[username]
+      } else {
+        // Post from non-followed user (shouldn't happen in Following feed)
+        continue
       }
-    }
-
-    if (trackingNames.length === 0) {
-      // Ignore non-followed non-tagged post
-      skipped++
-      continue
     }
 
     accumulated++
-    
+
     const motx = summaryInfo.tags.some((tag: string) => MOT_TAGS.includes(tag))
-    const accumFac = 1 / trackingNames.length // Split post among different followed tags
-    
-    for (const trackName of trackingNames) {
-      const accum = userAccum[trackName]
-      if (!accum) continue
-      
-      if (summaryInfo.repostUri) {
-        // Repost
-        accum.boost_total += accumFac
-        const repostedStats = postStats[summaryInfo.repostUri]
-        if (repostedStats) {
-          accum.reblog2_total += accumFac * Math.log2(Math.max(1, repostedStats.repostCount))
-        }
+
+    if (summaryInfo.repostUri) {
+      // Repost - accumulate repost statistics
+      accum.repost_total += 1
+    } else {
+      // Original post
+      if (motx) {
+        accum.motx_total += 1
+      } else if (isPriorityPost(summaryInfo, accum.userEntry.topics)) {
+        accum.priority_total += 1
       } else {
-        // Original post
-        if (motx) {
-          accum.motx_total += accumFac
-        } else if (isPriorityPost(summaryInfo, accum.userEntry.topics)) {
-          accum.priority_total += accumFac
-        } else {
-          accum.post_total += accumFac
-        }
+        accum.post_total += 1
       }
-      
-      if (summaryInfo.engaged) {
-        accum.engaged_total += accumFac
-      }
+    }
+
+    if (summaryInfo.engaged) {
+      accum.engaged_total += 1
     }
   }
 
-  return { accumulated, skipped }
+  return accumulated
 }
 
 /**
@@ -466,12 +431,13 @@ function computeUserProbabilities(
   userAccum: Record<string, UserAccumulator>,
   maxViewsPerDay: number,
   myUsername: string,
-  intervalDiagnostics: IntervalDiagnostics
+  intervalDiagnostics: IntervalDiagnostics,
+  intervalsPerDay: number
 ): [GlobalStats, UserFilter] {
   // Use complete intervals for dayTotal if available, fallback to all processed intervals
   let dayTotal = intervalDiagnostics.completeIntervalsDays > 0
     ? intervalDiagnostics.completeIntervalsDays
-    : (intervalCount / INTERVALS_PER_DAY)
+    : (intervalCount / intervalsPerDay)
   
   const accumEntries = Object.entries(userAccum)
   
@@ -479,9 +445,9 @@ function computeUserProbabilities(
   let totalWeightedDaily = 0
   
   // Calculate daily rates and weights
-  for (const [trackName, accum] of accumEntries) {
+  for (const [, accum] of accumEntries) {
     const userEntry = accum.userEntry
-    
+
     if (accum.followed_at) {
       accum.weight = userEntry.amp_factor
 
@@ -497,39 +463,20 @@ function computeUserProbabilities(
       accum.follow_weight = 1
     }
     
-    // Extrapolate post count for recent follows
-    // Avoid division by zero and NaN
-    if (!isFinite(accum.follow_weight) || isNaN(accum.follow_weight)) {
-      console.warn(`computeUserProbabilities: Invalid follow_weight for ${trackName}, using 1`)
-      accum.follow_weight = 1
+    // Guard against zero/negative dayTotal (edge case with no data)
+    if (dayTotal <= 0) {
+      dayTotal = 0.167 // Fallback to ~2 intervals worth
     }
-    if (!isFinite(dayTotal) || isNaN(dayTotal) || dayTotal <= 0) {
-      console.warn(`computeUserProbabilities: Invalid dayTotal=${dayTotal}, using 0.167 (2 intervals)`)
-      dayTotal = 0.167 // Fallback to 2 intervals worth
-    }
-    
+
+    // Denominator is guaranteed >= 0.1, so division always produces finite results
     const denominator = Math.max(0.1, accum.follow_weight * dayTotal)
     userEntry.motx_daily = accum.motx_total / denominator
     userEntry.priority_daily = accum.priority_total / denominator
     userEntry.post_daily = accum.post_total / denominator
-    userEntry.boost_daily = accum.boost_total / denominator
-    userEntry.reblog2_daily = accum.reblog2_total / denominator
+    userEntry.repost_daily = accum.repost_total / denominator
     userEntry.engaged_daily = accum.engaged_total / denominator
-    
-    // Ensure all daily values are valid numbers
-    if (!isFinite(userEntry.motx_daily) || isNaN(userEntry.motx_daily)) userEntry.motx_daily = 0
-    if (!isFinite(userEntry.priority_daily) || isNaN(userEntry.priority_daily)) userEntry.priority_daily = 0
-    if (!isFinite(userEntry.post_daily) || isNaN(userEntry.post_daily)) userEntry.post_daily = 0
-    if (!isFinite(userEntry.boost_daily) || isNaN(userEntry.boost_daily)) userEntry.boost_daily = 0
-    if (!isFinite(userEntry.reblog2_daily) || isNaN(userEntry.reblog2_daily)) userEntry.reblog2_daily = 0
-    if (!isFinite(userEntry.engaged_daily) || isNaN(userEntry.engaged_daily)) userEntry.engaged_daily = 0
-    
+
     userEntry.total_daily = countTotalPostsForUser(userEntry)
-    
-    // Ensure total_daily is a valid number
-    if (!isFinite(userEntry.total_daily) || isNaN(userEntry.total_daily)) {
-      userEntry.total_daily = 0
-    }
     
     // Normalize by amp factor
     accum.normalized_daily = accum.weight ? userEntry.total_daily / accum.weight : 0
@@ -567,17 +514,13 @@ function computeUserProbabilities(
   for (const [trackName, accum] of accumEntries) {
     const userEntry = accum.userEntry
     
-    const netCount = trackName === myUsername 
-      ? userEntry.total_daily 
+    const netCount = trackName === myUsername
+      ? userEntry.total_daily
       : accum.normalized_daily
+    // Math.max(1, netCount) prevents division by zero, Math.min(1, ...) bounds result
     userEntry.net_prob = Math.min(1, skylimitNumber / Math.max(1, netCount))
-    
-    // Ensure net_prob is a valid number
-    if (!isFinite(userEntry.net_prob) || isNaN(userEntry.net_prob)) {
-      userEntry.net_prob = 0
-    }
-    
-    const regularPostsPlusBoosts = Math.max(1, userEntry.post_daily + userEntry.boost_daily)
+
+    const regularPostsPlusReposts = Math.max(1, userEntry.post_daily + userEntry.repost_daily)
     const userSkylimitNumber = skylimitNumber * (accum.weight || 1)
     let availableViews = userSkylimitNumber - userEntry.motx_daily
     
@@ -593,15 +536,13 @@ function computeUserProbabilities(
       userEntry.post_prob = 0
     } else {
       userEntry.priority_prob = 1.0
-      userEntry.post_prob = Math.min(1, (availableViews - userEntry.priority_daily) / regularPostsPlusBoosts)
+      userEntry.post_prob = Math.min(1, (availableViews - userEntry.priority_daily) / regularPostsPlusReposts)
     }
-    
-    userEntry.reblog2_avg = userEntry.reblog2_daily / Math.max(1, userEntry.boost_daily)
   }
   
-  // Calculate global stats
-  const statusTotal = Object.values(userAccum).reduce((sum, accum) =>
-    sum + accum.post_total + accum.boost_total + accum.motx_total + accum.priority_total, 0
+  // Calculate global stats - total posts across all users
+  const postTotal = Object.values(userAccum).reduce((sum, accum) =>
+    sum + accum.post_total + accum.repost_total + accum.motx_total + accum.priority_total, 0
   )
 
   // Calculate original posts vs reposts breakdown
@@ -609,16 +550,16 @@ function computeUserProbabilities(
     sum + accum.post_total + accum.motx_total + accum.priority_total, 0
   )
   const repostsTotal = Object.values(userAccum).reduce((sum, accum) =>
-    sum + accum.boost_total, 0
+    sum + accum.repost_total, 0
   )
 
   const globalStats: GlobalStats = {
     skylimit_number: skylimitNumber,
-    status_daily: statusTotal / dayTotal,
+    post_daily: postTotal / dayTotal,
     shown_daily: maxViewsPerDay, // Approximation
-    status_total: statusTotal,
+    post_total: postTotal,
     day_total: dayTotal,
-    status_lastday: 0, // Will be calculated separately
+    post_lastday: 0, // Will be calculated separately
     shown_lastday: 0, // Will be calculated separately
 
     // Interval diagnostics
@@ -641,7 +582,6 @@ function computeUserProbabilities(
     summaries_dropped_cached: intervalDiagnostics.summariesDroppedCached,
     summaries_total: intervalDiagnostics.summariesTotal,
     summaries_accumulated: intervalDiagnostics.summariesAccumulated,
-    summaries_skipped: intervalDiagnostics.summariesSkipped,
 
     // Summaries timestamps
     summaries_oldest_time: intervalDiagnostics.summariesOldestTime?.toISOString(),
@@ -689,34 +629,22 @@ export function computeFilterFrac(userFilter: UserFilter): number {
   let totalWeight = 0
   let weightedProbSum = 0
 
-  for (const [trackName, entry] of Object.entries(userFilter)) {
-    // Skip hashtag entries (they start with #)
-    if (trackName.startsWith('#')) continue
-
+  for (const [, entry] of Object.entries(userFilter)) {
     const weight = entry.total_daily
-    if (weight > 0 && isFinite(weight)) {
+    if (weight > 0) {
       totalWeight += weight
       // Use post_prob as the base probability for regular posts
       // This is the probability that a regular post survives filtering
-      const prob = entry.post_prob
-      if (isFinite(prob)) {
-        weightedProbSum += prob * weight
-      }
+      weightedProbSum += entry.post_prob * weight
     }
   }
 
   // Default to 0.5 if no data available
-  if (totalWeight === 0 || !isFinite(totalWeight)) {
+  if (totalWeight === 0) {
     return 0.5
   }
 
   const filterFrac = weightedProbSum / totalWeight
-
-  // Ensure result is valid and within bounds
-  if (!isFinite(filterFrac) || isNaN(filterFrac)) {
-    return 0.5
-  }
-
   return Math.max(0.01, Math.min(1.0, filterFrac))
 }
 

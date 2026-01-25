@@ -19,9 +19,10 @@ import {
   SecondaryCacheEntry
 } from './skylimitCache'
 import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId } from './skylimitGeneral'
-import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost } from './types'
+import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost, getIntervalHoursSync } from './types'
 import { curatePosts, insertEditionPosts } from './skylimitTimeline'
 import { getHomeFeed } from '../api/feed'
+import { getSettings } from './skylimitStore'
 
 /**
  * Validate feed cache integrity - ensure all feed entries have corresponding summaries
@@ -177,11 +178,13 @@ export async function initFeedCacheStore(database: IDBDatabase): Promise<void> {
  *
  * @param posts - Posts to create entries for
  * @param initialLastPostTime - Starting lastPostTime for timestamp calculation
+ * @param intervalHours - The curation interval in hours
  * @returns entries and finalLastPostTime for chaining batches
  */
 export function createFeedCacheEntries(
   posts: AppBskyFeedDefs.FeedViewPost[],
-  initialLastPostTime: Date
+  initialLastPostTime: Date,
+  intervalHours: number
 ): {
   entries: FeedCacheEntryWithPost[]
   finalLastPostTime: Date
@@ -227,7 +230,7 @@ export function createFeedCacheEntries(
       originalPost: post,
       timestamp: now,
       postTimestamp: postTimestamp.getTime(),
-      interval: getIntervalString(postTimestamp),
+      interval: getIntervalString(postTimestamp, intervalHours),
       cachedAt: now,
       reposterDid,
     }
@@ -379,7 +382,11 @@ export async function saveFeedCache(
   try {
     const database = await getDB()
 
-    const interval = getIntervalString(feedReceivedTime)
+    // Get interval settings
+    const settings = await getSettings()
+    const intervalHours = getIntervalHoursSync(settings)
+
+    const interval = getIntervalString(feedReceivedTime, intervalHours)
     const timestamp = feedReceivedTime.getTime()
     const cachedAt = Date.now()
 
@@ -601,7 +608,9 @@ export async function extendFeedCache(
     const initialLastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
 
     // 4. Create feed cache entries with calculated postTimestamps
-    const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime)
+    const settings = await getSettings()
+    const intervalHours = getIntervalHoursSync(settings)
+    const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime, intervalHours)
 
     // 5. Save to feed cache and curate (ensures both happen together for cache integrity)
     const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
@@ -645,6 +654,10 @@ export async function performLookbackFetch(
 ): Promise<boolean> {
   try {
     console.log(`[Lookback] Starting background fetch until ${lookbackBoundary.toISOString()}`)
+
+    // Get interval settings for cache entries
+    const settings = await getSettings()
+    const intervalHours = getIntervalHoursSync(settings)
 
     const metadata = await getLastFetchMetadata()
     let iterations = 0
@@ -700,7 +713,7 @@ export async function performLookbackFetch(
 
       // Create feed cache entries with calculated postTimestamps
       // Chain lastPostTime from previous batch
-      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime)
+      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
       lastPostTime = finalLastPostTime  // Chain for next batch
 
       // Save to feed cache and curate (ensures both happen together for cache integrity)
@@ -790,6 +803,10 @@ export async function performLookbackFetchToSecondary(
   try {
     console.log('[Secondary Lookback] Starting gap-filling lookback to secondary cache')
 
+    // Get interval settings for cache entries
+    const settings = await getSettings()
+    const intervalHours = getIntervalHoursSync(settings)
+
     // Clear any existing secondary cache from interrupted lookback
     await clearSecondaryFeedCache()
 
@@ -830,7 +847,7 @@ export async function performLookbackFetchToSecondary(
       }
 
       // Create feed cache entries
-      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime)
+      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
       lastPostTime = finalLastPostTime
 
       // Curate posts (respects existing summaries)
@@ -1048,6 +1065,10 @@ export async function limitedLookbackToMidnight(
     return 0
   }
 
+  // Get interval settings for cache entries
+  const settings = await getSettings()
+  const intervalHours = getIntervalHoursSync(settings)
+
   console.log(`[Limited Lookback] Starting from ${new Date(oldestFetchedTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
 
   let currentOldestTimestamp = oldestFetchedTimestamp
@@ -1112,7 +1133,7 @@ export async function limitedLookbackToMidnight(
       if (newPosts.length > 0) {
         // Use current time as initialLastPostTime for entries
         const initialLastPostTime = new Date()
-        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime)
+        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime, intervalHours)
 
         // Save to feed cache and curate
         await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
@@ -1156,8 +1177,10 @@ export async function detectSummaryCacheGap(beforeTimestamp: number): Promise<bo
     const { getPostSummariesInRange } = await import('./skylimitCache')
 
     // Check for summaries in a window around the target timestamp
-    // Window: 2 hours before to the target timestamp
-    const GAP_THRESHOLD = 2 * 60 * 60 * 1000  // 2 hours (one interval)
+    // Window: one interval before to the target timestamp
+    const settings = await getSettings()
+    const intervalHours = getIntervalHoursSync(settings)
+    const GAP_THRESHOLD = intervalHours * 60 * 60 * 1000  // one interval in milliseconds
     const windowStart = beforeTimestamp - GAP_THRESHOLD
     const windowEnd = beforeTimestamp
 
@@ -1214,6 +1237,10 @@ export async function fillGapToMidnight(
     console.log('[Gap Fill] Already at or past midnight boundary, skipping')
     return 0
   }
+
+  // Get interval settings for cache entries
+  const settings = await getSettings()
+  const intervalHours = getIntervalHoursSync(settings)
 
   console.log(`[Gap Fill] Filling gap from ${new Date(fromTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
 
@@ -1273,7 +1300,7 @@ export async function fillGapToMidnight(
       // Save new posts if any (with no-overwrite protection)
       if (newPosts.length > 0) {
         const initialLastPostTime = new Date()
-        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime)
+        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime, intervalHours)
 
         await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
         totalNewPosts += newPosts.length
@@ -1335,6 +1362,10 @@ export async function fetchUntilCached(
   pageLength: number = DEFAULT_PAGE_LENGTH
 ): Promise<{ posts: CurationFeedViewPost[]; postTimestamps: Map<string, number>; reachedEnd: boolean }> {
   console.log(`[Fetch Until Cached] Starting from ${new Date(fromTimestamp).toLocaleTimeString()}, stopping at cached post`)
+
+  // Get interval settings for cache entries
+  const settings = await getSettings()
+  const intervalHours = getIntervalHoursSync(settings)
 
   // Start from newest posts (no cursor) - we'll skip posts newer than fromTimestamp
   let cursor: string | undefined = undefined
@@ -1401,7 +1432,7 @@ export async function fetchUntilCached(
 
       // Save new posts if any
       if (newPosts.length > 0) {
-        const { entries, finalLastPostTime } = createFeedCacheEntries(newPosts, lastPostTime)
+        const { entries, finalLastPostTime } = createFeedCacheEntries(newPosts, lastPostTime, intervalHours)
         lastPostTime = finalLastPostTime
 
         // Save to cache with curation
@@ -1461,6 +1492,10 @@ export async function fetchPageFromTimestamp(
 }> {
   console.log(`[Server Fallback] Fetching page from ${new Date(fromTimestamp).toLocaleTimeString()}, cursor: ${existingCursor ? 'provided' : 'none'}`)
 
+  // Get interval settings for cache entries
+  const settings = await getSettings()
+  const intervalHours = getIntervalHoursSync(settings)
+
   const allPosts: CurationFeedViewPost[] = []
   const allPostTimestamps = new Map<string, number>()
   let currentCursor: string | undefined = existingCursor
@@ -1485,7 +1520,7 @@ export async function fetchPageFromTimestamp(
       }
 
       const feedReceivedTime = new Date()
-      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime)
+      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
       lastPostTime = finalLastPostTime
 
       // Save to cache with curation
@@ -1547,7 +1582,7 @@ export async function fetchPageFromTimestamp(
         allPostTimestamps.set(uniqueId, postTimestampMs)
 
         // Create entry and save
-        const { entries } = createFeedCacheEntries([post], lastPostTime)
+        const { entries } = createFeedCacheEntries([post], lastPostTime, intervalHours)
         const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
         allPosts.push(...curatedFeed)
 

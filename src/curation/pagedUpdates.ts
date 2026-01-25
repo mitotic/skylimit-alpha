@@ -132,7 +132,6 @@ export async function probeForNewPosts(
     const editionTimeStrs = await getEditionTimeStrs()
     const editionCount = editionTimeStrs.length
     const secretKey = settings?.secretKey || 'default'
-    const amplifyHighBoosts = settings?.amplifyHighBoosts || false
 
     // Get all cached post IDs to skip already-displayed posts
     const cachedPostIds = await getCachedPostUniqueIds()
@@ -165,8 +164,7 @@ export async function probeForNewPosts(
         currentStats,
         currentProbs,
         secretKey,
-        editionCount,
-        amplifyHighBoosts
+        editionCount
       )
 
       // Return true if post would be displayed (not dropped)

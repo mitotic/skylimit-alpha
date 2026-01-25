@@ -324,14 +324,6 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     </div>
                   )}
 
-                  {curation.curation_high_boost && (
-                    <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                      <div className="text-xs text-gray-600 dark:text-gray-400">
-                        High boost post
-                      </div>
-                    </div>
-                  )}
-
                   <div className="p-3">
                     <div className="text-xs font-semibold mb-2">Amplification Factor</div>
                     <div className="flex gap-2">
@@ -432,14 +424,6 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${curation.curation_dropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
                     <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
                       {curation.curation_msg}
-                    </div>
-                  </div>
-                )}
-
-                {curation.curation_high_boost && (
-                  <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                    <div className="text-xs text-gray-600 dark:text-gray-400">
-                      High boost post
                     </div>
                   </div>
                 )}
@@ -553,14 +537,6 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                       <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${curation.curation_dropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
                         <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
                           {curation.curation_msg}
-                        </div>
-                      </div>
-                    )}
-
-                    {curation.curation_high_boost && (
-                      <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                        <div className="text-xs text-gray-600 dark:text-gray-400">
-                          High boost post
                         </div>
                       </div>
                     )}

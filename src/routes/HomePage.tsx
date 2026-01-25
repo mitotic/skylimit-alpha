@@ -19,7 +19,7 @@ import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDA
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationStatus } from '../curation/skylimitRecurate'
-import { GlobalStats, CurationFeedViewPost } from '../curation/types'
+import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync } from '../curation/types'
 import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
@@ -450,10 +450,7 @@ export default function HomePage() {
         if (summary?.curation_msg) {
           curation.curation_msg = summary.curation_msg
         }
-        if (summary?.curation_high_boost) {
-          curation.curation_high_boost = summary.curation_high_boost
-        }
-        
+
         return {
           ...post,
           curation: Object.keys(curation).length > 0 ? curation : {}  // Empty object so counter is clickable
@@ -789,7 +786,8 @@ export default function HomePage() {
                 // New flow: Create entries → Save → Curate
                 // For background fetch (like initial fetch), use current time as initialLastPostTime
                 const initialLastPostTime = new Date()
-                const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime)
+                const bgIntervalHours = getIntervalHoursSync(bgSettings)
+                const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime, bgIntervalHours)
 
                 // Save to feed cache and curate (ensures both happen together for cache integrity)
                 const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
@@ -995,7 +993,9 @@ export default function HomePage() {
 
       // For initial fetch, use current time as initialLastPostTime
       const initialLastPostTime = new Date()
-      const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime)
+      const fetchSettings = await getSettings()
+      const fetchIntervalHours = getIntervalHoursSync(fetchSettings)
+      const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime, fetchIntervalHours)
 
       // Save to feed cache and curate (ensures both happen together for cache integrity)
       const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
@@ -1971,7 +1971,8 @@ export default function HomePage() {
         // New flow: Create entries → Save → Curate
         // For periodic fetch (like initial fetch), use current time as initialLastPostTime
         const initialLastPostTime = new Date()
-        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime)
+        const periodicIntervalHours = getIntervalHoursSync(periodicSettings)
+        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime, periodicIntervalHours)
 
         // Save to feed cache and curate (ensures both happen together for cache integrity)
         const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
@@ -2323,11 +2324,12 @@ export default function HomePage() {
         let oldestCuratedTimestamp = Number.MAX_SAFE_INTEGER
         let displayedCount = 0
         let lastPostTime = new Date()
+        const allNewIntervalHours = getIntervalHoursSync(settings)
 
         for (const post of sortedPosts) {
           if (displayedCount >= pageLength) break
 
-          const { entries: [entry], finalLastPostTime } = createFeedCacheEntries([post], lastPostTime)
+          const { entries: [entry], finalLastPostTime } = createFeedCacheEntries([post], lastPostTime, allNewIntervalHours)
           lastPostTime = finalLastPostTime
           const postTimestamp = entry.postTimestamp
 
@@ -2745,7 +2747,7 @@ export default function HomePage() {
               About Skylimit
             </a>
             <div className="text-gray-600 dark:text-gray-400">
-              <span className="font-semibold">{skylimitStats.status_daily.toFixed(0)}</span> posts/day received
+              <span className="font-semibold">{skylimitStats.post_daily.toFixed(0)}</span> posts/day received
             </div>
             <div className="text-gray-400 dark:text-gray-500">→</div>
             <div className="text-gray-600 dark:text-gray-400">

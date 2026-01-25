@@ -135,21 +135,21 @@ export default function SkylimitStatistics() {
           motx_daily: 0,
           priority_daily: 0,
           post_daily: 0,
-          boost_daily: 0,
-          reblog2_daily: 0,
+          repost_daily: 0,
+          repost_log2_daily: 0,
           engaged_daily: 0,
           total_daily: 0,
           net_prob: 0,
           priority_prob: 0,
           post_prob: 0,
-          reblog2_avg: 0,
+          repost_log2_avg: 0,
         }
-        
+
         // Use total_daily for posts per day (like Mahoot does)
         // If total_daily is not set, calculate it from the daily values
-        const postsPerDay = entry.total_daily > 0 
-          ? entry.total_daily 
-          : (entry.motx_daily || 0) + (entry.priority_daily || 0) + (entry.post_daily || 0) + (entry.boost_daily || 0)
+        const postsPerDay = entry.total_daily > 0
+          ? entry.total_daily
+          : (entry.motx_daily || 0) + (entry.priority_daily || 0) + (entry.post_daily || 0) + (entry.repost_daily || 0)
         const displayProbability = (entry.net_prob || 0) * 100
         
         // Get amplification factor from follow info
@@ -237,7 +237,7 @@ export default function SkylimitStatistics() {
   // Format curation message from userEntry and followInfo
   const formatCurationMessage = (userEntry: UserEntry, followInfo?: FollowInfo): string => {
     const postingCount = Math.round(countTotalPostsForUser(userEntry))
-    const repostingCount = Math.round(userEntry.boost_daily)
+    const repostingCount = Math.round(userEntry.repost_daily)
     const showProb = (userEntry.post_prob * 100).toFixed(1)
     const ampFactor = followInfo?.amp_factor ?? userEntry.amp_factor
     
@@ -390,7 +390,7 @@ export default function SkylimitStatistics() {
               )}
               {/* Posts/day breakdown with original vs reposts */}
               <div>
-                Analyzed {stats.status_daily.toFixed(0)} posts/day
+                Analyzed {stats.post_daily.toFixed(0)} posts/day
                 {stats.original_posts_daily !== undefined && stats.reposts_daily !== undefined && (
                   <> ({stats.original_posts_daily.toFixed(0)} original, {stats.reposts_daily.toFixed(0)} reposts)</>
                 )}
@@ -425,7 +425,7 @@ export default function SkylimitStatistics() {
               {/* Cache vs accumulated diagnostics */}
               {stats.summaries_total !== undefined && (
                 <div>
-                  Summaries (complete intervals): {stats.summaries_total} total, {stats.summaries_accumulated ?? 0} processed (from followees), {stats.summaries_skipped ?? 0} skipped (from non-followees)
+                  Summaries (complete intervals): {stats.summaries_total} total, {stats.summaries_accumulated ?? 0} processed
                 </div>
               )}
               {/* Total cached summaries (all intervals) */}

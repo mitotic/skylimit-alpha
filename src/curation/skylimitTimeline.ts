@@ -38,7 +38,6 @@ export async function curatePosts(
   const editionTimeStrs = await getEditionTimeStrs()
   const editionCount = editionTimeStrs.length
   const secretKey = settings?.secretKey || 'default'
-  const amplifyHighBoosts = settings?.amplifyHighBoosts || false
   const curationDisabled = !settings || settings.disabled
 
   const result: CurationFeedViewPost[] = []
@@ -70,7 +69,6 @@ export async function curatePosts(
       curation = {
         curation_dropped: existingSummary.curation_dropped,
         curation_msg: existingSummary.curation_msg,
-        curation_high_boost: existingSummary.curation_high_boost,
       }
       summary = existingSummary
     } else {
@@ -83,8 +81,7 @@ export async function curatePosts(
         currentStats,
         currentProbs,
         secretKey,
-        editionCount,
-        amplifyHighBoosts
+        editionCount
       )
 
       // Create summary using postTimestamp from entry
@@ -93,7 +90,6 @@ export async function curatePosts(
       // Store curation information in summary (this is the source of truth)
       summary.curation_dropped = curation.curation_dropped
       summary.curation_msg = curation.curation_msg
-      summary.curation_high_boost = curation.curation_high_boost
 
       // Add to list of new summaries to save
       newSummaries.push(summary)
