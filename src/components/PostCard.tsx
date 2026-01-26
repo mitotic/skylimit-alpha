@@ -9,7 +9,7 @@ import RootPost from './RootPost'
 import { getPostNumber } from '../curation/skylimitCounter'
 import { getSettings } from '../curation/skylimitStore'
 import { getFeedViewPostTimestamp, isRepost, getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
-import { CurationFeedViewPost } from '../curation/types'
+import { CurationFeedViewPost, isStatusDrop } from '../curation/types'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 
 interface PostCardProps {
@@ -95,7 +95,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             const hasCurationData = curation && Object.keys(curation).length > 0
 
             // Check if post is dropped (only relevant if curation is enabled)
-            const isDropped = !!curation?.curation_dropped
+            const isDropped = isStatusDrop(curation?.curation_status)
 
             // Get post number from summaries cache
             // IMPORTANT: Pass isDropped so dropped posts return 0 (only if curation enabled)
@@ -293,7 +293,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   title={curation ? 'Click for Skylimit curation options' : 'Post number'}
                   disabled={!curation}
                 >
-                  #{curation?.curation_dropped ? 0 : (postNumber || 0)}
+                  #{isStatusDrop(curation?.curation_status) ? 0 : (postNumber || 0)}
                 </button>
               </span>
               {showPopup && curation && (
@@ -317,7 +317,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
                   {/* Show statistics for all posts (dropped or not) */}
                   {curation.curation_msg && (
-                    <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${curation.curation_dropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
+                    <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isStatusDrop(curation.curation_status) ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
                       <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
                         {curation.curation_msg}
                       </div>
@@ -366,12 +366,12 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       )}
       
       {/* Show root post if this is a reply (but not in thread views where context is already shown, and not for dropped posts) */}
-      {isReply && rootUri && showRootPost && !curation?.curation_dropped && (
+      {isReply && rootUri && showRootPost && !isStatusDrop(curation?.curation_status) && (
         <RootPost rootUri={rootUri} isDirectReply={isDirectReply} />
       )}
 
       <div
-        className={`flex gap-3 ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && !curationDisabled && (post as CurationFeedViewPost).curation?.curation_dropped ? 'opacity-35' : ''}`}
+        className={`flex gap-3 ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && !curationDisabled && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-35' : ''}`}
         onClick={handlePostClick}
         style={{ cursor: 'pointer' }}
       >
@@ -396,7 +396,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 title={curation ? 'Click for Skylimit curation options' : 'Post number'}
                 disabled={!curation}
               >
-                #{curation?.curation_dropped ? 0 : (postNumber || 0)}
+                #{isStatusDrop(curation?.curation_status) ? 0 : (postNumber || 0)}
               </button>
             </div>
 
@@ -421,7 +421,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
                 {/* Show statistics for all posts (dropped or not) */}
                 {curation.curation_msg && (
-                  <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${curation.curation_dropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
+                  <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isStatusDrop(curation.curation_status) ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
                     <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
                       {curation.curation_msg}
                     </div>
@@ -510,7 +510,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     title={curation ? 'Click for Skylimit curation options' : 'Post number'}
                     disabled={!curation}
                   >
-                    #{curation?.curation_dropped ? 0 : (postNumber || 0)}
+                    #{isStatusDrop(curation?.curation_status) ? 0 : (postNumber || 0)}
                   </button>
                 </span>
                 {showPopup && curation && (
@@ -534,7 +534,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
                     {/* Show statistics for all posts (dropped or not) */}
                     {curation.curation_msg && (
-                      <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${curation.curation_dropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
+                      <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isStatusDrop(curation.curation_status) ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
                         <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
                           {curation.curation_msg}
                         </div>

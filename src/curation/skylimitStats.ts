@@ -9,7 +9,8 @@ import {
   MIN_AMP_FACTOR,
   MOT_TAGS,
   getIntervalHoursSync,
-  getIntervalsPerDaySync
+  getIntervalsPerDaySync,
+  isStatusDrop
 } from './types'
 import {
   getAllPostSummaries,
@@ -146,9 +147,9 @@ export async function computePostStats(
     expectedIntervals++
     const summaries = summariesByInterval.get(intervalStr)
     intervalPostCounts[intervalStr] = summaries?.length || 0
-    // Count dropped summaries (curation_dropped is a non-empty string when dropped)
+    // Count dropped summaries (curation_status ends in '_drop' when dropped)
     if (summaries) {
-      droppedCount += summaries.filter(s => s.curation_dropped).length
+      droppedCount += summaries.filter(s => isStatusDrop(s.curation_status)).length
     }
     intervalStr = nextIntervalGeneral(intervalStr, intervalHours)
   }
@@ -190,6 +191,103 @@ export async function computePostStats(
   const completeCount = completeIntervalSet.size
   const completeIntervalsDays = completeCount / intervalsPerDay
 
+  // PASS 2: Build isCompleteInterval map for all intervals
+  const isCompleteInterval: Record<string, boolean> = {}
+  for (let i = 0; i < sortedIntervalKeys.length; i++) {
+    const intervalKey = sortedIntervalKeys[i]
+    const count = intervalPostCounts[intervalKey]
+
+    // First or last interval is always incomplete
+    if (i === 0 || i === sortedIntervalKeys.length - 1) {
+      isCompleteInterval[intervalKey] = false
+    } else if (count === 0) {
+      // Zero-count intervals are incomplete
+      isCompleteInterval[intervalKey] = false
+    } else {
+      // Check neighbors
+      const prevCount = intervalPostCounts[sortedIntervalKeys[i - 1]] || 0
+      const nextCount = intervalPostCounts[sortedIntervalKeys[i + 1]] || 0
+      isCompleteInterval[intervalKey] = prevCount > 0 && nextCount > 0
+    }
+  }
+
+  // PASS 3: Compute effectiveDayCount for each interval (newest to oldest)
+  const effectiveDayCount: Record<string, number> = {}
+  let allSummariesCount = 0
+  let completeIntervalSummariesCount = 0
+  let countOfCompleteIntervals = 0
+
+  // Count total complete intervals first
+  for (const intervalKey of sortedIntervalKeys) {
+    if (isCompleteInterval[intervalKey]) {
+      countOfCompleteIntervals++
+    }
+  }
+
+  // Iterate from newest to oldest
+  const reversedIntervalKeys = [...sortedIntervalKeys].reverse()
+  for (const intervalKey of reversedIntervalKeys) {
+    allSummariesCount += intervalPostCounts[intervalKey] || 0
+    if (isCompleteInterval[intervalKey]) {
+      completeIntervalSummariesCount += intervalPostCounts[intervalKey] || 0
+    }
+
+    if (completeIntervalSummariesCount === 0) {
+      effectiveDayCount[intervalKey] = 0
+    } else {
+      const partialIntervalAmpFactor = allSummariesCount / completeIntervalSummariesCount
+      effectiveDayCount[intervalKey] = partialIntervalAmpFactor * (countOfCompleteIntervals / intervalsPerDay)
+    }
+  }
+
+  const oldestDataIntervalStr = sortedIntervalKeys[0]
+  const oldestEffectiveDayCount = effectiveDayCount[oldestDataIntervalStr] || 0
+
+  // PASS 4: Compute followeeDayCount for each followee username
+  // Get minFolloweeDayCount from settings (prevents inflated posting rates)
+  const minFolloweeDayCount = settings.minFolloweeDayCount ?? 1
+
+  const followeeDayCount: Record<string, number> = {}
+
+  // Group summaries by username for efficient lookup
+  const summariesByUsername = new Map<string, PostSummary[]>()
+  for (const summary of allSummaries) {
+    if (!summariesByUsername.has(summary.username)) {
+      summariesByUsername.set(summary.username, [])
+    }
+    summariesByUsername.get(summary.username)!.push(summary)
+  }
+
+  for (const [username, follow] of Object.entries(currentFollows)) {
+    const userSummaries = summariesByUsername.get(username) || []
+
+    if (userSummaries.length === 0) {
+      // No posts from this followee in the cached data - use minimum
+      followeeDayCount[username] = minFolloweeDayCount
+      continue
+    }
+
+    // Check if this is an "old follower" (followed before oldest interval)
+    const followedAtTime = new Date(follow.followed_at).getTime()
+    const [y, m, d, h] = oldestIntervalStr.split('-').map(Number)
+    const oldestIntervalTime = new Date(Date.UTC(y, m - 1, d, h)).getTime()
+
+    if (followedAtTime < oldestIntervalTime) {
+      // Old follower - use oldest effective day count (with minimum floor)
+      followeeDayCount[username] = Math.max(minFolloweeDayCount, oldestEffectiveDayCount)
+    } else {
+      // Recent follower - find their oldest post interval
+      const oldestPostTimestamp = Math.min(...userSummaries.map(s => s.postTimestamp))
+      const followeeOldestIntervalStr = getIntervalString(new Date(oldestPostTimestamp), intervalHours)
+
+      // Apply minimum floor to prevent inflated rates
+      followeeDayCount[username] = Math.max(
+        minFolloweeDayCount,
+        effectiveDayCount[followeeOldestIntervalStr] || 0
+      )
+    }
+  }
+
   // Count total non-empty intervals (for reporting)
   const intervalCount = Object.values(intervalPostCounts).filter(c => c > 0).length
 
@@ -197,12 +295,11 @@ export async function computePostStats(
     return null
   }
 
-  // Track oldest/newest timestamps across all summaries (from complete intervals only)
+  // Track oldest/newest timestamps across all summaries
   const timestampRange: TimestampRange = { oldest: null, newest: null }
 
-  // PASS 2: Only process complete intervals into summaryCache and postStats
-  for (const intervalKey of completeIntervalSet) {
-    const summaries = summariesByInterval.get(intervalKey)
+  // Process all intervals into summaryCache and postStats
+  for (const [, summaries] of summariesByInterval.entries()) {
     if (summaries && summaries.length > 0) {
       computeIntervalStats(currentFollows, summaries, summaryCache, postStats, timestampRange)
     }
@@ -260,7 +357,9 @@ export async function computePostStats(
     viewsPerDay,
     myUsername,
     intervalDiagnostics,
-    intervalsPerDay
+    intervalsPerDay,
+    followeeDayCount,
+    minFolloweeDayCount
   )
 
   // Save computed filter
@@ -434,7 +533,9 @@ function computeUserProbabilities(
   maxViewsPerDay: number,
   myUsername: string,
   intervalDiagnostics: IntervalDiagnostics,
-  intervalsPerDay: number
+  intervalsPerDay: number,
+  followeeDayCount: Record<string, number>,
+  minFolloweeDayCount: number
 ): [GlobalStats, UserFilter] {
   // Use complete intervals for dayTotal if available, fallback to all processed intervals
   let dayTotal = intervalDiagnostics.completeIntervalsDays > 0
@@ -446,31 +547,19 @@ function computeUserProbabilities(
   let totalUserWeight = 0
 
   // Calculate daily rates and weights
-  for (const [, accum] of accumEntries) {
+  for (const [username, accum] of accumEntries) {
     const userEntry = accum.userEntry
 
     if (accum.followed_at) {
       accum.weight = userEntry.amp_factor
-
-      // Note: follow_weight extrapolation is disabled because followed_at reflects
-      // when the follow was saved to IndexedDB, not the actual follow date from Bluesky.
-      // This caused a bug where all follows got follow_weight=0.1 after cache reset,
-      // inflating posting rates by 10x. Using follow_weight=1 means we use actual
-      // posting counts from the lookback period without extrapolation.
-      accum.follow_weight = 1
     } else {
       // Don't count unfollowed user (or self) posts/reposts
       accum.weight = 0
-      accum.follow_weight = 1
-    }
-    
-    // Guard against zero/negative dayTotal (edge case with no data)
-    if (dayTotal <= 0) {
-      dayTotal = 0.167 // Fallback to ~2 intervals worth
     }
 
-    // Denominator is guaranteed >= 0.1, so division always produces finite results
-    const denominator = Math.max(0.1, accum.follow_weight * dayTotal)
+    // Use followee-specific day count for denominator
+    const userDayCount = followeeDayCount[username] || dayTotal
+    const denominator = Math.max(minFolloweeDayCount, userDayCount)
     userEntry.motx_daily = accum.motx_total / denominator
     userEntry.priority_daily = accum.priority_total / denominator
     userEntry.post_daily = accum.post_total / denominator
@@ -478,10 +567,10 @@ function computeUserProbabilities(
     userEntry.engaged_daily = accum.engaged_total / denominator
 
     userEntry.total_daily = countTotalPostsForUser(userEntry)
-    
+
     // Normalize by amp factor
     accum.normalized_daily = accum.weight ? userEntry.total_daily / accum.weight : 0
-    
+
     totalUserWeight += accum.weight
   }
   
@@ -530,13 +619,13 @@ function computeUserProbabilities(
     
     if (availableViews <= 0) {
       userEntry.priority_prob = 0
-      userEntry.post_prob = 0
+      userEntry.regular_prob = 0
     } else if (userEntry.priority_daily >= availableViews) {
       userEntry.priority_prob = Math.min(1, availableViews / userEntry.priority_daily)
-      userEntry.post_prob = 0
+      userEntry.regular_prob = 0
     } else {
       userEntry.priority_prob = 1.0
-      userEntry.post_prob = Math.min(1, (availableViews - userEntry.priority_daily) / regularPostsPlusReposts)
+      userEntry.regular_prob = Math.min(1, (availableViews - userEntry.priority_daily) / regularPostsPlusReposts)
     }
   }
   
@@ -619,7 +708,7 @@ async function getCurrentFollows(): Promise<Record<string, FollowInfo>> {
  * Compute the average filter fraction (FilterFrac) from UserFilter.
  * This represents the fraction of posts that survive curation filtering on average.
  *
- * Calculated as weighted average of post_prob across all users,
+ * Calculated as weighted average of regular_prob across all users,
  * weighted by their posting frequency (total_daily).
  *
  * @param userFilter - The UserFilter containing user entries with probabilities
@@ -633,9 +722,9 @@ export function computeFilterFrac(userFilter: UserFilter): number {
     const weight = entry.total_daily
     if (weight > 0) {
       totalWeight += weight
-      // Use post_prob as the base probability for regular posts
+      // Use regular_prob as the base probability for regular posts
       // This is the probability that a regular post survives filtering
-      weightedProbSum += entry.post_prob * weight
+      weightedProbSum += entry.regular_prob * weight
     }
   }
 

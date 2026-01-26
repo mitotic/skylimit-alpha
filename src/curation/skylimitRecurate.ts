@@ -19,7 +19,7 @@ import { PostSummary } from './types'
  * posts in the feed cache, but if a post is not in cache, it cannot be re-curated.
  * In practice, this should work for recent posts (within 24 hours) which are in cache.
  */
-export async function recomputeCurationStatus(
+export async function recomputeCurationDecisions(
   _agent: BskyAgent,
   myUsername: string,
   myDid: string
@@ -91,10 +91,10 @@ export async function recomputeCurationStatus(
       )
 
       // Check if curation status changed
-      const oldStatus = summary.curation_dropped
-      if (oldStatus !== curation.curation_dropped) {
+      const oldStatus = summary.curation_status
+      if (oldStatus !== curation.curation_status) {
         // Update curation status in summary
-        summary.curation_dropped = curation.curation_dropped
+        summary.curation_status = curation.curation_status
         summary.curation_msg = curation.curation_msg
         updatedSummaries.push(summary)
         updatedCount++

@@ -10,6 +10,30 @@ export const DIGEST_TAG = 'digest'
 export const NODIGEST_TAG = 'nodigest'
 export const PRIORITY_TAG = 'priority'
 
+// Curation status type - always ends in '_show' or '_drop'
+export type CurationStatus =
+  | 'motx_show'        // MOTx tag post accepted
+  | 'priority_show'    // Priority post passes probability filter
+  | 'priority_drop'    // Priority post fails probability filter
+  | 'regular_show'     // Regular post passes probability filter
+  | 'regular_drop'     // Regular post fails probability filter
+  | 'edition_drop'     // Post saved for edition digest
+  | 'untracked_show'   // User not tracked - shown by default
+
+/**
+ * Check if a curation status indicates the post should be shown
+ */
+export function isStatusShow(status: CurationStatus | undefined): boolean {
+  return status === undefined || status.endsWith('_show')
+}
+
+/**
+ * Check if a curation status indicates the post should be dropped
+ */
+export function isStatusDrop(status: CurationStatus | undefined): boolean {
+  return status !== undefined && status.endsWith('_drop')
+}
+
 // Keys for user profile metadata
 export const USER_TOPICS_KEY = 'topics'
 export const USER_TIMEZONE_KEY = 'timezone'
@@ -123,7 +147,7 @@ export interface UserEntry {
   total_daily: number
   net_prob: number
   priority_prob: number
-  post_prob: number
+  regular_prob: number
 }
 
 export interface UserFilter {
@@ -153,7 +177,7 @@ export interface PostSummary {
   postTimestamp: number         // Numeric timestamp for IndexedDB indexing (timestamp.getTime())
   engaged: boolean
   orig_username?: string
-  curation_dropped?: string
+  curation_status?: CurationStatus
   curation_msg?: string
 }
 
@@ -174,7 +198,7 @@ export interface FollowInfo {
  * Result of curating a single post - metadata attached to posts after curation.
  */
 export interface CurationResult {
-  curation_dropped?: string
+  curation_status?: CurationStatus
   curation_msg?: string
   curation_edition?: boolean
   curation_save?: string
@@ -193,7 +217,6 @@ export interface UserAccumulator {
   post_total: number
   engaged_total: number
   weight: number
-  follow_weight: number
   normalized_daily: number
   followed_at?: string
 }
@@ -239,13 +262,15 @@ export interface SkylimitSettings {
   maxDisplayedFeedSize?: number // max posts in displayed feed, default 300
   // Curation interval settings
   curationIntervalHours?: number // curation interval in hours, default 2, must be 1-12 and factor of 24 (1, 2, 3, 4, 6, 8, 12)
+  // Debug settings for effective day count
+  minFolloweeDayCount?: number // minimum followee day count to prevent inflated posting rates, default 1
 }
 
 /**
  * Curation metadata attached to FeedViewPost for display purposes.
  */
 export interface CurationMetadata {
-  curation_dropped?: string
+  curation_status?: CurationStatus
   curation_msg?: string
   curation_edition?: boolean
   curation_save?: string

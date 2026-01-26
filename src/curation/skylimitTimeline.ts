@@ -67,7 +67,7 @@ export async function curatePosts(
     if (existingSummary) {
       // Use existing curation decision from cached summary
       curation = {
-        curation_dropped: existingSummary.curation_dropped,
+        curation_status: existingSummary.curation_status,
         curation_msg: existingSummary.curation_msg,
       }
       summary = existingSummary
@@ -88,7 +88,7 @@ export async function curatePosts(
       summary = createPostSummary(post, postTimestamp)
 
       // Store curation information in summary (this is the source of truth)
-      summary.curation_dropped = curation.curation_dropped
+      summary.curation_status = curation.curation_status
       summary.curation_msg = curation.curation_msg
 
       // Add to list of new summaries to save

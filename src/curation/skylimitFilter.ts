@@ -3,11 +3,11 @@
  */
 
 import { AppBskyFeedDefs } from '@atproto/api'
-import { 
-  PostSummary, 
-  CurationResult, 
-  UserFilter, 
-  GlobalStats, 
+import {
+  PostSummary,
+  CurationResult,
+  UserFilter,
+  GlobalStats,
   FollowInfo,
   MOTD_TAG,
   MOT_TAGS,
@@ -103,6 +103,7 @@ export async function curateSinglePost(
   // If no stats/probs available, still try to show basic info if user is followed
   // This allows statistics to show even when stats haven't been computed yet
   if (!currentProbs || !currentStats) {
+    modStatus.curation_status = 'untracked_show'
     // Check if user is followed (even without stats)
     const follow = currentFollows[summary.username] || null
     if (follow) {
@@ -138,7 +139,7 @@ export async function curateSinglePost(
     // Format statistics on separate lines
     const postingCount = Math.round(countTotalPosts(userEntry))
     const repostingCount = Math.round(userEntry.repost_daily)
-    const showProb = (userEntry.post_prob * 100).toFixed(1) // Convert to percent
+    const showProb = (userEntry.regular_prob * 100).toFixed(1) // Convert to percent
     const ampFactor = follow ? follow.amp_factor : null
 
     handledStatus = `Posting ${postingCount}/day (reposting ${repostingCount}/day)\nShow probability: ${showProb}%`
@@ -187,41 +188,44 @@ export async function curateSinglePost(
     }
     
     const priorityDrop = randomNum >= userEntry.priority_prob
-    const regularDrop = randomNum >= userEntry.post_prob
+    const regularDrop = randomNum >= userEntry.regular_prob
 
+    // Set curation_status based on decision
+    let dropReason = ''
     if (motxAccept) {
       // Periodic post accepted
-      modStatus.curation_dropped = ''
+      modStatus.curation_status = 'motx_show'
     } else if (priority) {
-      modStatus.curation_dropped = priorityDrop ? 'random (priority)' : ''
+      modStatus.curation_status = priorityDrop ? 'priority_drop' : 'priority_show'
+      if (priorityDrop) dropReason = 'random (priority)'
     } else {
-      modStatus.curation_dropped = regularDrop ? 'random (regular)' : ''
+      modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
+      if (regularDrop) dropReason = 'random (regular)'
     }
-    
-    // Check if should save for edition
-    if (!modStatus.curation_dropped && digestible) {
+
+    // Check if should save for edition (only for shown posts)
+    if (modStatus.curation_status?.endsWith('_show') && digestible) {
       const editionUser = editionLayout[summary.username] || null
       if (editionUser && (!editionUser.tag || summary.tags.includes(editionUser.tag) || (motxAccept && editionUser.tag === MOTX_TAG))) {
         userSave = editionUser.section
       } else if (motxAccept && summary.tags.includes(DIGEST_TAG)) {
         userSave = '#' + MOTX_TAG
       }
+      if (userSave) {
+        modStatus.curation_status = 'edition_drop'
+        modStatus.curation_save = userSave
+        dropReason = 'saved for edition ' + userSave
+      }
     }
-  }
-  
-  // Set curation_msg - use handledStatus if available, otherwise show basic info
-  if (handledStatus) {
+
+    // Build curation_msg with drop reason if applicable
     modStatus.curation_msg = handledStatus
-    if (modStatus.curation_dropped) {
-      // Add newline before dropped message so it appears on next line
-      modStatus.curation_msg += '\n[Dropped ' + modStatus.curation_dropped + ']'
-    } else if (userSave) {
-      modStatus.curation_save = userSave
-      modStatus.curation_dropped = 'saved for edition ' + userSave
-      modStatus.curation_msg += '\n[Dropped ' + modStatus.curation_dropped + ']'
+    if (dropReason) {
+      modStatus.curation_msg += '\n[Dropped ' + dropReason + ']'
     }
   } else {
     // No statistics available - user not tracked yet
+    modStatus.curation_status = 'untracked_show'
     const follow = currentFollows[summary.username] || null
     if (follow) {
       modStatus.curation_msg = `User followed\nAmp factor: ${follow.amp_factor}`

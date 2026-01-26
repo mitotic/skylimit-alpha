@@ -12,7 +12,7 @@ import { getSettings } from './skylimitStore'
 import { getCachedPostUniqueIds, getLocalMidnight } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
-import { FollowInfo, CurationFeedViewPost } from './types'
+import { FollowInfo, CurationFeedViewPost, isStatusShow } from './types'
 
 // Maximum PageRaw to prevent excessive API calls
 const MAX_PAGE_RAW = 100
@@ -168,7 +168,7 @@ export async function probeForNewPosts(
       )
 
       // Return true if post would be displayed (not dropped)
-      if (!curation.curation_dropped) {
+      if (isStatusShow(curation.curation_status)) {
         result.filteredPostCount++
         return true
       }

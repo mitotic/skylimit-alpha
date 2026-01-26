@@ -18,8 +18,8 @@ import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
-import { recomputeCurationStatus } from '../curation/skylimitRecurate'
-import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync } from '../curation/types'
+import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
+import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
 import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
@@ -470,8 +470,8 @@ export default function HomePage() {
         // Reconstruct full curation object from summary
         // Always create curation object (even if empty) so counter is clickable
         const curation: any = {}
-        if (summary?.curation_dropped) {
-          curation.curation_dropped = summary.curation_dropped
+        if (summary?.curation_status) {
+          curation.curation_status = summary.curation_status
         }
         if (summary?.curation_msg) {
           curation.curation_msg = summary.curation_msg
@@ -522,7 +522,7 @@ export default function HomePage() {
       if (curationDisabled || showAllStatus) {
         return true
       }
-      return !post.curation?.curation_dropped
+      return isStatusShow(post.curation?.curation_status)
     })
 
     sortByTimestamp(filteredPosts)
@@ -913,7 +913,7 @@ export default function HomePage() {
 
                         // Recompute curation status for all cached posts (updates summaries with drop decisions)
                         console.log('[Curation Init] Updating curation decisions for cached posts...')
-                        await recomputeCurationStatus(agent, myUsername, myDid)
+                        await recomputeCurationDecisions(agent, myUsername, myDid)
 
                         console.log('[Curation Init] Getting curation statistics...')
                         const curationStats = await getCurationInitStats()
@@ -1119,7 +1119,7 @@ export default function HomePage() {
 
                   // Recompute curation status for all cached posts (updates summaries with drop decisions)
                   console.log('[Curation Init] Updating curation decisions for cached posts...')
-                  await recomputeCurationStatus(agent, myUsername, myDid)
+                  await recomputeCurationDecisions(agent, myUsername, myDid)
 
                   console.log('[Curation Init] Getting curation statistics...')
                   const curationStats = await getCurationInitStats()
@@ -2376,7 +2376,7 @@ export default function HomePage() {
           if (postTimestamp < oldestCuratedTimestamp) oldestCuratedTimestamp = postTimestamp
 
           // Add to display if not dropped
-          if (!curatedPost.curation?.curation_dropped) {
+          if (isStatusShow(curatedPost.curation?.curation_status)) {
             postsToDisplay.push(curatedPost)
             displayedCount++
           }

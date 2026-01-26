@@ -3,14 +3,15 @@
  * Tracks the number of posts per day based on summaries cache, resetting at local midnight
  * Posts are numbered chronologically by posting/reposting time within each day
  * The first non-dropped post after local midnight gets #1, next gets #2, etc.
- * 
+ *
  * IMPORTANT: Counter is based on summaries cache, not displayed posts
- * Only non-dropped posts are counted (posts without curation_dropped)
- * 
+ * Only non-dropped posts are counted (posts with curation_status ending in '_show')
+ *
  * For reposts, uses the time when they were reposted (not when original was created)
  */
 
 import { getAllPostSummaries } from './skylimitCache'
+import { isStatusDrop } from './types'
 
 // Map of post URI to its assigned number (cached)
 // Key format: "dateString:uri" to support multiple dates
@@ -101,7 +102,7 @@ async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void>
     // Use postTimestamp for filtering (numeric timestamp)
     const summariesForDate = allSummaries.filter(summary => {
       const summaryDate = new Date(summary.postTimestamp)
-      return summaryDate >= dateStart && summaryDate < dateEnd && !summary.curation_dropped
+      return summaryDate >= dateStart && summaryDate < dateEnd && !isStatusDrop(summary.curation_status)
     })
 
     // Sort by postTimestamp ascending (chronological order)
@@ -125,7 +126,7 @@ async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void>
  * Posts are numbered chronologically within each day (first non-dropped post after midnight = #1)
  *
  * IMPORTANT: Counter is based on summaries cache, not displayed posts
- * Dropped posts (with curation_dropped) are not counted and return 0
+ * Dropped posts (with curation_status ending in '_drop') are not counted and return 0
  * Posts from previous days show their counter number from that day
  *
  * @param postUri - The URI of the post (original post URI)

@@ -2,7 +2,7 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, FeedCacheEntry } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, FeedCacheEntry, CurationStatus, isStatusDrop } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 
 const DB_NAME = 'skylimit_db'
@@ -229,7 +229,7 @@ export async function getPostSummariesCount(): Promise<number> {
  */
 export interface CurationInitStats {
   totalCount: number
-  droppedCount: number  // Posts with curation_dropped set (truthy)
+  droppedCount: number  // Posts with curation_status ending in '_drop'
   oldestTimestamp: number | null
   newestTimestamp: number | null
 }
@@ -254,8 +254,8 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
         let newestTimestamp: number | null = null
 
         for (const summary of summaries) {
-          // Count dropped posts (curation_dropped is truthy)
-          if (summary.curation_dropped) {
+          // Count dropped posts (curation_status ends in '_drop')
+          if (isStatusDrop(summary.curation_status)) {
             droppedCount++
           }
 
@@ -323,9 +323,9 @@ export async function checkPostSummaryExists(uniqueId: string): Promise<boolean>
  * Update curation status for a post in post summaries cache
  * Called when curation parameters change
  */
-export async function updatePostSummaryCurationStatus(
+export async function updatePostSummaryCurationDecision(
   uniqueId: string,
-  curationStatus: string | undefined,
+  curationStatus: CurationStatus | undefined,
   curationMsg?: string
 ): Promise<boolean> {
   const database = await getDB()
@@ -336,7 +336,7 @@ export async function updatePostSummaryCurationStatus(
   if (!summary) return false
 
   // Update curation fields
-  summary.curation_dropped = curationStatus
+  summary.curation_status = curationStatus
   if (curationMsg !== undefined) summary.curation_msg = curationMsg
 
   return new Promise((resolve, reject) => {
@@ -640,7 +640,7 @@ export function newUserEntry(obj: Partial<UserEntry>): UserEntry {
     total_daily: 0,
     net_prob: 0,
     priority_prob: 0,
-    post_prob: 0,
+    regular_prob: 0,
     ...obj,
   }
 }
@@ -658,7 +658,6 @@ export function newUserAccum(obj: Partial<UserAccumulator>): UserAccumulator {
     post_total: 0,
     engaged_total: 0,
     weight: 0,
-    follow_weight: 1,
     normalized_daily: 0,
     ...obj,
   }
@@ -701,8 +700,8 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
             newestTimestamp = timestamp
           }
 
-          // Count as dropped if recent (within last 48 hours) and has curation_dropped flag
-          if (timestamp >= recentCutoff && summary.curation_dropped) {
+          // Count as dropped if recent (within last 48 hours) and has curation_status ending in '_drop'
+          if (timestamp >= recentCutoff && isStatusDrop(summary.curation_status)) {
             droppedCount++
           }
         }

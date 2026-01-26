@@ -136,13 +136,11 @@ export default function SkylimitStatistics() {
           priority_daily: 0,
           post_daily: 0,
           repost_daily: 0,
-          repost_log2_daily: 0,
           engaged_daily: 0,
           total_daily: 0,
           net_prob: 0,
           priority_prob: 0,
-          post_prob: 0,
-          repost_log2_avg: 0,
+          regular_prob: 0,
         }
 
         // Use total_daily for posts per day (like Mahoot does)
@@ -238,7 +236,7 @@ export default function SkylimitStatistics() {
   const formatCurationMessage = (userEntry: UserEntry, followInfo?: FollowInfo): string => {
     const postingCount = Math.round(countTotalPostsForUser(userEntry))
     const repostingCount = Math.round(userEntry.repost_daily)
-    const showProb = (userEntry.post_prob * 100).toFixed(1)
+    const showProb = (userEntry.regular_prob * 100).toFixed(1)
     const ampFactor = followInfo?.amp_factor ?? userEntry.amp_factor
     
     let msg = `Posting ${postingCount}/day (reposting ${repostingCount}/day)\nShow probability: ${showProb}%`
