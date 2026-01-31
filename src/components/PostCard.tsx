@@ -8,7 +8,7 @@ import PostMedia from './PostMedia'
 import RootPost from './RootPost'
 import { getPostNumber } from '../curation/skylimitCounter'
 import { getSettings } from '../curation/skylimitStore'
-import { getFeedViewPostTimestamp, isRepost, getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
+import { getFeedViewPostTimestamp, isRepost, getBlueSkyPostUrl, getBlueSkyProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost, isStatusDrop } from '../curation/types'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 
@@ -99,19 +99,10 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
             // Get post number from summaries cache
             // IMPORTANT: Pass isDropped so dropped posts return 0 (only if curation enabled)
-            // For reposts, use composite URI (reposter DID + original post URI) to match summary cache
-            // If reposter DID not available, use original author DID (matches createPostSummary fallback)
-            const reposterDid = repostedBy?.did
-            const postUri = isReposted
-              ? `${reposterDid || post.post.author.did}:${post.post.uri}`
-              : post.post.uri
-            const number = await getPostNumber(
-              postUri,
-              postedAt,
-              isReposted,
-              reposterDid,
-              isDropped
-            )
+            // Use getPostUniqueId to ensure consistent ID generation with summaries cache
+            // The postTimestamp is looked up from summaries cache by getPostNumber
+            const postUri = getPostUniqueId(post)
+            const number = await getPostNumber(postUri, isDropped)
             // Only show counter if we got a valid number or post has curation data
             // Posts without curation data and number 0 should not show counter
             if (number > 0 || hasCurationData) {

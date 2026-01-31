@@ -189,6 +189,7 @@ export interface FollowInfo {
   topics?: string
   timezone?: string
   displayName?: string
+  last_posted_at?: number  // postTimestamp of most recent post (ms)
   [MOTD_TAG]?: string
   [MOTW_TAG]?: string
   [MOTM_TAG]?: string

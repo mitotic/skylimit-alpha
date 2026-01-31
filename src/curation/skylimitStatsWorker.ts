@@ -25,12 +25,14 @@ export async function computeStatsInBackground(
     }
     
     // Refresh follows first (only if forced or it's been more than an hour)
-    // But don't block stats computation - do it in background
-    refreshFollows(agent, myDid, forceRefreshFollows).catch((err) => {
-      console.warn('Follow refresh failed (non-critical):', err)
-    })
-    
-    // Compute statistics (don't wait for follow refresh to complete)
+    // Wait for completion so cached follows are available for stats computation
+    try {
+      await refreshFollows(agent, myDid, forceRefreshFollows)
+    } catch (err) {
+      console.warn('[Stats Worker] refreshFollows failed (non-critical):', err)
+    }
+
+    // Compute statistics (follows are now cached)
     await computePostStats(
       settings.viewsPerDay,
       settings.daysOfData,

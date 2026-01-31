@@ -10,12 +10,15 @@
  * For reposts, uses the time when they were reposted (not when original was created)
  */
 
-import { getAllPostSummaries } from './skylimitCache'
+import { getAllPostSummaries, getPostSummary } from './skylimitCache'
 import { isStatusDrop } from './types'
 
 // Map of post URI to its assigned number (cached)
 // Key format: "dateString:uri" to support multiple dates
 let postCounter: Record<string, number> = {}
+// Map of uniqueId to postTimestamp (cached during computePostNumbersFromSummaries)
+// Used to look up the correct date bucket for a post without extra IndexedDB calls
+let postTimestampMap: Record<string, number> = {}
 let lastResetDate: string = ''
 let lastCounterUpdate: Record<string, number> = {} // Timestamp of last counter update per date
 
@@ -110,9 +113,11 @@ async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void>
 
     // Assign numbers: first post after midnight = #1, second = #2, etc.
     // Use dateString:uniqueId as key to support multiple dates
+    // Also cache the postTimestamp for each uniqueId for efficient lookups
     summariesForDate.forEach((summary, index) => {
       const key = `${dateString}:${summary.uniqueId}`
       postCounter[key] = index + 1
+      postTimestampMap[summary.uniqueId] = summary.postTimestamp
     })
 
     lastCounterUpdate[dateString] = now
@@ -129,19 +134,14 @@ async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void>
  * Dropped posts (with curation_status ending in '_drop') are not counted and return 0
  * Posts from previous days show their counter number from that day
  *
- * @param postUri - The URI of the post (original post URI)
- * @param postedAt - The timestamp when the post was posted or reposted (used to determine which day)
- * @param isRepost - Whether this is a repost (not used, kept for compatibility)
- * @param reposterDid - The DID of the user who reposted (not used, kept for compatibility)
+ * The postTimestamp is looked up from the summaries cache (not passed as parameter)
+ * to ensure consistent date bucket lookups regardless of when the post is displayed.
+ *
+ * @param postUri - The unique ID of the post (from getPostUniqueId)
  * @param isDropped - Whether this post was dropped by curation (if true, returns 0)
  */
 export async function getPostNumber(
   postUri: string,
-  postedAt: Date,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _isRepost = false,
-   
-  _reposterDid?: string,
   isDropped = false
 ): Promise<number> {
   resetIfNewDay()
@@ -151,10 +151,24 @@ export async function getPostNumber(
     return 0
   }
 
-  // Determine which date this post is from (local timezone)
-  const postDate = getDateString(postedAt)
+  // First check if we have a cached timestamp for this post
+  let postTimestamp = postTimestampMap[postUri]
 
-  // First check if we already have a number for this post
+  // If not found in cache, fetch from summary (handles posts not yet in counter cache)
+  if (!postTimestamp) {
+    const summary = await getPostSummary(postUri)
+    if (!summary) {
+      return 0
+    }
+    postTimestamp = summary.postTimestamp
+    // Cache it for future lookups
+    postTimestampMap[postUri] = postTimestamp
+  }
+
+  // Determine which date this post is from (local timezone)
+  const postDate = getDateString(new Date(postTimestamp))
+
+  // Check if we already have a number for this post
   const key = `${postDate}:${postUri}`
   if (postCounter[key]) {
     return postCounter[key]
@@ -165,7 +179,7 @@ export async function getPostNumber(
   delete lastCounterUpdate[postDate]
 
   // Compute post numbers from summaries cache for this specific date
-  await computePostNumbersFromSummaries(postedAt)
+  await computePostNumbersFromSummaries(new Date(postTimestamp))
 
   // Return the number for this post from its date, or 0 if not found
   return postCounter[key] || 0
@@ -173,23 +187,29 @@ export async function getPostNumber(
 
 /**
  * Get post number without assigning (if post already counted)
- * 
- * @param postUri - The URI of the post (original post URI)
- * @param postedAt - The timestamp when the post was posted or reposted (used to determine which day)
- * @param isRepost - Whether this is a repost (not used, kept for compatibility)
- * @param reposterDid - The DID of the user who reposted (not used, kept for compatibility)
+ *
+ * @param postUri - The unique ID of the post (from getPostUniqueId)
  */
 export async function getPostNumberIfExists(
-  postUri: string,
-  postedAt: Date,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _isRepost = false,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _reposterDid?: string
+  postUri: string
 ): Promise<number | null> {
   resetIfNewDay()
-  const postDate = getDateString(postedAt)
-  await computePostNumbersFromSummaries(postedAt)
+
+  // First check if we have a cached timestamp for this post
+  let postTimestamp = postTimestampMap[postUri]
+
+  // If not found in cache, fetch from summary
+  if (!postTimestamp) {
+    const summary = await getPostSummary(postUri)
+    if (!summary) {
+      return null
+    }
+    postTimestamp = summary.postTimestamp
+    postTimestampMap[postUri] = postTimestamp
+  }
+
+  const postDate = getDateString(new Date(postTimestamp))
+  await computePostNumbersFromSummaries(new Date(postTimestamp))
   const key = `${postDate}:${postUri}`
   return postCounter[key] || null
 }
@@ -218,6 +238,7 @@ export async function getAllCounters(targetDate?: Date): Promise<Record<string, 
  */
 export function clearCounters(): void {
   postCounter = {}
+  postTimestampMap = {}
   lastResetDate = ''
   lastCounterUpdate = {}
 }

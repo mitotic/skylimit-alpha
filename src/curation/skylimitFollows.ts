@@ -97,21 +97,39 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
       existingMap.set(f.username, f)
     }
     
+    // Count how many profiles need fetching
+    let profilesToFetch = 0
+    for (const follow of follows) {
+      const existing = existingMap.get(follow.handle)
+      const topics = existing?.topics || ''
+      const timezone = existing?.timezone || 'UTC'
+      const displayName = existing?.displayName || ''
+      if (!existing || !topics || timezone === 'UTC' || !displayName) {
+        profilesToFetch++
+      }
+    }
+
+    if (profilesToFetch > 0) {
+      console.log(`[Follows] Starting profile fetches: ${profilesToFetch} of ${follows.length} followees need profile data`)
+    }
+
     // Update or create follow entries
+    let profilesFetched = 0
     for (const follow of follows) {
       const username = follow.handle
       const existing = existingMap.get(username)
-      
+
       // Only fetch profile if:
       // 1. This is a new follow (no existing entry)
       // 2. Topics, timezone, or displayName are missing
       let topics = existing?.topics || ''
       let timezone = existing?.timezone || 'UTC'
       let displayName = existing?.displayName || ''
-      
+
       if (!existing || !topics || timezone === 'UTC' || !displayName) {
         try {
           const profile = await getProfile(agent, follow.did)
+          profilesFetched++
           if (profile) {
             const extractedTopics = extractTopicsFromProfile(profile).join(' ')
             const extractedTimezone = extractTimezone(profile)
@@ -156,7 +174,11 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
       await saveFollow(followInfo)
       existingMap.delete(username)
     }
-    
+
+    if (profilesToFetch > 0) {
+      console.log(`[Follows] Completed profile fetches: ${profilesFetched} profiles fetched`)
+    }
+
     // Save refresh time
     await saveLastFollowRefreshTime()
     

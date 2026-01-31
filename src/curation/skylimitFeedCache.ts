@@ -906,7 +906,13 @@ export async function performLookbackFetchToSecondary(
 
       // Failsafe: stop if we've gone past primary's newest
       if (secondaryOldest && secondaryOldest < primaryNewest) {
-        console.log('[Secondary Lookback] Failsafe: reached beyond primary newest timestamp')
+        const gapMs = primaryNewest - secondaryOldest
+        const gapHours = gapMs / (1000 * 60 * 60)
+        console.log(`[Secondary Lookback] Failsafe triggered: no URI overlap found`)
+        console.log(`[Secondary Lookback] Secondary oldest: ${new Date(secondaryOldest).toISOString()}`)
+        console.log(`[Secondary Lookback] Primary newest: ${new Date(primaryNewest).toISOString()}`)
+        console.log(`[Secondary Lookback] Time overlap: ${gapHours.toFixed(2)} hours (secondary fetched ${gapHours.toFixed(2)}h past primary)`)
+        console.log(`[Secondary Lookback] Iterations: ${iterations}, Secondary newest: ${secondaryNewest ? new Date(secondaryNewest).toISOString() : 'none'}`)
         break
       }
 

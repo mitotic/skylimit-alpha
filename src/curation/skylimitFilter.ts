@@ -233,7 +233,15 @@ export async function curateSinglePost(
       modStatus.curation_msg = 'User not tracked'
     }
   }
-  
+
+  // Update last_posted_at if this post is newer
+  const follow = currentFollows[summary.username]
+  if (follow && (!follow.last_posted_at || summary.postTimestamp > follow.last_posted_at)) {
+    const updatedFollow = { ...follow, last_posted_at: summary.postTimestamp }
+    await saveFollow(updatedFollow)
+    currentFollows[summary.username] = updatedFollow  // Update in-memory for batch efficiency
+  }
+
   return modStatus
 }
 
