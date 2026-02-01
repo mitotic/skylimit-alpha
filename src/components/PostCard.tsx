@@ -55,6 +55,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [popupAnchorRect, setPopupAnchorRect] = useState<DOMRect | null>(null)
   const [loading, setLoading] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
+  const [showTime, setShowTime] = useState(false)
   const [curationDisabled, setCurationDisabled] = useState(false)
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
@@ -129,6 +130,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               setPostNumber(curationNum)  // Can be null, 0, or positive
               // Use debugMode setting for Debug Info section
               setDebugMode(settings.debugMode || false)
+              // Use showTime setting for timestamp display
+              setShowTime(settings.showTime || false)
               setShowCounterDisplay(true)
             } else {
               setShowCounterDisplay(false)
@@ -316,8 +319,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           {showCounterDisplay && curation && (
             <>
               <span className="flex items-center gap-1">
-                {/* Time display (debug mode only) - plain text, not clickable */}
-                {debugMode && (
+                {/* Time display - controlled by showTime setting */}
+                {showTime && (
                   <span className="text-gray-500 dark:text-gray-400">
                     {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
                   </span>
@@ -384,8 +387,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         {showCounterDisplay && !isReposted && !isReply && (
           <>
             <div className="absolute top-4 right-4 z-10 flex items-center gap-1">
-              {/* Time display (debug mode only) - plain text, not clickable */}
-              {debugMode && (
+              {/* Time display - controlled by showTime setting */}
+              {showTime && (
                 <span className="text-gray-500 dark:text-gray-400">
                   {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
                 </span>
@@ -463,8 +466,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             {isReply && showCounterDisplay && !isReposted && (
               <>
                 <span className="ml-auto flex items-center gap-1">
-                  {/* Time display (debug mode only) - plain text, not clickable */}
-                  {debugMode && (
+                  {/* Time display - controlled by showTime setting */}
+                  {showTime && (
                     <span className="text-gray-500 dark:text-gray-400">
                       {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
                     </span>

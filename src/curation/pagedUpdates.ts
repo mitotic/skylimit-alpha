@@ -209,6 +209,20 @@ export async function probeForNewPosts(
       }
     }
 
+    // Sanity check: all processed posts should be from the same day
+    if (result.filteredPostCount > 0 &&
+        result.newestProbeTimestamp > 0 &&
+        result.oldestProbeTimestamp < Number.MAX_SAFE_INTEGER) {
+      const newestDate = new Date(result.newestProbeTimestamp)
+      const oldestDate = new Date(result.oldestProbeTimestamp)
+      const newestMidnight = getLocalMidnight(newestDate).getTime()
+      const oldestMidnight = getLocalMidnight(oldestDate).getTime()
+      if (newestMidnight !== oldestMidnight) {
+        console.warn(`[Probe] WARNING: Probed posts span midnight boundary! ` +
+          `Newest: ${newestDate.toLocaleString()}, Oldest: ${oldestDate.toLocaleString()}`)
+      }
+    }
+
     // Check page availability
     const pageSize = settings?.feedPageLength || 25
     result.hasFullPage = result.filteredPostCount >= pageSize

@@ -1828,7 +1828,7 @@ export default function HomePage() {
       const pageLength = settings?.feedPageLength || 25
 
       // Paged updates: use secondary cache flow for contiguous caching
-      console.log('[Paged Updates] Loading next page via secondary cache...')
+      console.log('[New Posts] SINGLE PAGE: Loading via secondary cache...')
 
       setSyncInProgress(true)
       setSyncProgress(0)
@@ -1844,24 +1844,26 @@ export default function HomePage() {
           (mergeProgress) => setSyncProgress(80 + Math.round(mergeProgress * 0.2))  // 80-100% for merge
         )
 
-        console.log(`[Paged Updates] Secondary cache flow completed: ${result.postsMerged} posts merged`)
+        console.log(`[New Posts] SINGLE PAGE: Secondary cache flow completed: ${result.postsMerged} posts merged`)
 
         // Assign numbers to merged posts
         if (result.postsMerged > 0) {
-          const now = new Date()
-          const todayStart = getLocalMidnight(now).getTime()
-          const todayEnd = todayStart + 24 * 60 * 60 * 1000
-          const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayStart, todayEnd)
+          // Use the day of the newest merged post, not current time
+          // This handles the case where posts are from yesterday but user clicks after midnight
+          const newestPostDate = new Date(result.newestTimestamp || Date.now())
+          const dayStart = getLocalMidnight(newestPostDate).getTime()
+          const dayEnd = dayStart + 24 * 60 * 60 * 1000
+          const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(dayStart, dayEnd)
 
-          // Get summaries that need numbering (postNumber is null or undefined)
-          const allSummaries = await getPostSummariesInRange(todayStart, todayEnd)
+          // Get summaries for the day of the posts (not necessarily today)
+          const allSummaries = await getPostSummariesInRange(dayStart, dayEnd)
           const unnumberedSummaries = allSummaries.filter(s =>
             s.postNumber === null || s.postNumber === undefined
           )
 
           if (unnumberedSummaries.length > 0) {
             await assignIncrementalNumbers(unnumberedSummaries, maxPostNumber, maxCurationNumber)
-            console.log(`[Paged Updates] Assigned numbers to ${unnumberedSummaries.length} posts (max postNumber: ${maxPostNumber}, max curationNumber: ${maxCurationNumber})`)
+            console.log(`[New Posts] SINGLE PAGE: Assigned numbers to ${unnumberedSummaries.length} posts for ${newestPostDate.toLocaleDateString()} (max postNumber: ${maxPostNumber}, max curationNumber: ${maxCurationNumber})`)
           }
         }
 
@@ -1914,7 +1916,7 @@ export default function HomePage() {
 
     if (isMultiPage) {
       // MULTI-PAGE FLOW: Full re-display
-      console.log(`[All New Posts] Multi-page flow: ${multiPageCount} posts`)
+      console.log(`[New Posts] MULTI-PAGE: Processing ${multiPageCount} posts one-by-one`)
 
       setIsLoadingMore(true)
       setSyncInProgress(true)
@@ -2002,9 +2004,28 @@ export default function HomePage() {
         setMultiPageCount(0)
         lastDisplayTimeRef.current = Date.now() // Start cooldown
 
+        // Assign numbers to the processed posts
+        if (postsToDisplay.length > 0) {
+          // Use the day of the newest curated post, not current time
+          const newestPostDate = new Date(newestCuratedTimestamp)
+          const dayStart = getLocalMidnight(newestPostDate).getTime()
+          const dayEnd = dayStart + 24 * 60 * 60 * 1000
+          const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(dayStart, dayEnd)
+
+          const allSummaries = await getPostSummariesInRange(dayStart, dayEnd)
+          const unnumberedSummaries = allSummaries.filter(s =>
+            s.postNumber === null || s.postNumber === undefined
+          )
+
+          if (unnumberedSummaries.length > 0) {
+            await assignIncrementalNumbers(unnumberedSummaries, maxPostNumber, maxCurationNumber)
+            console.log(`[New Posts] MULTI-PAGE: Assigned numbers to ${unnumberedSummaries.length} posts for ${newestPostDate.toLocaleDateString()}`)
+          }
+        }
+
         // Debug: compare probe expected count vs actual display count
-        console.log(`[All New Posts] COUNT COMPARISON: Probe expected ${probeExpectedCountRef.current} posts, actually displayed ${postsToDisplay.length} posts (diff: ${probeExpectedCountRef.current - postsToDisplay.length})`)
-        console.log(`[All New Posts] Displayed ${postsToDisplay.length} posts, starting background gap fill...`)
+        console.log(`[New Posts] MULTI-PAGE: COUNT COMPARISON: Probe expected ${probeExpectedCountRef.current} posts, actually displayed ${postsToDisplay.length} posts (diff: ${probeExpectedCountRef.current - postsToDisplay.length})`)
+        console.log(`[New Posts] MULTI-PAGE: Displayed ${postsToDisplay.length} posts, starting background gap fill...`)
 
         // Scroll to top
         isProgrammaticScrollRef.current = true
@@ -2016,15 +2037,15 @@ export default function HomePage() {
 
         // Start background gap fill
         if (fetchCursor && oldestCuratedTimestamp < Number.MAX_SAFE_INTEGER) {
-          const localMidnight = getLocalMidnight().getTime()
-          if (oldestCuratedTimestamp > localMidnight) {
-            console.log(`[All New Posts] Gap fill: from ${new Date(oldestCuratedTimestamp).toLocaleTimeString()} to midnight`)
-            try {
-              await limitedLookbackToMidnight(oldestCuratedTimestamp, fetchCursor, agent, session.handle, session.did, pageLength)
-              console.log('[All New Posts] Gap fill complete')
-            } catch (gapError) {
-              console.warn('[All New Posts] Gap fill error:', gapError)
-            }
+          // Use the day of the newest curated post, not current time
+          const newestPostDate = new Date(newestCuratedTimestamp)
+          const prevMidnight = getLocalMidnight(newestPostDate).getTime()
+          console.log(`[New Posts] MULTI-PAGE: Gap fill from ${new Date(oldestCuratedTimestamp).toLocaleTimeString()} to midnight of ${newestPostDate.toLocaleDateString()}`)
+          try {
+            await limitedLookbackToMidnight(oldestCuratedTimestamp, fetchCursor, agent, session.handle, session.did, pageLength, prevMidnight)
+            console.log('[New Posts] MULTI-PAGE: Gap fill complete')
+          } catch (gapError) {
+            console.warn('[New Posts] MULTI-PAGE: Gap fill error:', gapError)
           }
         }
       } catch (error) {
@@ -2036,7 +2057,7 @@ export default function HomePage() {
       }
     } else {
       // PARTIAL PAGE FLOW: Use existing handleLoadNewPosts logic
-      console.log(`[All New Posts] Partial page flow: ${partialPageCount} posts`)
+      console.log(`[New Posts] PARTIAL PAGE: ${partialPageCount} posts, using single page flow`)
       await handleLoadNewPosts()
       setIdleTimerTriggered(false)
     }

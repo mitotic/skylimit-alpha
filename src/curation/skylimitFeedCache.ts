@@ -651,7 +651,7 @@ export async function performLookbackFetchToSecondary(
   pageLength: number = DEFAULT_PAGE_LENGTH,
   onProgress?: (percent: number) => void,
   onMergeProgress?: (percent: number) => void
-): Promise<{ completed: boolean; merged: boolean; postsMerged: number }> {
+): Promise<{ completed: boolean; merged: boolean; postsMerged: number; newestTimestamp: number | null }> {
   try {
     console.log('[Secondary Lookback] Starting gap-filling lookback to secondary cache')
 
@@ -666,7 +666,7 @@ export async function performLookbackFetchToSecondary(
     const primaryNewest = await getPrimaryNewestTimestamp()
     if (!primaryNewest) {
       console.warn('[Secondary Lookback] No primary cache found, should use regular lookback instead')
-      return { completed: false, merged: false, postsMerged: 0 }
+      return { completed: false, merged: false, postsMerged: 0, newestTimestamp: null }
     }
     console.log(`[Secondary Lookback] Primary newest: ${new Date(primaryNewest).toISOString()}`)
 
@@ -795,17 +795,18 @@ export async function performLookbackFetchToSecondary(
     // Clear secondary cache metadata
     await updateSecondaryCacheMetadata(false, null, null)
 
-    console.log(`[Secondary Lookback] Completed. Merged ${mergeResult.postsMerged} posts`)
+    console.log(`[Secondary Lookback] Completed. Merged ${mergeResult.postsMerged} posts, newestTimestamp=${secondaryNewest ? new Date(secondaryNewest).toLocaleString() : 'null'}`)
     return {
       completed: true,
       merged: mergeResult.success,
-      postsMerged: mergeResult.postsMerged
+      postsMerged: mergeResult.postsMerged,
+      newestTimestamp: secondaryNewest
     }
   } catch (error) {
     console.error('[Secondary Lookback] Failed:', error)
     // Clear secondary metadata on error
     await updateSecondaryCacheMetadata(false, null, null)
-    return { completed: false, merged: false, postsMerged: 0 }
+    return { completed: false, merged: false, postsMerged: 0, newestTimestamp: null }
   }
 }
 
@@ -905,6 +906,7 @@ export function isCacheWithinLookback(timestamp: number | null, lookbackDays: nu
  * @param myUsername - User's username
  * @param myDid - User's DID
  * @param pageLength - Number of posts per page (default 25)
+ * @param prevMidnight - Optional midnight boundary to use instead of computing from current time
  * @returns Number of new posts cached during lookback
  */
 export async function limitedLookbackToMidnight(
@@ -913,9 +915,11 @@ export async function limitedLookbackToMidnight(
   agent: BskyAgent,
   myUsername: string,
   myDid: string,
-  pageLength: number = DEFAULT_PAGE_LENGTH
+  pageLength: number = DEFAULT_PAGE_LENGTH,
+  prevMidnight?: number
 ): Promise<number> {
-  const localMidnight = getLocalMidnight().getTime()
+  // Use supplied midnight boundary if provided, otherwise compute from current time
+  const localMidnight = prevMidnight ?? getLocalMidnight().getTime()
 
   // If oldest fetched is already at or before midnight, no lookback needed
   if (oldestFetchedTimestamp <= localMidnight) {
@@ -927,7 +931,7 @@ export async function limitedLookbackToMidnight(
   const settings = await getSettings()
   const intervalHours = getIntervalHoursSync(settings)
 
-  console.log(`[Limited Lookback] Starting from ${new Date(oldestFetchedTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
+  console.log(`[Limited Lookback] Starting from ${new Date(oldestFetchedTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}${prevMidnight ? ' (supplied)' : ' (computed)'}`)
 
   let currentOldestTimestamp = oldestFetchedTimestamp
   let cursor = initialCursor

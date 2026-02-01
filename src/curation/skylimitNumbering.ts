@@ -170,6 +170,9 @@ export async function getMaxNumbersForDay(
  * Incrementally assign numbers for new posts (forward direction)
  * Called during paged updates when posts are added to cache
  *
+ * Always overwrites numbers for consistency. Warns once per batch if overwriting
+ * existing numbers (which may indicate a bug in the numbering flow).
+ *
  * @param newSummaries - Newly cached summaries to number (will be mutated)
  * @param existingMaxPostNumber - Current max postNumber for the day
  * @param existingMaxCurationNumber - Current max curationNumber for the day
@@ -186,21 +189,34 @@ export async function assignIncrementalNumbers(
 
   let postNumber = existingMaxPostNumber
   let curationNumber = existingMaxCurationNumber
+  let warnedAboutOverwrite = false
 
   for (const summary of newSummaries) {
-    // Only assign if not already assigned
-    if (summary.postNumber === null || summary.postNumber === undefined) {
-      postNumber++
-      summary.postNumber = postNumber
+    // Check if we're overwriting existing numbers (warn once per batch)
+    if (!warnedAboutOverwrite &&
+        summary.postNumber !== null && summary.postNumber !== undefined) {
+      const postDate = new Date(summary.postTimestamp)
+      const newCurationNum = isStatusShow(summary.curation_status) ? curationNumber + 1 :
+                             isStatusDrop(summary.curation_status) ? 0 : null
+      console.warn(`[Numbering] WARNING: Overwriting existing numbers. ` +
+        `First occurrence at ${postDate.toLocaleString()}: ` +
+        `postNumber ${summary.postNumber} → ${postNumber + 1}, ` +
+        `curationNumber ${summary.curationNumber} → ${newCurationNum}`)
+      warnedAboutOverwrite = true
     }
 
-    if (summary.curationNumber === null || summary.curationNumber === undefined) {
-      if (isStatusDrop(summary.curation_status)) {
-        summary.curationNumber = 0
-      } else if (isStatusShow(summary.curation_status)) {
-        curationNumber++
-        summary.curationNumber = curationNumber
-      }
+    // Always assign numbers (overwrite for consistency)
+    postNumber++
+    summary.postNumber = postNumber
+
+    if (isStatusDrop(summary.curation_status)) {
+      summary.curationNumber = 0
+    } else if (isStatusShow(summary.curation_status)) {
+      curationNumber++
+      summary.curationNumber = curationNumber
+    } else {
+      // Unknown status - leave as null
+      summary.curationNumber = null
     }
   }
 
