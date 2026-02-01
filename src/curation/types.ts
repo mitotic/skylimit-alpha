@@ -19,6 +19,7 @@ export type CurationStatus =
   | 'regular_drop'     // Regular post fails probability filter
   | 'edition_drop'     // Post saved for edition digest
   | 'untracked_show'   // User not tracked - shown by default
+  | 'temp_show'        // Temporary show during initial lookback (before stats computed)
 
 /**
  * Check if a curation status indicates the post should be shown
@@ -179,6 +180,9 @@ export interface PostSummary {
   orig_username?: string
   curation_status?: CurationStatus
   curation_msg?: string
+  // Invariant counter numbering (added for counter revamp)
+  postNumber?: number | null    // Sequential count in follow feed (resets daily, 1-indexed). null if unassigned
+  curationNumber?: number | null // Count among shown posts: 0 for dropped, positive for shown, null if unassigned
 }
 
 export interface FollowInfo {
@@ -276,6 +280,9 @@ export interface CurationMetadata {
   curation_edition?: boolean
   curation_save?: string
   curation_id?: string
+  // Number fields to avoid IndexedDB lookups in PostCard
+  postNumber?: number | null
+  curationNumber?: number | null
 }
 
 export type CurationFeedViewPost = AppBskyFeedDefs.FeedViewPost & {

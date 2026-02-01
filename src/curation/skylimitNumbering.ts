@@ -1,0 +1,271 @@
+/**
+ * Numbering system for curation counters
+ * Assigns invariant postNumber and curationNumber to posts
+ *
+ * - postNumber: Sequential count of ALL posts in follow feed for the day (1, 2, 3, ...)
+ * - curationNumber: 0 for dropped posts, sequential count of shown posts (1, 2, 3, ...)
+ * - Both reset to 1 at the start of each local day
+ */
+
+import { getAllPostSummaries, getPostSummariesInRange, initDB } from './skylimitCache'
+import { getLocalMidnight } from './skylimitFeedCache'
+import { PostSummary, isStatusDrop, isStatusShow } from './types'
+
+/**
+ * Get date string in local timezone (YYYY-MM-DD) for a given timestamp
+ */
+function getDateString(timestamp: number): string {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
+ * Save summaries with updated numbers to IndexedDB
+ */
+async function saveNumberedSummaries(summaries: PostSummary[]): Promise<void> {
+  if (summaries.length === 0) return
+
+  const database = await initDB()
+  const transaction = database.transaction(['post_summaries'], 'readwrite')
+  const store = transaction.objectStore('post_summaries')
+
+  for (const summary of summaries) {
+    await new Promise<void>((resolve, reject) => {
+      const request = store.put(summary)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+}
+
+/**
+ * Assign numbers to all posts within a date range
+ * Called after lookback completes and stats are computed
+ *
+ * @param startOfDay - Start of the local day (midnight) in milliseconds
+ * @param endOfDay - End of the day (next midnight) in milliseconds
+ * @returns Count of posts numbered
+ */
+export async function assignNumbersForDay(
+  startOfDay: number,
+  endOfDay: number
+): Promise<{ postCount: number; shownCount: number }> {
+  // Get all summaries for this day
+  const summaries = await getPostSummariesInRange(startOfDay, endOfDay)
+
+  if (summaries.length === 0) {
+    return { postCount: 0, shownCount: 0 }
+  }
+
+  // Sort chronologically (oldest first = #1)
+  summaries.sort((a, b) => a.postTimestamp - b.postTimestamp)
+
+  let postNumber = 0
+  let curationNumber = 0
+  const updatedSummaries: PostSummary[] = []
+
+  for (const summary of summaries) {
+    postNumber++
+    summary.postNumber = postNumber
+
+    if (isStatusDrop(summary.curation_status)) {
+      summary.curationNumber = 0
+    } else if (isStatusShow(summary.curation_status)) {
+      curationNumber++
+      summary.curationNumber = curationNumber
+    } else {
+      // Unknown status - leave as null
+      summary.curationNumber = null
+    }
+
+    updatedSummaries.push(summary)
+  }
+
+  // Batch save updates
+  await saveNumberedSummaries(updatedSummaries)
+
+  console.log(`[Numbering] Assigned numbers for day ${getDateString(startOfDay)}: ${postNumber} posts, ${curationNumber} shown`)
+
+  return { postCount: postNumber, shownCount: curationNumber }
+}
+
+/**
+ * Assign numbers for all complete days in cache
+ * Called after lookback completes
+ */
+export async function assignAllNumbers(): Promise<void> {
+  const summaries = await getAllPostSummaries()
+  if (summaries.length === 0) {
+    console.log('[Numbering] No summaries to number')
+    return
+  }
+
+  // Find the date range
+  let oldestTimestamp = Infinity
+  let newestTimestamp = 0
+  for (const s of summaries) {
+    if (s.postTimestamp < oldestTimestamp) oldestTimestamp = s.postTimestamp
+    if (s.postTimestamp > newestTimestamp) newestTimestamp = s.postTimestamp
+  }
+
+  // Process each day
+  const startDate = new Date(oldestTimestamp)
+  const endDate = new Date(newestTimestamp)
+
+  let currentDay = getLocalMidnight(startDate)
+  const finalDay = getLocalMidnight(endDate)
+
+  console.log(`[Numbering] Assigning numbers from ${getDateString(currentDay.getTime())} to ${getDateString(finalDay.getTime())}`)
+
+  let totalPosts = 0
+  let totalShown = 0
+
+  while (currentDay <= finalDay) {
+    const nextDay = new Date(currentDay)
+    nextDay.setDate(nextDay.getDate() + 1)
+
+    const { postCount, shownCount } = await assignNumbersForDay(currentDay.getTime(), nextDay.getTime())
+    totalPosts += postCount
+    totalShown += shownCount
+
+    currentDay = nextDay
+  }
+
+  console.log(`[Numbering] Complete: ${totalPosts} total posts, ${totalShown} shown across all days`)
+}
+
+/**
+ * Get the highest postNumber and curationNumber for a specific day
+ */
+export async function getMaxNumbersForDay(
+  startOfDay: number,
+  endOfDay: number
+): Promise<{ maxPostNumber: number; maxCurationNumber: number }> {
+  const summaries = await getPostSummariesInRange(startOfDay, endOfDay)
+
+  let maxPostNumber = 0
+  let maxCurationNumber = 0
+
+  for (const s of summaries) {
+    if (s.postNumber && s.postNumber > maxPostNumber) {
+      maxPostNumber = s.postNumber
+    }
+    if (s.curationNumber && s.curationNumber > maxCurationNumber) {
+      maxCurationNumber = s.curationNumber
+    }
+  }
+
+  return { maxPostNumber, maxCurationNumber }
+}
+
+/**
+ * Incrementally assign numbers for new posts (forward direction)
+ * Called during paged updates when posts are added to cache
+ *
+ * @param newSummaries - Newly cached summaries to number (will be mutated)
+ * @param existingMaxPostNumber - Current max postNumber for the day
+ * @param existingMaxCurationNumber - Current max curationNumber for the day
+ */
+export async function assignIncrementalNumbers(
+  newSummaries: PostSummary[],
+  existingMaxPostNumber: number,
+  existingMaxCurationNumber: number
+): Promise<void> {
+  if (newSummaries.length === 0) return
+
+  // Sort new summaries chronologically (oldest first for forward numbering)
+  newSummaries.sort((a, b) => a.postTimestamp - b.postTimestamp)
+
+  let postNumber = existingMaxPostNumber
+  let curationNumber = existingMaxCurationNumber
+
+  for (const summary of newSummaries) {
+    // Only assign if not already assigned
+    if (summary.postNumber === null || summary.postNumber === undefined) {
+      postNumber++
+      summary.postNumber = postNumber
+    }
+
+    if (summary.curationNumber === null || summary.curationNumber === undefined) {
+      if (isStatusDrop(summary.curation_status)) {
+        summary.curationNumber = 0
+      } else if (isStatusShow(summary.curation_status)) {
+        curationNumber++
+        summary.curationNumber = curationNumber
+      }
+    }
+  }
+
+  await saveNumberedSummaries(newSummaries)
+
+  console.log(`[Numbering] Incremental: assigned numbers to ${newSummaries.length} posts (postNumber ${existingMaxPostNumber + 1}-${postNumber}, curationNumber up to ${curationNumber})`)
+}
+
+/**
+ * Assign numbers backward from a known starting point (for gap filling)
+ * Used when "Prev Page" encounters a gap and then finds an existing numbered post
+ *
+ * @param summariesToNumber - Summaries that need numbering (will be mutated), in any order
+ * @param anchorPostNumber - The postNumber of the anchor post (the post with existing numbers)
+ * @param anchorCurationNumber - The curationNumber of the anchor post
+ * @param anchorTimestamp - The postTimestamp of the anchor post
+ */
+export async function assignNumbersBackward(
+  summariesToNumber: PostSummary[],
+  anchorPostNumber: number,
+  anchorCurationNumber: number,
+  anchorTimestamp: number
+): Promise<void> {
+  if (summariesToNumber.length === 0) return
+
+  // Filter to only summaries that are newer than the anchor (these are in the gap)
+  const summariesInGap = summariesToNumber.filter(s =>
+    s.postTimestamp > anchorTimestamp &&
+    (s.postNumber === null || s.postNumber === undefined)
+  )
+
+  if (summariesInGap.length === 0) {
+    console.log('[Numbering] No summaries in gap to number backward')
+    return
+  }
+
+  // Sort chronologically (oldest first)
+  summariesInGap.sort((a, b) => a.postTimestamp - b.postTimestamp)
+
+  // Start numbering from anchor + 1
+  let postNumber = anchorPostNumber
+  let curationNumber = anchorCurationNumber
+
+  for (const summary of summariesInGap) {
+    postNumber++
+    summary.postNumber = postNumber
+
+    if (isStatusDrop(summary.curation_status)) {
+      summary.curationNumber = 0
+    } else if (isStatusShow(summary.curation_status)) {
+      curationNumber++
+      summary.curationNumber = curationNumber
+    }
+  }
+
+  await saveNumberedSummaries(summariesInGap)
+
+  console.log(`[Numbering] Backward fill: assigned numbers to ${summariesInGap.length} posts from anchor (${anchorPostNumber}, ${anchorCurationNumber})`)
+}
+
+/**
+ * Check if a summary has valid assigned numbers
+ */
+export function hasAssignedNumbers(summary: PostSummary): boolean {
+  return summary.postNumber !== null &&
+    summary.postNumber !== undefined &&
+    summary.postNumber > 0
+}

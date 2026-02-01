@@ -10,6 +10,7 @@ import { curateSinglePost } from './skylimitFilter'
 import { getEditionTimeStrs } from './skylimitGeneral'
 import { getPostUniqueIdFromCache } from './skylimitFeedCache'
 import { PostSummary } from './types'
+import { assignAllNumbers } from './skylimitNumbering'
 
 /**
  * Recompute curation status for all posts in summaries cache
@@ -116,7 +117,11 @@ export async function recomputeCurationDecisions(
         })
       }
     }
-    
+
+    // After re-curation completes, assign invariant post numbers
+    console.log('Assigning post numbers after curation recomputation...')
+    await assignAllNumbers()
+
     console.log(`Curation recomputation complete: ${updatedCount} updated, ${skippedCount} skipped`)
     return { updated: updatedCount, skipped: skippedCount }
   } catch (error) {

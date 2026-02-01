@@ -12,7 +12,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats } from '../curation/skylimitCache'
+import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, getPostSummariesInRange } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
@@ -25,6 +25,7 @@ import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { clearCounters } from '../curation/skylimitCounter'
+import { assignIncrementalNumbers, getMaxNumbersForDay } from '../curation/skylimitNumbering'
 
 // Tab type for home page
 type HomeTab = 'curated' | 'editions'
@@ -476,6 +477,13 @@ export default function HomePage() {
         if (summary?.curation_msg) {
           curation.curation_msg = summary.curation_msg
         }
+        // Add number fields from summary to avoid IndexedDB lookups in PostCard
+        if (summary?.postNumber !== undefined) {
+          curation.postNumber = summary.postNumber
+        }
+        if (summary?.curationNumber !== undefined) {
+          curation.curationNumber = summary.curationNumber
+        }
 
         return {
           ...post,
@@ -787,9 +795,11 @@ export default function HomePage() {
               await prefetchNextPage(oldestDisplayedTimestamp)
             }, 100)
 
-            // Still fetch in background to update cache
-            // But don't block UI
-            setTimeout(async () => {
+            // Background fetch to update cache - only when Paged Updates is disabled
+            // When Paged Updates is enabled, the probing mechanism handles new post detection
+            // and assigns proper numbers to posts
+            if (!pagedUpdatesEnabled) {
+              setTimeout(async () => {
               try {
                 // Get page length from settings for background fetch
                 const bgSettings = await getSettings()
@@ -972,6 +982,7 @@ export default function HomePage() {
                 console.warn('Background feed update failed:', err)
               }
             }, 0)
+            }
             return
           }
         }
@@ -1208,7 +1219,7 @@ export default function HomePage() {
       setIsLoading(false)
       setIsLoadingMore(false)
     }
-  }, [agent, session, dbInitialized, setRateLimitStatus])
+  }, [agent, session, dbInitialized, setRateLimitStatus, pagedUpdatesEnabled])
 
   const redisplayFeed = useCallback(async () => {
     if (!agent || !session || !dbInitialized) return
@@ -2223,6 +2234,25 @@ export default function HomePage() {
           )
 
           console.log(`[Paged Updates] Secondary cache flow completed: ${result.postsMerged} posts merged`)
+
+          // Assign numbers to merged posts
+          if (result.postsMerged > 0) {
+            const now = new Date()
+            const todayStart = getLocalMidnight(now).getTime()
+            const todayEnd = todayStart + 24 * 60 * 60 * 1000
+            const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayStart, todayEnd)
+
+            // Get summaries that need numbering (postNumber is null or undefined)
+            const allSummaries = await getPostSummariesInRange(todayStart, todayEnd)
+            const unnumberedSummaries = allSummaries.filter(s =>
+              s.postNumber === null || s.postNumber === undefined
+            )
+
+            if (unnumberedSummaries.length > 0) {
+              await assignIncrementalNumbers(unnumberedSummaries, maxPostNumber, maxCurationNumber)
+              console.log(`[Paged Updates] Assigned numbers to ${unnumberedSummaries.length} posts (max postNumber: ${maxPostNumber}, max curationNumber: ${maxCurationNumber})`)
+            }
+          }
 
           // Clear UI state
           setNewPostsCount(0)

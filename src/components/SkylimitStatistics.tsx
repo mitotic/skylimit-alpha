@@ -11,6 +11,7 @@ import { countTotalPostsForUser } from '../curation/skylimitStats'
 import { getSettings } from '../curation/skylimitStore'
 import { useSession } from '../auth/SessionContext'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
+import CurationPopup from './CurationPopup'
 
 interface AccountStatistics {
   username: string
@@ -42,11 +43,12 @@ export default function SkylimitStatistics() {
   const [viewsPerDay, setViewsPerDay] = useState<number>(0)
   const [showPopup, setShowPopup] = useState<string | null>(null) // username of account to show popup for
   const [popupPosition, setPopupPosition] = useState<'above' | 'below'>('below') // Position of popup relative to cell
+  const [popupAnchorRect, setPopupAnchorRect] = useState<DOMRect | null>(null) // Anchor rect for fixed positioning
   const [loadingAmp, setLoadingAmp] = useState(false)
   const [sortField, setSortField] = useState<SortField>('postsPerDay')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [debugMode, setDebugMode] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
-  const cellRefs = useRef<Map<string, HTMLTableCellElement>>(new Map())
   const myUsername = session?.handle || ''
 
   useEffect(() => {
@@ -57,10 +59,11 @@ export default function SkylimitStatistics() {
     try {
       setLoading(true)
 
-      // Get settings for anonymization and views per day
+      // Get settings for anonymization, views per day, and debug mode
       const settings = await getSettings()
       setAnonymize(settings?.anonymizeUsernames || false)
       setViewsPerDay(settings?.viewsPerDay || 0)
+      setDebugMode(settings?.debugMode || false)
       
       // Get statistics with timestamp
       const filterResult = await getFilterWithTimestamp()
@@ -233,17 +236,21 @@ export default function SkylimitStatistics() {
 
 
   // Format curation message from userEntry and followInfo
-  const formatCurationMessage = (userEntry: UserEntry, followInfo?: FollowInfo): string => {
+  // Now returns structured data for the new popup format
+  const formatCurationStats = (userEntry: UserEntry, followInfo?: FollowInfo): {
+    postingCount: number
+    repostingCount: number
+    regularProb: number
+    priorityProb: number
+    ampFactor: number | null
+  } => {
     const postingCount = Math.round(countTotalPostsForUser(userEntry))
     const repostingCount = Math.round(userEntry.repost_daily)
-    const showProb = (userEntry.regular_prob * 100).toFixed(1)
-    const ampFactor = followInfo?.amp_factor ?? userEntry.amp_factor
-    
-    let msg = `Posting ${postingCount}/day (reposting ${repostingCount}/day)\nShow probability: ${showProb}%`
-    if (ampFactor !== null && ampFactor !== undefined) {
-      msg += `\nAmp factor: ${ampFactor}`
-    }
-    return msg
+    const regularProb = userEntry.regular_prob * 100
+    const priorityProb = userEntry.priority_prob * 100
+    const ampFactor = followInfo?.amp_factor ?? userEntry.amp_factor ?? null
+
+    return { postingCount, repostingCount, regularProb, priorityProb, ampFactor }
   }
 
   const handleAmpUp = async (username: string) => {
@@ -518,16 +525,16 @@ export default function SkylimitStatistics() {
                     setShowPopup(null)
                   } else {
                     // Store cell reference for positioning calculation
-                    const cell = e.currentTarget.closest('td') as HTMLTableCellElement
-                    if (cell) {
-                      cellRefs.current.set(account.username, cell)
-                      
-                      // Calculate position before showing popup
-                      const cellRect = cell.getBoundingClientRect()
+                    const button = e.currentTarget as HTMLButtonElement
+                    if (button) {
+                      const buttonRect = button.getBoundingClientRect()
                       const popupHeight = 250 // Approximate popup height in pixels
-                      const spaceBelow = window.innerHeight - cellRect.bottom
-                      const spaceAbove = cellRect.top
-                      
+                      const spaceBelow = window.innerHeight - buttonRect.bottom
+                      const spaceAbove = buttonRect.top
+
+                      // Store the anchor rect for fixed positioning
+                      setPopupAnchorRect(buttonRect)
+
                       // Position above if not enough space below but enough space above
                       if (spaceBelow < popupHeight && spaceAbove > spaceBelow) {
                         setPopupPosition('above')
@@ -540,7 +547,7 @@ export default function SkylimitStatistics() {
                 }
 
                 const isPopupOpen = showPopup === account.username
-                const curationMessage = formatCurationMessage(account.userEntry, account.followInfo)
+                const curationStats = formatCurationStats(account.userEntry, account.followInfo)
                 
                 return (
                   <tr
@@ -570,59 +577,29 @@ export default function SkylimitStatistics() {
                         </button>
                       )
                       {isPopupOpen && (
-                        <div
+                        <CurationPopup
                           ref={popupRef}
-                          className={`absolute right-0 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
-                            popupPosition === 'above'
-                              ? 'bottom-full mb-1'
-                              : 'top-full mt-1'
-                          }`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                            <div className="font-semibold text-sm">
-                              {account.followInfo?.displayName || account.displayName || account.username}
-                            </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              @{account.username}
-                            </div>
-                          </div>
-
-                          {/* Show statistics */}
-                          {curationMessage && (
-                            <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                              <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
-                                {curationMessage}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Amp Up/Down buttons */}
-                          {!account.isHashtag && (
-                            <div className="p-3">
-                              <div className="text-xs font-semibold mb-2">Amplification Factor</div>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => handleAmpDown(account.username)}
-                                  disabled={loadingAmp}
-                                  className="flex-1 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
-                                >
-                                  Amp Down (÷2)
-                                </button>
-                                <button
-                                  onClick={() => handleAmpUp(account.username)}
-                                  disabled={loadingAmp}
-                                  className="flex-1 px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
-                                >
-                                  Amp Up (×2)
-                                </button>
-                              </div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                                Adjust how many posts you see from this account
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                          displayName={account.followInfo?.displayName || account.displayName || ''}
+                          handle={account.username}
+                          popupPosition={popupPosition}
+                          anchorRect={popupAnchorRect || undefined}
+                          postingPerDay={curationStats.postingCount}
+                          repostingPerDay={curationStats.repostingCount}
+                          regularProb={curationStats.regularProb / 100}
+                          priorityProb={curationStats.priorityProb / 100}
+                          showAmpButtons={!account.isHashtag}
+                          onAmpUp={() => handleAmpUp(account.username)}
+                          onAmpDown={() => handleAmpDown(account.username)}
+                          ampLoading={loadingAmp}
+                          debugMode={debugMode}
+                          followedAt={account.followInfo?.followed_at}
+                          topics={account.followInfo?.topics || account.userEntry?.topics}
+                          timezone={account.followInfo?.timezone}
+                          onNavigateToSettings={() => {
+                            setShowPopup(null)
+                            navigate('/settings?tab=curation')
+                          }}
+                        />
                       )}
                     </td>
                     <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">

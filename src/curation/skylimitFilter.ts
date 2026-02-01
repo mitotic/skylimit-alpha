@@ -100,14 +100,16 @@ export async function curateSinglePost(
     return modStatus
   }
 
-  // If no stats/probs available, still try to show basic info if user is followed
-  // This allows statistics to show even when stats haven't been computed yet
+  // If no stats/probs available, use temp_show during initial lookback
+  // Posts will be re-curated once stats are computed
   if (!currentProbs || !currentStats) {
-    modStatus.curation_status = 'untracked_show'
+    modStatus.curation_status = 'temp_show'
     // Check if user is followed (even without stats)
     const follow = currentFollows[summary.username] || null
     if (follow) {
-      modStatus.curation_msg = `User followed\nAmp factor: ${follow.amp_factor}`
+      modStatus.curation_msg = `User followed\nAmp factor: ${follow.amp_factor}\n(Pending curation)`
+    } else {
+      modStatus.curation_msg = '(Pending curation)'
     }
     return modStatus
   }

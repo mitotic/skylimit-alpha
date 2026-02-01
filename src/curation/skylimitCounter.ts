@@ -1,217 +1,91 @@
 /**
- * Daily post counter for Skylimit curation
- * Tracks the number of posts per day based on summaries cache, resetting at local midnight
- * Posts are numbered chronologically by posting/reposting time within each day
- * The first non-dropped post after local midnight gets #1, next gets #2, etc.
+ * Daily post counter for Skylimit curation (SIMPLIFIED)
  *
- * IMPORTANT: Counter is based on summaries cache, not displayed posts
- * Only non-dropped posts are counted (posts with curation_status ending in '_show')
+ * This module now reads pre-computed postNumber and curationNumber from the
+ * post summaries cache, rather than computing them dynamically.
  *
- * For reposts, uses the time when they were reposted (not when original was created)
- */
-
-import { getAllPostSummaries, getPostSummary } from './skylimitCache'
-import { isStatusDrop } from './types'
-
-// Map of post URI to its assigned number (cached)
-// Key format: "dateString:uri" to support multiple dates
-let postCounter: Record<string, number> = {}
-// Map of uniqueId to postTimestamp (cached during computePostNumbersFromSummaries)
-// Used to look up the correct date bucket for a post without extra IndexedDB calls
-let postTimestampMap: Record<string, number> = {}
-let lastResetDate: string = ''
-let lastCounterUpdate: Record<string, number> = {} // Timestamp of last counter update per date
-
-/**
- * Get date string in local timezone (YYYY-MM-DD) for a given date
- */
-function getDateString(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-/**
- * Get today's date string in local timezone
- */
-function getTodayDateString(): string {
-  return getDateString(new Date())
-}
-
-/**
- * Get local midnight time for a given date
- */
-function getLocalMidnight(date: Date): Date {
-  const localDate = new Date(date)
-  localDate.setHours(0, 0, 0, 0)
-  return localDate
-}
-
-/**
- * Reset counters if it's a new day
- * Note: We keep counters for previous days, so we don't clear postCounter
- * We only track the last reset date to know when to update today's counters
- */
-function resetIfNewDay(): void {
-  const today = getTodayDateString()
-  if (today !== lastResetDate) {
-    // Don't clear postCounter - we want to keep numbers for previous days
-    // Just update the last reset date
-    lastResetDate = today
-    // Clear today's update timestamp to force recalculation
-    if (lastCounterUpdate[today]) {
-      delete lastCounterUpdate[today]
-    }
-  }
-}
-
-/**
- * Load and compute post numbers from summaries cache for a specific date
- * Only counts non-dropped posts, sorted chronologically
- * 
- * @param targetDate - The date to compute numbers for (defaults to today)
- */
-async function computePostNumbersFromSummaries(targetDate?: Date): Promise<void> {
-  resetIfNewDay()
-
-  // Use target date or default to today
-  const date = targetDate || new Date()
-  const dateString = getDateString(date)
-
-  // Only recompute if cache is stale (older than 30 seconds) or empty for this date
-  const now = Date.now()
-  if (lastCounterUpdate[dateString] && (now - lastCounterUpdate[dateString]) < 30000) {
-    // Check if we already have numbers for this date
-    const hasNumbersForDate = Object.keys(postCounter).some(key => key.startsWith(`${dateString}:`))
-    if (hasNumbersForDate) {
-      return // Use cached numbers
-    }
-  }
-
-  try {
-    // Get all post summaries
-    const allSummaries = await getAllPostSummaries()
-    if (allSummaries.length === 0) {
-      return
-    }
-
-    // Get the date range for the target date (local timezone)
-    const dateStart = getLocalMidnight(date)
-    const dateEnd = new Date(dateStart)
-    dateEnd.setDate(dateEnd.getDate() + 1)
-
-    // Filter summaries from the target date that are not dropped
-    // Use postTimestamp for filtering (numeric timestamp)
-    const summariesForDate = allSummaries.filter(summary => {
-      const summaryDate = new Date(summary.postTimestamp)
-      return summaryDate >= dateStart && summaryDate < dateEnd && !isStatusDrop(summary.curation_status)
-    })
-
-    // Sort by postTimestamp ascending (chronological order)
-    summariesForDate.sort((a, b) => a.postTimestamp - b.postTimestamp)
-
-    // Assign numbers: first post after midnight = #1, second = #2, etc.
-    // Use dateString:uniqueId as key to support multiple dates
-    // Also cache the postTimestamp for each uniqueId for efficient lookups
-    summariesForDate.forEach((summary, index) => {
-      const key = `${dateString}:${summary.uniqueId}`
-      postCounter[key] = index + 1
-      postTimestampMap[summary.uniqueId] = summary.postTimestamp
-    })
-
-    lastCounterUpdate[dateString] = now
-  } catch (error) {
-    console.error('Error computing post numbers from summaries:', error)
-  }
-}
-
-/**
- * Get post number for a post based on summaries cache
- * Posts are numbered chronologically within each day (first non-dropped post after midnight = #1)
+ * The numbering logic has been moved to skylimitNumbering.ts which assigns
+ * invariant numbers when posts are curated.
  *
- * IMPORTANT: Counter is based on summaries cache, not displayed posts
- * Dropped posts (with curation_status ending in '_drop') are not counted and return 0
- * Posts from previous days show their counter number from that day
+ * Counter values:
+ * - postNumber: Sequential count in follow feed (resets daily, 1-indexed)
+ * - curationNumber: 0 for dropped, positive for shown, null if unassigned
+ */
+
+import { getPostSummary } from './skylimitCache'
+
+/**
+ * Get curation number for a post
+ * Returns the pre-computed curationNumber from the summary
  *
- * The postTimestamp is looked up from the summaries cache (not passed as parameter)
- * to ensure consistent date bucket lookups regardless of when the post is displayed.
+ * @param uniqueId - The unique ID of the post (from getPostUniqueId)
+ * @returns curationNumber (0 for dropped, positive for shown, null if unassigned)
+ */
+export async function getCurationNumber(uniqueId: string): Promise<number | null> {
+  const summary = await getPostSummary(uniqueId)
+  if (!summary) return null
+  return summary.curationNumber ?? null
+}
+
+/**
+ * Get post number for a post (the sequential feed position)
+ * Returns the pre-computed postNumber from the summary
+ *
+ * @param uniqueId - The unique ID of the post (from getPostUniqueId)
+ * @returns postNumber (positive integer, or null if unassigned)
+ */
+export async function getPostNumberFromSummary(uniqueId: string): Promise<number | null> {
+  const summary = await getPostSummary(uniqueId)
+  if (!summary) return null
+  return summary.postNumber ?? null
+}
+
+/**
+ * Legacy function for backward compatibility
+ * Now delegates to getCurationNumber
  *
  * @param postUri - The unique ID of the post (from getPostUniqueId)
  * @param isDropped - Whether this post was dropped by curation (if true, returns 0)
+ * @returns curationNumber or 0 if dropped/not found
+ * @deprecated Use getCurationNumber instead
  */
 export async function getPostNumber(
   postUri: string,
   isDropped = false
 ): Promise<number> {
-  resetIfNewDay()
-
-  // Dropped posts should not be counted - return 0
+  // Dropped posts should return 0
   if (isDropped) {
     return 0
   }
 
-  // First check if we have a cached timestamp for this post
-  let postTimestamp = postTimestampMap[postUri]
+  const curationNum = await getCurationNumber(postUri)
 
-  // If not found in cache, fetch from summary (handles posts not yet in counter cache)
-  if (!postTimestamp) {
-    const summary = await getPostSummary(postUri)
-    if (!summary) {
-      return 0
-    }
-    postTimestamp = summary.postTimestamp
-    // Cache it for future lookups
-    postTimestampMap[postUri] = postTimestamp
-  }
-
-  // Determine which date this post is from (local timezone)
-  const postDate = getDateString(new Date(postTimestamp))
-
-  // Check if we already have a number for this post
-  const key = `${postDate}:${postUri}`
-  if (postCounter[key]) {
-    return postCounter[key]
-  }
-
-  // Post not found in cache - force recomputation by clearing the update timestamp
-  // This handles the case where new posts were added after the last computation
-  delete lastCounterUpdate[postDate]
-
-  // Compute post numbers from summaries cache for this specific date
-  await computePostNumbersFromSummaries(new Date(postTimestamp))
-
-  // Return the number for this post from its date, or 0 if not found
-  return postCounter[key] || 0
+  // If curationNumber is null (unassigned), return 0 for backward compatibility
+  // The display logic in PostCard will handle null differently
+  return curationNum ?? 0
 }
 
 /**
  * Get post number without assigning (if post already counted)
+ * Now just returns the pre-computed number
  *
  * @param postUri - The unique ID of the post (from getPostUniqueId)
+ * @deprecated Use getCurationNumber instead
  */
 export async function getPostNumberIfExists(
   postUri: string
 ): Promise<number | null> {
-  resetIfNewDay()
+  return getCurationNumber(postUri)
+}
 
-  // First check if we have a cached timestamp for this post
-  let postTimestamp = postTimestampMap[postUri]
-
-  // If not found in cache, fetch from summary
-  if (!postTimestamp) {
-    const summary = await getPostSummary(postUri)
-    if (!summary) {
-      return null
-    }
-    postTimestamp = summary.postTimestamp
-    postTimestampMap[postUri] = postTimestamp
-  }
-
-  const postDate = getDateString(new Date(postTimestamp))
-  await computePostNumbersFromSummaries(new Date(postTimestamp))
-  const key = `${postDate}:${postUri}`
-  return postCounter[key] || null
+/**
+ * Clear in-memory caches
+ * Now a no-op since numbers are stored persistently in IndexedDB
+ * Kept for backward compatibility with existing callers
+ */
+export function clearCounters(): void {
+  // No-op - numbers are now stored persistently in summaries
+  console.log('[Counter] clearCounters called (no-op - numbers are persistent in summaries)')
 }
 
 /**
@@ -225,21 +99,11 @@ export function shouldShowCounter(): boolean {
 
 /**
  * Get all counters (for debugging)
- * Returns counters for today by default, or for a specific date if provided
+ * Now returns empty object - use getAllPostSummaries for debugging
+ *
+ * @deprecated Numbers are now in PostSummary, use getAllPostSummaries
  */
-export async function getAllCounters(targetDate?: Date): Promise<Record<string, number>> {
-  resetIfNewDay()
-  await computePostNumbersFromSummaries(targetDate)
-  return { ...postCounter }
+export async function getAllCounters(): Promise<Record<string, number>> {
+  console.log('[Counter] getAllCounters is deprecated - numbers are in PostSummary')
+  return {}
 }
-
-/**
- * Clear all counters (for testing)
- */
-export function clearCounters(): void {
-  postCounter = {}
-  postTimestampMap = {}
-  lastResetDate = ''
-  lastCounterUpdate = {}
-}
-

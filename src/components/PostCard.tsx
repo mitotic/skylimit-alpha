@@ -6,11 +6,14 @@ import Avatar from './Avatar'
 import PostActions from './PostActions'
 import PostMedia from './PostMedia'
 import RootPost from './RootPost'
-import { getPostNumber } from '../curation/skylimitCounter'
+import { getCurationNumber, getPostNumberFromSummary } from '../curation/skylimitCounter'
 import { getSettings } from '../curation/skylimitStore'
 import { getFeedViewPostTimestamp, isRepost, getBlueSkyPostUrl, getBlueSkyProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
-import { CurationFeedViewPost, isStatusDrop } from '../curation/types'
+import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo } from '../curation/types'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
+import { getFilter, getFollow } from '../curation/skylimitCache'
+import { countTotalPostsForUser } from '../curation/skylimitStats'
+import CurationPopup from './CurationPopup'
 
 interface PostCardProps {
   post: AppBskyFeedDefs.FeedViewPost | CurationFeedViewPost
@@ -49,14 +52,28 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [showCounterDisplay, setShowCounterDisplay] = useState(false)
   const [showPopup, setShowPopup] = useState(false)
   const [popupPosition, setPopupPosition] = useState<'above' | 'below'>('below')
+  const [popupAnchorRect, setPopupAnchorRect] = useState<DOMRect | null>(null)
   const [loading, setLoading] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [curationDisabled, setCurationDisabled] = useState(false)
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
+  // Popup data for curation info
+  const [rawPostNumber, setRawPostNumber] = useState<number | null>(null)
+  const [userEntry, setUserEntry] = useState<UserEntry | null>(null)
+  const [followInfo, setFollowInfo] = useState<FollowInfo | null>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
+
+  // Format the counter display based on postNumber value
+  // - null: show "#" only (pending, number not yet assigned)
+  // - 0: show "#0" (dropped post)
+  // - positive: show "#{number}" (shown post)
+  const formatCounterDisplay = (num: number | null): string => {
+    if (num === null) return '#'
+    return `#${num}`
+  }
 
   // Handle repost wrapper
   const repostedBy = post.reason?.$type === 'app.bsky.feed.defs#reasonRepost'
@@ -94,21 +111,24 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             // Posts without curation data (empty curation object) won't have counter numbers
             const hasCurationData = curation && Object.keys(curation).length > 0
 
-            // Check if post is dropped (only relevant if curation is enabled)
-            const isDropped = isStatusDrop(curation?.curation_status)
+            // Get curation number: prefer passed value from curation prop, fall back to IndexedDB lookup
+            // Returns: null (unassigned), 0 (dropped), or positive integer (shown)
+            let curationNum: number | null = null
+            if (curation?.curationNumber !== undefined) {
+              // Use value passed via curation prop (avoids IndexedDB lookup)
+              curationNum = curation.curationNumber
+            } else {
+              // Fall back to IndexedDB lookup for posts without passed numbers
+              const postUri = getPostUniqueId(post)
+              curationNum = await getCurationNumber(postUri)
+            }
 
-            // Get post number from summaries cache
-            // IMPORTANT: Pass isDropped so dropped posts return 0 (only if curation enabled)
-            // Use getPostUniqueId to ensure consistent ID generation with summaries cache
-            // The postTimestamp is looked up from summaries cache by getPostNumber
-            const postUri = getPostUniqueId(post)
-            const number = await getPostNumber(postUri, isDropped)
-            // Only show counter if we got a valid number or post has curation data
-            // Posts without curation data and number 0 should not show counter
-            if (number > 0 || hasCurationData) {
-              setPostNumber(number)
-              // Use showTime setting to control time (hh:mm) display, not debugMode
-              setDebugMode(settings.showTime || false)
+            // Show counter if we have curation data OR a valid curation number
+            // curationNum can be null (pending), 0 (dropped), or positive (shown)
+            if (hasCurationData || curationNum !== null) {
+              setPostNumber(curationNum)  // Can be null, 0, or positive
+              // Use debugMode setting for Debug Info section
+              setDebugMode(settings.debugMode || false)
               setShowCounterDisplay(true)
             } else {
               setShowCounterDisplay(false)
@@ -143,7 +163,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     }
   }, [showPopup])
 
-  const handleCounterClick = (e: React.MouseEvent) => {
+  const handleCounterClick = async (e: React.MouseEvent) => {
     e.stopPropagation()
     // Always allow clicking, but only show popup if curation exists
     if (curation) {
@@ -153,16 +173,45 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         const button = e.currentTarget as HTMLButtonElement
         if (button) {
           const buttonRect = button.getBoundingClientRect()
-          const popupHeight = 250 // Approximate popup height in pixels
+          const popupHeight = 300 // Approximate popup height in pixels (increased for new content)
           const spaceBelow = window.innerHeight - buttonRect.bottom
           const spaceAbove = buttonRect.top
-          
+
+          // Store the anchor rect for fixed positioning
+          setPopupAnchorRect(buttonRect)
+
           // Position above if not enough space below but enough space above
           if (spaceBelow < popupHeight && spaceAbove > spaceBelow) {
             setPopupPosition('above')
           } else {
             setPopupPosition('below')
           }
+        }
+
+        // Fetch popup data when opening
+        try {
+          // Get raw post number: prefer passed value from curation prop, fall back to IndexedDB lookup
+          if (curation?.postNumber !== undefined) {
+            setRawPostNumber(curation.postNumber)
+          } else {
+            const postUri = getPostUniqueId(post)
+            const rawNum = await getPostNumberFromSummary(postUri)
+            setRawPostNumber(rawNum)
+          }
+
+          // Get user filter data for probabilities
+          const filterResult = await getFilter()
+          if (filterResult) {
+            const [, userFilterData] = filterResult
+            const entry = userFilterData[ampUsername]
+            setUserEntry(entry || null)
+          }
+
+          // Get follow info for followed_at, topics, timezone
+          const follow = await getFollow(ampUsername)
+          setFollowInfo(follow)
+        } catch (error) {
+          console.error('Error fetching popup data:', error)
         }
       }
       setShowPopup(!wasOpen)
@@ -284,72 +333,37 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   title={curation ? 'Click for Skylimit curation options' : 'Post number'}
                   disabled={!curation}
                 >
-                  #{isStatusDrop(curation?.curation_status) ? 0 : (postNumber || 0)}
+                  {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                 </button>
               </span>
               {showPopup && curation && (
-                <div
+                <CurationPopup
                   ref={popupRef}
-                  className={`absolute right-0 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
-                    popupPosition === 'above' 
-                      ? 'bottom-full mb-1' 
-                      : 'top-full mt-1'
-                  }`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                    <div className="font-semibold text-sm">
-                      {popupAuthor.displayName || popupAuthor.handle}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      @{popupAuthor.handle}
-                    </div>
-                  </div>
-
-                  {/* Show statistics for all posts (dropped or not) */}
-                  {curation.curation_msg && (
-                    <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isStatusDrop(curation.curation_status) ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
-                      <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
-                        {curation.curation_msg}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="p-3">
-                    <div className="text-xs font-semibold mb-2">Amplification Factor</div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleAmpDown}
-                        disabled={loading}
-                        className="flex-1 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
-                      >
-                        Amp Down (÷2)
-                      </button>
-                      <button
-                        onClick={handleAmpUp}
-                        disabled={loading}
-                        className="flex-1 px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
-                      >
-                        Amp Up (×2)
-                      </button>
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      Adjust how many posts you see from this account
-                    </div>
-                  </div>
-
-                  <div className="p-3 border-t border-gray-200 dark:border-gray-700">
-                    <button
-                      onClick={() => {
-                        setShowPopup(false)
-                        navigate('/settings?tab=curation')
-                      }}
-                      className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      Curation Settings
-                    </button>
-                  </div>
-                </div>
+                  displayName={popupAuthor.displayName || ''}
+                  handle={popupAuthor.handle}
+                  popupPosition={popupPosition}
+                  anchorRect={popupAnchorRect || undefined}
+                  rawPostNumber={rawPostNumber}
+                  postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
+                  repostingPerDay={userEntry?.repost_daily}
+                  regularProb={userEntry?.regular_prob}
+                  priorityProb={userEntry?.priority_prob}
+                  curationMsg={curation.curation_msg}
+                  isDropped={isStatusDrop(curation.curation_status)}
+                  showAmpButtons={true}
+                  onAmpUp={handleAmpUp}
+                  onAmpDown={handleAmpDown}
+                  ampLoading={loading}
+                  debugMode={debugMode}
+                  curationStatus={curation.curation_status}
+                  followedAt={followInfo?.followed_at}
+                  topics={followInfo?.topics || userEntry?.topics}
+                  timezone={followInfo?.timezone}
+                  onNavigateToSettings={() => {
+                    setShowPopup(false)
+                    navigate('/settings?tab=curation')
+                  }}
+                />
               )}
             </>
           )}
@@ -387,73 +401,38 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 title={curation ? 'Click for Skylimit curation options' : 'Post number'}
                 disabled={!curation}
               >
-                #{isStatusDrop(curation?.curation_status) ? 0 : (postNumber || 0)}
+                {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
               </button>
             </div>
 
             {showPopup && curation && (
-              <div
+              <CurationPopup
                 ref={popupRef}
-                className={`absolute right-4 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
-                  popupPosition === 'above' 
-                    ? 'bottom-full mb-1' 
-                    : 'top-12'
-                }`}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                  <div className="font-semibold text-sm">
-                    {popupAuthor.displayName || popupAuthor.handle}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    @{popupAuthor.handle}
-                  </div>
-                </div>
-
-                {/* Show statistics for all posts (dropped or not) */}
-                {curation.curation_msg && (
-                  <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isStatusDrop(curation.curation_status) ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
-                    <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
-                      {curation.curation_msg}
-                    </div>
-                  </div>
-                )}
-
-                <div className="p-3">
-                  <div className="text-xs font-semibold mb-2">Amplification Factor</div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleAmpDown}
-                      disabled={loading}
-                      className="flex-1 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
-                    >
-                      Amp Down (÷2)
-                    </button>
-                    <button
-                      onClick={handleAmpUp}
-                      disabled={loading}
-                      className="flex-1 px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
-                    >
-                      Amp Up (×2)
-                    </button>
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                    Adjust how many posts you see from this account
-                  </div>
-                </div>
-
-                <div className="p-3 border-t border-gray-200 dark:border-gray-700">
-                  <button
-                    onClick={() => {
-                      setShowPopup(false)
-                      navigate('/settings?tab=curation')
-                    }}
-                    className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    Curation Settings
-                  </button>
-                </div>
-              </div>
+                displayName={popupAuthor.displayName || ''}
+                handle={popupAuthor.handle}
+                popupPosition={popupPosition}
+                anchorRect={popupAnchorRect || undefined}
+                rawPostNumber={rawPostNumber}
+                postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
+                repostingPerDay={userEntry?.repost_daily}
+                regularProb={userEntry?.regular_prob}
+                priorityProb={userEntry?.priority_prob}
+                curationMsg={curation.curation_msg}
+                isDropped={isStatusDrop(curation.curation_status)}
+                showAmpButtons={true}
+                onAmpUp={handleAmpUp}
+                onAmpDown={handleAmpDown}
+                ampLoading={loading}
+                debugMode={debugMode}
+                curationStatus={curation.curation_status}
+                followedAt={followInfo?.followed_at}
+                topics={followInfo?.topics || userEntry?.topics}
+                timezone={followInfo?.timezone}
+                onNavigateToSettings={() => {
+                  setShowPopup(false)
+                  navigate('/settings?tab=curation')
+                }}
+              />
             )}
           </>
         )}
@@ -501,72 +480,37 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     title={curation ? 'Click for Skylimit curation options' : 'Post number'}
                     disabled={!curation}
                   >
-                    #{isStatusDrop(curation?.curation_status) ? 0 : (postNumber || 0)}
+                    {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                   </button>
                 </span>
                 {showPopup && curation && (
-                  <div
+                  <CurationPopup
                     ref={popupRef}
-                    className={`absolute right-0 w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
-                      popupPosition === 'above' 
-                        ? 'bottom-full mb-1' 
-                        : 'top-full mt-1'
-                    }`}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-                      <div className="font-semibold text-sm">
-                        {popupAuthor.displayName || popupAuthor.handle}
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        @{popupAuthor.handle}
-                      </div>
-                    </div>
-
-                    {/* Show statistics for all posts (dropped or not) */}
-                    {curation.curation_msg && (
-                      <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isStatusDrop(curation.curation_status) ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
-                        <div className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-line">
-                          {curation.curation_msg}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="p-3">
-                      <div className="text-xs font-semibold mb-2">Amplification Factor</div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={handleAmpDown}
-                          disabled={loading}
-                          className="flex-1 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
-                        >
-                          Amp Down (÷2)
-                        </button>
-                        <button
-                          onClick={handleAmpUp}
-                          disabled={loading}
-                          className="flex-1 px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
-                        >
-                          Amp Up (×2)
-                        </button>
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                        Adjust how many posts you see from this account
-                      </div>
-                    </div>
-
-                    <div className="p-3 border-t border-gray-200 dark:border-gray-700">
-                      <button
-                        onClick={() => {
-                          setShowPopup(false)
-                          navigate('/settings?tab=curation')
-                        }}
-                        className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                      >
-                        Curation Settings
-                      </button>
-                    </div>
-                  </div>
+                    displayName={popupAuthor.displayName || ''}
+                    handle={popupAuthor.handle}
+                    popupPosition={popupPosition}
+                    anchorRect={popupAnchorRect || undefined}
+                    rawPostNumber={rawPostNumber}
+                    postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
+                    repostingPerDay={userEntry?.repost_daily}
+                    regularProb={userEntry?.regular_prob}
+                    priorityProb={userEntry?.priority_prob}
+                    curationMsg={curation.curation_msg}
+                    isDropped={isStatusDrop(curation.curation_status)}
+                    showAmpButtons={true}
+                    onAmpUp={handleAmpUp}
+                    onAmpDown={handleAmpDown}
+                    ampLoading={loading}
+                    debugMode={debugMode}
+                    curationStatus={curation.curation_status}
+                    followedAt={followInfo?.followed_at}
+                    topics={followInfo?.topics || userEntry?.topics}
+                    timezone={followInfo?.timezone}
+                    onNavigateToSettings={() => {
+                      setShowPopup(false)
+                      navigate('/settings?tab=curation')
+                    }}
+                  />
                 )}
               </>
             )}
