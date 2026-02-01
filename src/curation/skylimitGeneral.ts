@@ -146,6 +146,79 @@ export function getParentUri(post: AppBskyFeedDefs.PostView): string | undefined
 }
 
 /**
+ * Safely extract text from a post record.
+ * Handles the untyped record structure used in AT Protocol.
+ */
+export function extractPostText(record: unknown): string | undefined {
+  if (!record || typeof record !== 'object') {
+    return undefined
+  }
+
+  const rec = record as any
+
+  // Direct text property (most common case)
+  if (typeof rec.text === 'string' && rec.text.length > 0) {
+    return rec.text
+  }
+
+  // Nested under value (sometimes seen in embedded records)
+  if (rec.value && typeof rec.value.text === 'string' && rec.value.text.length > 0) {
+    return rec.value.text
+  }
+
+  return undefined
+}
+
+/**
+ * Extract text from a quoted/embedded post if present.
+ * Handles different embed types: record#view and recordWithMedia#view.
+ */
+export function extractQuotedText(embed: unknown): string | undefined {
+  if (!embed || typeof embed !== 'object') {
+    return undefined
+  }
+
+  const emb = embed as any
+  const embedType = emb.$type
+
+  // Handle app.bsky.embed.record#view (simple quote)
+  if (embedType === 'app.bsky.embed.record#view' || embedType === 'app.bsky.embed.record') {
+    const quotedRecord = emb.record
+
+    // Check if the quoted post is blocked or not found
+    if (!quotedRecord || quotedRecord.blocked || quotedRecord.notFound) {
+      return undefined
+    }
+
+    // The quoted post's record is in quotedRecord.value (for ViewRecord)
+    // or quotedRecord.record (for some structures)
+    const innerRecord = quotedRecord.value || quotedRecord.record || quotedRecord
+    return extractPostText(innerRecord)
+  }
+
+  // Handle app.bsky.embed.recordWithMedia#view (quote with media)
+  if (embedType === 'app.bsky.embed.recordWithMedia#view' || embedType === 'app.bsky.embed.recordWithMedia') {
+    // The record portion is at emb.record, which itself contains the embedded record
+    const recordEmbed = emb.record
+    if (!recordEmbed) {
+      return undefined
+    }
+
+    // Recursively extract from the record embed
+    // recordWithMedia.record has the same structure as embed.record
+    const quotedRecord = recordEmbed.record
+    if (!quotedRecord || quotedRecord.blocked || quotedRecord.notFound) {
+      return undefined
+    }
+
+    const innerRecord = quotedRecord.value || quotedRecord.record || quotedRecord
+    return extractPostText(innerRecord)
+  }
+
+  return undefined
+}
+
+/**
  * Create post summary from FeedViewPost
  */
 export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceivedTime?: Date): PostSummary {
@@ -165,6 +238,8 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   let repostCount: number
   let inReplyToUri: string | undefined
   let engaged: boolean
+  let postText: string | undefined
+  let quotedText: string | undefined
 
   if (isReposted) {
     // This is a repost
@@ -190,6 +265,9 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
     engaged = !!(post.post.viewer?.like || post.post.viewer?.repost)
+    // Extract text from the original post (the one being reposted)
+    postText = extractPostText(post.post.record)
+    quotedText = extractQuotedText(post.post.embed)
   } else {
     // This is an original post
     username = post.post.author.handle
@@ -201,8 +279,11 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
     engaged = !!(post.post.viewer?.like || post.post.viewer?.repost)
+    // Extract text from this post
+    postText = extractPostText(post.post.record)
+    quotedText = extractQuotedText(post.post.embed)
   }
-  
+
   // For reposts, use feedReceivedTime (when we received the feed = when reposted)
   // For original posts, use createdAt (when it was created)
   const timestamp = getFeedViewPostTimestamp(post, feedReceivedTime)
@@ -220,6 +301,8 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     timestamp,
     postTimestamp: timestamp.getTime(),
     engaged,
+    postText,
+    quotedText,
   }
 }
 

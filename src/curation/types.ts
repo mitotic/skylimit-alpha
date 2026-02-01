@@ -183,6 +183,9 @@ export interface PostSummary {
   // Invariant counter numbering (added for counter revamp)
   postNumber?: number | null    // Sequential count in follow feed (resets daily, 1-indexed). null if unassigned
   curationNumber?: number | null // Count among shown posts: 0 for dropped, positive for shown, null if unassigned
+  // Text fields for search capability
+  postText?: string             // Main post text content
+  quotedText?: string           // Text from quoted/embedded post (if any)
 }
 
 export interface FollowInfo {
