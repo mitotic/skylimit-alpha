@@ -20,7 +20,7 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { assignIncrementalNumbers, getMaxNumbersForDay } from '../curation/skylimitNumbering'
@@ -575,6 +575,7 @@ export default function HomePage() {
         // Cache is stale - clear feed cache and trigger initial load instead of prefetching
         console.log('[Prefetch] Cache is stale, clearing and reloading')
         await clearFeedCache()
+        await clearPrevPageCursor()
         // Don't continue prefetching - let loadFeed handle the fresh load
         setPreviousPageFeed([])
         return
@@ -586,7 +587,8 @@ export default function HomePage() {
 
       // Step 2: If cache doesn't have enough posts, fetch from server
       if (postsForNextPage.length < pageLength) {
-        console.log('[Prefetch] Cache exhausted or partial, fetching from server')
+        console.log('[Prefetch] Cache exhausted or partial, checking for cursor')
+
         // Get the oldest timestamp from current posts (if any) to continue from
         const oldestCurrentTimestamp = postsForNextPage.length > 0
           ? Math.min(...postsForNextPage.map(p => {
@@ -595,14 +597,40 @@ export default function HomePage() {
             }))
           : afterTimestamp
 
+        // Check for fresh Prev Page cursor first
+        const prevPageCursor = await getFreshPrevPageCursor()
+        const cursorStatus = await getPrevPageCursorStatus()
+
+        let cursorToUse: string | undefined
+
+        if (prevPageCursor) {
+          console.log(`[Prefetch] Using fresh Prev Page cursor (${cursorStatus.message})`)
+          cursorToUse = prevPageCursor.cursor
+        } else if (serverCursor) {
+          console.log(`[Prefetch] No fresh Prev Page cursor, using serverCursor`)
+          cursorToUse = serverCursor
+        } else {
+          console.log(`[Prefetch] ${cursorStatus.message} - must skip from newest`)
+        }
+
         const serverResult = await fetchPageFromTimestamp(
           oldestCurrentTimestamp,
           agent,
           session.handle,
           session.did,
           pageLength - postsForNextPage.length,
-          serverCursor
+          cursorToUse
         )
+
+        // Handle cursor failure
+        if (cursorToUse && serverResult.posts.length === 0 && !serverResult.hasMore) {
+          console.warn('[Prefetch] Cursor fetch failed - cursor may be invalid')
+          await clearPrevPageCursor()
+          addToast('Could not load older posts. Cursor expired.', 'error')
+          setPreviousPageFeed([])
+          return
+        }
+
         // Append server posts to existing posts
         postsForNextPage = [...postsForNextPage, ...serverResult.posts]
         serverResult.postTimestamps.forEach((value, key) => {
@@ -690,8 +718,9 @@ export default function HomePage() {
         const lastDate = getLocalDateString(filtered[filtered.length - 1])
         if (firstDate && lastDate && firstDate !== lastDate) {
           const originalCount = filtered.length
-          filtered = filtered.filter(p => getLocalDateString(p) === firstDate)
-          console.log(`[Prefetch] Midnight filter: kept ${filtered.length}/${originalCount} posts from ${firstDate}`)
+          // Keep OLDER day's posts (lastDate) since we're navigating backwards in time
+          filtered = filtered.filter(p => getLocalDateString(p) === lastDate)
+          console.log(`[Prefetch] Midnight filter: kept ${filtered.length}/${originalCount} posts from ${lastDate} (older day)`)
         }
       }
 
@@ -895,6 +924,7 @@ export default function HomePage() {
             console.log('[Lookback] Cache is stale/empty, clearing feed cache before lookback...')
             await clearFeedCache()
             await clearFeedMetadata()
+            await clearPrevPageCursor()
 
             setLookingBack(true)
             setLookbackProgress(0)
@@ -2054,30 +2084,43 @@ export default function HomePage() {
 
     // 1. INSTANT: Display previousPageFeed (from memory, no IndexedDB access)
     const feedReceivedTime = new Date()
-    const oldestInPrevious = getFeedViewPostTimestamp(
-      previousPageFeed[previousPageFeed.length - 1],
-      feedReceivedTime
-    ).getTime()
+
+    // Calculate deduplication BEFORE setFeed to determine correct next prefetch timestamp
+    const existingUris = new Set(feed.map(p => getPostUniqueId(p)))
+    const newPosts = previousPageFeed.filter(p => !existingUris.has(getPostUniqueId(p)))
+    console.log(`[Prev Page] Appending ${newPosts.length} pre-fetched posts`)
+
+    // Calculate timestamp for next prefetch based on what's actually new
+    let nextPrefetchTimestamp: number
+    if (newPosts.length > 0) {
+      // Use oldest of the newly appended posts
+      nextPrefetchTimestamp = getFeedViewPostTimestamp(
+        newPosts[newPosts.length - 1],
+        feedReceivedTime
+      ).getTime()
+    } else {
+      // No new posts - all were duplicates
+      // Use oldest from previousPageFeed to continue searching further back
+      nextPrefetchTimestamp = getFeedViewPostTimestamp(
+        previousPageFeed[previousPageFeed.length - 1],
+        feedReceivedTime
+      ).getTime()
+    }
 
     // Append pre-fetched posts to feed
-    setFeed(prevFeed => {
-      const existingUris = new Set(prevFeed.map(p => getPostUniqueId(p)))
-      const newPosts = previousPageFeed.filter(p => !existingUris.has(getPostUniqueId(p)))
-      console.log(`[Prev Page] Appending ${newPosts.length} pre-fetched posts`)
-      return [...prevFeed, ...newPosts]
-    })
+    setFeed(prevFeed => [...prevFeed, ...newPosts])
 
     // Update pagination boundary
-    setOldestDisplayedPostTimestamp(oldestInPrevious)
+    setOldestDisplayedPostTimestamp(nextPrefetchTimestamp)
 
     // 2. Clear previousPageFeed and show loading spinner
     setPreviousPageFeed([])
     setIsPrefetching(true)
 
     // 3. Pre-fetch next page (awaited so we can update UI after)
-    await prefetchNextPage(oldestInPrevious)
+    await prefetchNextPage(nextPrefetchTimestamp)
     setIsPrefetching(false)
-  }, [previousPageFeed, isPrefetching, lookingBack, prefetchNextPage])
+  }, [feed, previousPageFeed, isPrefetching, lookingBack, prefetchNextPage])
 
   // Set up IntersectionObserver for infinite scrolling
   useEffect(() => {
@@ -2300,6 +2343,7 @@ export default function HomePage() {
     }
     // Clear cache and reload feed
     await clearFeedCache()
+    await clearPrevPageCursor()
     sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
     loadFeed(undefined, false)
   }
@@ -2307,9 +2351,10 @@ export default function HomePage() {
   // Filter out immediate same-user replies
   const filteredFeed = useMemo(() => filterSameUserReplies(feed), [feed])
 
-  const handleAmpChange = () => {
+  const handleAmpChange = async () => {
     // Clear cache and reload feed when amp factor changes
-    clearFeedCache()
+    await clearFeedCache()
+    await clearPrevPageCursor()
     sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
     loadFeed(undefined, false)
   }

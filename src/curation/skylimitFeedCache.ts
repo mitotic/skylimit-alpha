@@ -148,11 +148,11 @@ export const FEED_CACHE_RETENTION_HOURS = 48
 export const FEED_CACHE_RETENTION_MS = FEED_CACHE_RETENTION_HOURS * 60 * 60 * 1000
 
 // Safety limits for fetch iterations and default page size
-const MAX_FETCH_ITERATIONS = 50
+const MAX_FETCH_ITERATIONS = 80
 const DEFAULT_PAGE_LENGTH = 25
 
 // Cursor staleness threshold - cursors older than this are discarded
-const CURSOR_STALENESS_MS = 15 * 60 * 1000  // 15 minutes
+const CURSOR_STALENESS_MS = 5 * 60 * 1000  // 5 minutes
 
 /**
  * Initialize feed cache store (called during DB initialization)
@@ -367,6 +367,10 @@ interface FeedCacheMetadata {
   secondaryCacheActive?: boolean       // true if secondary cache is being populated
   secondaryCacheNewestTimestamp?: number  // newest post in secondary cache
   secondaryCacheOldestTimestamp?: number  // oldest post in secondary cache
+  // Prev Page cursor tracking (for crossing midnight boundary)
+  prevPageCursor?: string              // Cursor for continuing Prev Page pagination
+  prevPageCursorReceivedAt?: number    // When the cursor was received
+  prevPageCursorOldestTimestamp?: number // Oldest post timestamp from batch
 }
 
 
@@ -1388,6 +1392,13 @@ export async function fetchPageFromTimestamp(
       }
 
       console.log(`[Server Fallback] Fetched ${curatedFeed.length} posts using cursor`)
+
+      // Save cursor for future Prev Page use
+      if (newCursor && curatedFeed.length > 0) {
+        const oldestTimestamp = Math.min(...Array.from(allPostTimestamps.values()))
+        await savePrevPageCursor(newCursor, oldestTimestamp)
+      }
+
       return {
         posts: curatedFeed,
         postTimestamps: allPostTimestamps,
@@ -1468,6 +1479,13 @@ export async function fetchPageFromTimestamp(
   }
 
   console.log(`[Server Fallback] Completed - returned ${allPosts.length} posts after skipping ${skippedCount}`)
+
+  // Save cursor for future Prev Page use (if we have posts and a cursor)
+  if (currentCursor && allPosts.length > 0) {
+    const oldestTimestamp = Math.min(...Array.from(allPostTimestamps.values()))
+    await savePrevPageCursor(currentCursor, oldestTimestamp)
+  }
+
   return {
     posts: allPosts,
     postTimestamps: allPostTimestamps,
@@ -1496,6 +1514,154 @@ export async function getLastFetchMetadata(): Promise<FeedCacheMetadata | null> 
   } catch (error) {
     console.warn('Failed to get last fetch metadata:', error)
     return null
+  }
+}
+
+/**
+ * Save Prev Page cursor metadata after successful server fetch
+ * Used to continue pagination across midnight boundary
+ */
+export async function savePrevPageCursor(
+  cursor: string,
+  oldestPostTimestamp: number
+): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_metadata'], 'readwrite')
+    const store = transaction.objectStore('feed_metadata')
+
+    const existingMetadata = await new Promise<FeedCacheMetadata | undefined>((resolve, reject) => {
+      const request = store.get('last_fetch')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    const updatedMetadata: FeedCacheMetadata = {
+      ...existingMetadata,
+      id: 'last_fetch',
+      lastFetchTime: existingMetadata?.lastFetchTime || Date.now(),
+      newestCachedPostTimestamp: existingMetadata?.newestCachedPostTimestamp || Date.now(),
+      oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || Date.now(),
+      prevPageCursor: cursor,
+      prevPageCursorReceivedAt: Date.now(),
+      prevPageCursorOldestTimestamp: oldestPostTimestamp
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const putRequest = store.put(updatedMetadata)
+      putRequest.onsuccess = () => resolve()
+      putRequest.onerror = () => reject(putRequest.error)
+    })
+
+    console.log(`[Prev Page Cursor] Saved cursor, oldest timestamp: ${new Date(oldestPostTimestamp).toLocaleTimeString()}`)
+  } catch (error) {
+    console.warn('Failed to save Prev Page cursor:', error)
+  }
+}
+
+/**
+ * Get fresh Prev Page cursor if available and not stale (< 5 min)
+ * Returns null if cursor is stale or doesn't exist
+ */
+export async function getFreshPrevPageCursor(): Promise<{
+  cursor: string;
+  oldestPostTimestamp: number;
+} | null> {
+  try {
+    const metadata = await getLastFetchMetadata()
+    if (!metadata?.prevPageCursor || !metadata.prevPageCursorReceivedAt) {
+      return null
+    }
+
+    const cursorAge = Date.now() - metadata.prevPageCursorReceivedAt
+    if (cursorAge >= CURSOR_STALENESS_MS) {
+      return null
+    }
+
+    return {
+      cursor: metadata.prevPageCursor,
+      oldestPostTimestamp: metadata.prevPageCursorOldestTimestamp || Date.now()
+    }
+  } catch (error) {
+    console.warn('Failed to get fresh Prev Page cursor:', error)
+    return null
+  }
+}
+
+/**
+ * Clear Prev Page cursor (called when starting fresh pagination)
+ */
+export async function clearPrevPageCursor(): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_metadata'], 'readwrite')
+    const store = transaction.objectStore('feed_metadata')
+
+    const existingMetadata = await new Promise<FeedCacheMetadata | undefined>((resolve, reject) => {
+      const request = store.get('last_fetch')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    if (existingMetadata) {
+      const updatedMetadata: FeedCacheMetadata = {
+        ...existingMetadata,
+        prevPageCursor: undefined,
+        prevPageCursorReceivedAt: undefined,
+        prevPageCursorOldestTimestamp: undefined
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const putRequest = store.put(updatedMetadata)
+        putRequest.onsuccess = () => resolve()
+        putRequest.onerror = () => reject(putRequest.error)
+      })
+
+      console.log('[Prev Page Cursor] Cleared')
+    }
+  } catch (error) {
+    console.warn('Failed to clear Prev Page cursor:', error)
+  }
+}
+
+/**
+ * Get diagnostic info about Prev Page cursor status
+ */
+export async function getPrevPageCursorStatus(): Promise<{
+  available: boolean;
+  message: string;
+  ageSeconds?: number;
+}> {
+  try {
+    const metadata = await getLastFetchMetadata()
+    if (!metadata?.prevPageCursor || !metadata.prevPageCursorReceivedAt) {
+      return {
+        available: false,
+        message: 'No Prev Page cursor available'
+      }
+    }
+
+    const cursorAge = Date.now() - metadata.prevPageCursorReceivedAt
+    const ageSeconds = Math.round(cursorAge / 1000)
+
+    if (cursorAge >= CURSOR_STALENESS_MS) {
+      return {
+        available: false,
+        message: `Cursor expired (${Math.round(ageSeconds / 60)} min old)`,
+        ageSeconds
+      }
+    }
+
+    return {
+      available: true,
+      message: `Cursor fresh (${ageSeconds}s old)`,
+      ageSeconds
+    }
+  } catch (error) {
+    return {
+      available: false,
+      message: 'Error checking cursor status'
+    }
   }
 }
 
