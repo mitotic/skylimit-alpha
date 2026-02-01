@@ -6,7 +6,8 @@ import { BskyAgent, AppBskyGraphGetFollows } from '@atproto/api'
 import { FollowInfo } from './types'
 import { getAllFollows, saveFollow } from './skylimitCache'
 import { extractTopicsFromProfile, extractTimezone } from './skylimitGeneral'
-import { getProfile } from '../api/profile'
+import { getProfiles } from '../api/profile'
+import { AppBskyActorDefs } from '@atproto/api'
 import { MOTD_TAG, MOTW_TAG, MOTM_TAG } from './types'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 
@@ -97,56 +98,66 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
       existingMap.set(f.username, f)
     }
     
-    // Count how many profiles need fetching
-    let profilesToFetch = 0
+    // Collect DIDs that need profile fetches
+    // Only fetch if this is a NEW follow or displayName is missing
+    const didsNeedingProfiles: string[] = []
     for (const follow of follows) {
       const existing = existingMap.get(follow.handle)
-      const topics = existing?.topics || ''
-      const timezone = existing?.timezone || 'UTC'
-      const displayName = existing?.displayName || ''
-      if (!existing || !topics || timezone === 'UTC' || !displayName) {
-        profilesToFetch++
+      if (!existing || !existing.displayName) {
+        didsNeedingProfiles.push(follow.did)
       }
     }
 
-    if (profilesToFetch > 0) {
-      console.log(`[Follows] Starting profile fetches: ${profilesToFetch} of ${follows.length} followees need profile data`)
+    // Fetch profiles in batches of 25 (API limit)
+    const BATCH_SIZE = 25
+    const profileMap = new Map<string, AppBskyActorDefs.ProfileViewDetailed>()
+
+    if (didsNeedingProfiles.length > 0) {
+      const numBatches = Math.ceil(didsNeedingProfiles.length / BATCH_SIZE)
+      console.log(`[Follows] Fetching ${didsNeedingProfiles.length} profiles in ${numBatches} batches of ${BATCH_SIZE}`)
+
+      for (let i = 0; i < didsNeedingProfiles.length; i += BATCH_SIZE) {
+        const batch = didsNeedingProfiles.slice(i, i + BATCH_SIZE)
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1
+
+        try {
+          const response = await getProfiles(agent, batch)
+          for (const profile of response.profiles) {
+            profileMap.set(profile.did, profile)
+          }
+          console.log(`[Follows] Batch ${batchNum}/${numBatches}: fetched ${response.profiles.length} profiles`)
+        } catch (err) {
+          console.warn(`[Follows] Batch ${batchNum}/${numBatches} failed:`, err)
+        }
+
+        // Small delay between batches to avoid rate limits
+        if (i + BATCH_SIZE < didsNeedingProfiles.length) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+        }
+      }
+
+      console.log(`[Follows] Completed batch fetching: ${profileMap.size} profiles retrieved`)
     }
 
-    // Update or create follow entries
-    let profilesFetched = 0
+    // Update or create follow entries using the fetched profiles
     for (const follow of follows) {
       const username = follow.handle
       const existing = existingMap.get(username)
+      const profile = profileMap.get(follow.did)
 
-      // Only fetch profile if:
-      // 1. This is a new follow (no existing entry)
-      // 2. Topics, timezone, or displayName are missing
+      // Extract data from profile if we fetched one
       let topics = existing?.topics || ''
       let timezone = existing?.timezone || 'UTC'
       let displayName = existing?.displayName || ''
 
-      if (!existing || !topics || timezone === 'UTC' || !displayName) {
-        try {
-          const profile = await getProfile(agent, follow.did)
-          profilesFetched++
-          if (profile) {
-            const extractedTopics = extractTopicsFromProfile(profile).join(' ')
-            const extractedTimezone = extractTimezone(profile)
-            if (extractedTopics) topics = extractedTopics
-            if (extractedTimezone !== 'UTC') timezone = extractedTimezone
-            // Extract displayName from profile
-            if (profile.displayName) displayName = profile.displayName
-          }
-        } catch (err) {
-          console.warn('Failed to get profile for', username, err)
-          // Use defaults if profile fetch fails
-          if (!topics) topics = ''
-          if (timezone === 'UTC') timezone = 'UTC'
-          if (!displayName) displayName = ''
-        }
+      if (profile) {
+        const extractedTopics = extractTopicsFromProfile(profile).join(' ')
+        const extractedTimezone = extractTimezone(profile)
+        if (extractedTopics) topics = extractedTopics
+        if (extractedTimezone !== 'UTC') timezone = extractedTimezone
+        if (profile.displayName) displayName = profile.displayName
       }
-      
+
       const followInfo: FollowInfo = {
         accountDid: follow.did,
         username,
@@ -154,10 +165,10 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
         amp_factor: existing?.amp_factor || 1.0,
         topics,
         timezone,
-        displayName: displayName || undefined, // Only set if not empty
+        displayName: displayName || undefined,
       }
-      
-      // Preserve periodic post tracking and displayName if not updated
+
+      // Preserve periodic post tracking
       if (existing) {
         const motd = existing[MOTD_TAG as keyof FollowInfo]
         const motw = existing[MOTW_TAG as keyof FollowInfo]
@@ -170,13 +181,9 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
           followInfo.displayName = existing.displayName
         }
       }
-      
+
       await saveFollow(followInfo)
       existingMap.delete(username)
-    }
-
-    if (profilesToFetch > 0) {
-      console.log(`[Follows] Completed profile fetches: ${profilesFetched} profiles fetched`)
     }
 
     // Save refresh time

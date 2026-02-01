@@ -122,7 +122,8 @@ export default function NotificationsPage() {
             const thread = await getPostThread(agent, uri, 1)
             if (thread.thread) {
               threadCache.set(uri, thread.thread)
-              if (thread.thread.post) {
+              // Type guard: only ThreadViewPost has a 'post' property
+              if (AppBskyFeedDefs.isThreadViewPost(thread.thread) && thread.thread.post) {
                 postCache.set(uri, thread.thread.post as AppBskyFeedDefs.PostView)
               }
             }

@@ -374,9 +374,9 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost }:
           <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
             <QuotedPost
               record={{
-                $type: 'app.bsky.embed.record',
+                $type: 'app.bsky.embed.record#view',
                 record: quotePost as any,
-              }}
+              } as any}
             />
           </div>
         )}

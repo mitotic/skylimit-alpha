@@ -11,7 +11,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "@atproto/api": "^0.13.0",
+    "@atproto/api": "^0.18.20",
     "date-fns": "^2.30.0",
     "hls.js": "^1.6.15",
     "react": "^18.2.0",

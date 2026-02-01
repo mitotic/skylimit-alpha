@@ -107,8 +107,8 @@ export async function updateSeenNotifications(
 ): Promise<void> {
   return retryWithBackoff(
     async () => {
-      // Ensure seenAt is a string in ISO format
-      const seenAtString = seenAt || new Date().toISOString()
+      // Ensure seenAt is a string in ISO format - cast to the expected template literal type
+      const seenAtString = (seenAt || new Date().toISOString()) as `${string}-${string}-${string}T${string}:${string}:${string}Z`
       await agent.updateSeenNotifications(seenAtString)
     },
     3,

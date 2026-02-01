@@ -32,7 +32,9 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   // Parse the record safely - do this before any early returns
   const recordAny = record.record && typeof record.record === 'object' ? record.record as any : null
   const isValidPost = recordAny && !recordAny.blocked && !recordAny.notFound && recordAny.author && recordAny.uri
-  const post = isValidPost && (AppBskyFeedDefs.isPostView(recordAny) || (recordAny.author && recordAny.uri && typeof recordAny === 'object'))
+  // Check if it looks like a valid post view (has author and uri properties)
+  const looksLikePostView = recordAny && recordAny.author && recordAny.uri && typeof recordAny === 'object'
+  const post = isValidPost && (AppBskyFeedDefs.isPostView(recordAny) || looksLikePostView)
     ? recordAny as AppBskyFeedDefs.PostView
     : null
 
