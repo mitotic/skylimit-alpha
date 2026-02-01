@@ -684,21 +684,6 @@ export default function SettingsPage() {
                   </p>
 
                   <div className="mb-4">
-                    <label className="flex items-center space-x-3">
-                      <input
-                        type="checkbox"
-                        checked={settings.pagedUpdatesEnabled ?? true}
-                        onChange={(e) => updateSetting('pagedUpdatesEnabled', e.target.checked)}
-                        className="w-5 h-5"
-                      />
-                      <span>Enable Paged Fresh Updates</span>
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-8">
-                      When enabled, new posts are fetched fresh on demand. Shows "Next Page" button instead of immediate "New Posts" notification.
-                    </p>
-                  </div>
-
-                  <div className="mb-4">
                     <label className="block text-sm font-medium mb-2">
                       Variability Factor
                     </label>

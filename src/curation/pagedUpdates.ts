@@ -12,14 +12,13 @@ import { getSettings } from './skylimitStore'
 import { getCachedPostUniqueIds, getLocalMidnight } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
-import { FollowInfo, CurationFeedViewPost, isStatusShow } from './types'
+import { FollowInfo, isStatusShow } from './types'
 
 // Maximum PageRaw to prevent excessive API calls
 const MAX_PAGE_RAW = 100
 
 // Default settings
 export const PAGED_UPDATES_DEFAULTS = {
-  enabled: true,
   varFactor: 1.5,
   fullPageWaitMinutes: 10,  // Time to wait for full page before showing partial page button
 }
@@ -227,7 +226,6 @@ export async function probeForNewPosts(
  * Get paged updates settings with defaults
  */
 export async function getPagedUpdatesSettings(): Promise<{
-  enabled: boolean
   varFactor: number
   fullPageWaitMinutes: number
   pageSize: number
@@ -235,102 +233,10 @@ export async function getPagedUpdatesSettings(): Promise<{
   const settings = await getSettings()
 
   return {
-    enabled: settings?.pagedUpdatesEnabled ?? PAGED_UPDATES_DEFAULTS.enabled,
     varFactor: settings?.pagedUpdatesVarFactor ?? PAGED_UPDATES_DEFAULTS.varFactor,
     fullPageWaitMinutes: settings?.pagedUpdatesFullPageWaitMinutes ?? PAGED_UPDATES_DEFAULTS.fullPageWaitMinutes,
     pageSize: settings?.feedPageLength ?? 25,
   }
 }
 
-/**
- * Sort posts by timestamp (oldest first) for processing in chronological order.
- * Uses repost time for reposts, not original post time.
- *
- * @param posts - Array of posts to sort
- * @returns Sorted array (oldest first)
- */
-export function sortPostsByTimestampOldestFirst(
-  posts: AppBskyFeedDefs.FeedViewPost[]
-): AppBskyFeedDefs.FeedViewPost[] {
-  return [...posts].sort((a, b) => {
-    const timeA = getFeedViewPostTimestamp(a).getTime()
-    const timeB = getFeedViewPostTimestamp(b).getTime()
-    return timeA - timeB // Ascending order (oldest first)
-  })
-}
 
-/**
- * Process posts for Next Page display.
- *
- * This is called when the user clicks "Next Page". It:
- * 1. Sorts posts by timestamp (oldest first)
- * 2. Processes posts one at a time starting from first post newer than displayed
- * 3. Curates and caches each post
- * 4. Stops when PageSize displayed posts are reached
- * 5. Returns the posts to display (discards the rest)
- *
- * @param posts - Posts fetched from server (unsorted)
- * @param myUsername - Current user's username
- * @param myDid - Current user's DID
- * @param newestDisplayedTimestamp - Timestamp of newest displayed post
- * @param pageSize - Maximum number of displayed posts to return
- * @param curateAndCacheFn - Function to curate and cache a single post
- * @returns Object with posts to display and new newest timestamp
- */
-export async function processPostsForNextPage(
-  posts: AppBskyFeedDefs.FeedViewPost[],
-  newestDisplayedTimestamp: number,
-  pageSize: number,
-  curateAndCacheFn: (post: AppBskyFeedDefs.FeedViewPost) => Promise<{
-    curatedPost: CurationFeedViewPost
-    isDisplayed: boolean
-  }>
-): Promise<{
-  postsToDisplay: CurationFeedViewPost[]
-  allCuratedPosts: CurationFeedViewPost[]
-  newestCuratedTimestamp: number
-}> {
-  // Sort posts oldest first
-  const sortedPosts = sortPostsByTimestampOldestFirst(posts)
-
-  const postsToDisplay: CurationFeedViewPost[] = []
-  const allCuratedPosts: CurationFeedViewPost[] = []
-  let newestCuratedTimestamp = newestDisplayedTimestamp
-  let displayedCount = 0
-
-  for (const post of sortedPosts) {
-    const postTimestamp = getFeedViewPostTimestamp(post).getTime()
-
-    // Skip posts not newer than currently displayed
-    if (postTimestamp <= newestDisplayedTimestamp) {
-      continue
-    }
-
-    // Stop if we've reached PageSize displayed posts
-    if (displayedCount >= pageSize) {
-      break
-    }
-
-    // Curate and cache the post
-    const { curatedPost, isDisplayed } = await curateAndCacheFn(post)
-
-    allCuratedPosts.push(curatedPost)
-
-    // Track newest curated timestamp
-    if (postTimestamp > newestCuratedTimestamp) {
-      newestCuratedTimestamp = postTimestamp
-    }
-
-    // Add to display if not dropped
-    if (isDisplayed) {
-      postsToDisplay.push(curatedPost)
-      displayedCount++
-    }
-  }
-
-  return {
-    postsToDisplay,
-    allCuratedPosts,
-    newestCuratedTimestamp,
-  }
-}

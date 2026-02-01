@@ -258,7 +258,6 @@ export interface SkylimitSettings {
   feedPageLength?: number // number of posts per page, default 25, range 10-100
   infiniteScrollingOption?: boolean // enable infinite scrolling, default false
   // Paged fresh updates settings
-  pagedUpdatesEnabled?: boolean // enable paged fresh updates, default true (enabled by default)
   pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 1.5
   pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 30
   // Lookback caching settings

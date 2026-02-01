@@ -15,16 +15,14 @@ import { insertEditionPosts } from '../curation/skylimitTimeline'
 import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, getPostSummariesInRange } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
-import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings, PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
+import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, saveFeedCache, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
-import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
-import { clearCounters } from '../curation/skylimitCounter'
 import { assignIncrementalNumbers, getMaxNumbersForDay } from '../curation/skylimitNumbering'
 
 // Tab type for home page
@@ -176,7 +174,6 @@ export default function HomePage() {
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [infiniteScrollingEnabled, setInfiniteScrollingEnabled] = useState(false)
   // Paged fresh updates state
-  const [pagedUpdatesEnabled, setPagedUpdatesEnabled] = useState(true) // enabled by default
   const [nextPageReady, setNextPageReady] = useState(false) // true when full page of posts available
   const [partialPageCount, setPartialPageCount] = useState(0) // count when showing partial page (for "All new posts" button)
   // Multi-page tracking state (kept for logging purposes)
@@ -293,21 +290,6 @@ export default function HomePage() {
   }, [dbInitialized])
 
   // Load paged updates settings
-  useEffect(() => {
-    const loadPagedUpdatesSetting = async () => {
-      try {
-        const pagedSettings = await getPagedUpdatesSettings()
-        setPagedUpdatesEnabled(pagedSettings.enabled)
-      } catch (error) {
-        console.warn('Failed to load paged updates setting:', error)
-        setPagedUpdatesEnabled(PAGED_UPDATES_DEFAULTS.enabled)
-      }
-    }
-
-    if (dbInitialized) {
-      loadPagedUpdatesSetting()
-    }
-  }, [dbInitialized])
 
   // Initialize IndexedDB and schedule stats computation
   // Note: Reset flag (?reset=1) is handled in main.tsx BEFORE React mounts
@@ -795,194 +777,6 @@ export default function HomePage() {
               await prefetchNextPage(oldestDisplayedTimestamp)
             }, 100)
 
-            // Background fetch to update cache - only when Paged Updates is disabled
-            // When Paged Updates is enabled, the probing mechanism handles new post detection
-            // and assigns proper numbers to posts
-            if (!pagedUpdatesEnabled) {
-              setTimeout(async () => {
-              try {
-                // Get page length from settings for background fetch
-                const bgSettings = await getSettings()
-                const bgPageLength = bgSettings.feedPageLength || 25
-
-                console.log('[New Posts] Starting background fetch...')
-                const { feed: newFeed, cursor: newCursor } = await getHomeFeed(agent, { 
-                  limit: bgPageLength,
-                  onRateLimit: (info) => {
-                    // Silently handle rate limit in background
-                    console.warn('Rate limit in background fetch:', info)
-                  }
-                })
-                
-                console.log(`[New Posts] Background fetch got ${newFeed.length} posts`)
-                
-                const myUsername = session.handle
-                const myDid = session.did
-
-                // New flow: Create entries → Save → Curate
-                // For background fetch (like initial fetch), use current time as initialLastPostTime
-                const initialLastPostTime = new Date()
-                const bgIntervalHours = getIntervalHoursSync(bgSettings)
-                const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime, bgIntervalHours)
-
-                // Save to feed cache and curate (ensures both happen together for cache integrity)
-                const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
-
-                // Insert edition posts if needed
-                await insertEditionPosts(curatedFeed)
-                console.log(`[New Posts] Saved ${entries.length} posts to cache`)
-                
-                // Step 4: Now that posts are curated and cached, check for new posts
-                // Always check the cache for posts newer than what's currently displayed
-                // This ensures we detect new posts even if the background fetch got the same posts
-                const currentNewest = newestDisplayedPostTimestamp || 0
-                
-                if (currentNewest > 0 && !isInitialLoad) {
-                  console.log(`[New Posts] Checking cache for posts newer than ${new Date(currentNewest).toISOString()}`)
-                  
-                  // Get posts and filter by curation status to get accurate count
-                  const newPosts = await getCachedFeedAfterPosts(currentNewest, 100)
-                  
-                  if (newPosts.length > 0) {
-                    // Filter by curation status to get accurate count of displayable posts
-                    const feedReceivedTime = new Date()
-                    const filteredPosts = await lookupCurationAndFilter(newPosts, feedReceivedTime)
-                    const count = filteredPosts.length
-                    
-                    console.log(`[New Posts] Background fetch found ${newPosts.length} posts in cache, ${count} after filtering (newer than displayed)`)
-                    
-                    if (count > 0) {
-                      // New posts are available - always show the button (user clicks to update feed)
-                      console.log('[New Posts] Showing New Posts button with count')
-                      setNewPostsCount(count)
-                      setShowNewPostsButton(true)
-                      // Don't update newestDisplayedPostTimestamp here - it should only be updated when posts are displayed
-                      // The displayed timestamp remains unchanged until user clicks "New Posts" button
-                    } else {
-                      // All posts were filtered out - don't show button
-                      setNewPostsCount(0)
-                      setShowNewPostsButton(false)
-                    }
-                  } else {
-                    // No new posts found - don't update displayed timestamp
-                    // It should remain as is until new posts are actually displayed
-                    setNewPostsCount(0)
-                    setShowNewPostsButton(false)
-                  }
-                }
-                
-                setCursor(newCursor)  // Update cursor from background fetch
-                // Update hasMorePosts based on oldestDisplayedPostTimestamp (component-level pagination)
-                // If oldestDisplayedPostTimestamp is set, there may be more posts available
-                // Also check if there's a cursor, which indicates more posts from server
-                // Use state variable here since this is async and state should be updated by now
-                // Only update if we have a cursor OR if oldestDisplayedPostTimestamp is set
-                // This ensures we don't accidentally clear hasMorePosts if it was already set correctly
-                // Read current state to avoid stale closures
-                setHasMorePosts(prevHasMore => {
-                  const currentOldest = oldestDisplayedPostTimestamp
-                  const shouldHaveMore = currentOldest !== null || newCursor !== undefined
-                  // Only update if we should have more posts, preserve existing value if we shouldn't
-                  // This prevents the background fetch from clearing hasMorePosts incorrectly
-                  return shouldHaveMore ? true : prevHasMore
-                })
-                console.log(`[Background Fetch] Updated hasMorePosts (oldestDisplayedPostTimestamp: ${oldestDisplayedPostTimestamp !== null}, newCursor: ${newCursor !== undefined})`)
-
-                // Start background lookback if cache was not fresh
-                if (!cacheIsFresh) {
-                  console.log('[Lookback] Cache is stale, clearing feed cache before lookback...')
-                  await clearFeedCache()
-                  await clearFeedMetadata()
-
-                  setLookingBack(true)
-                  setLookbackProgress(0)
-
-                  const lookbackBoundary = getLookbackBoundary(lookbackDays)
-
-                  // Perform lookback fetch in background
-                  performLookbackFetch(
-                    agent,
-                    myUsername,
-                    myDid,
-                    lookbackBoundary,
-                    bgPageLength,
-                    (progress) => {
-                      setLookbackProgress(progress)
-                    }
-                  ).then(async (completed) => {
-                    console.log(`[Lookback] Background lookback ${completed ? 'completed' : 'interrupted'}`)
-                    setLookingBack(false)
-                    setLookbackProgress(100)
-
-                    // If this was initial curation, compute stats and show modal
-                    if (isInitialCurationRef.current && completed) {
-                      try {
-                        console.log('[Curation Init] Computing filter statistics...')
-                        // Compute stats/filter first (this populates the filter cache)
-                        await computeStatsInBackground(agent, myUsername, myDid, true)
-
-                        // Recompute curation status for all cached posts (updates summaries with drop decisions)
-                        console.log('[Curation Init] Updating curation decisions for cached posts...')
-                        await recomputeCurationDecisions(agent, myUsername, myDid)
-
-                        console.log('[Curation Init] Getting curation statistics...')
-                        const curationStats = await getCurationInitStats()
-
-                        // Get followee count from filter (now populated)
-                        const filterResult = await getFilter()
-                        const followeeCount = filterResult
-                          ? Object.keys(filterResult[1]).filter(k => !k.startsWith('#')).length
-                          : 0
-
-                        // Calculate days analyzed and posts per day
-                        let daysAnalyzed = 0
-                        let postsPerDay = 0
-                        if (curationStats.oldestTimestamp && curationStats.newestTimestamp) {
-                          const timeRangeMs = curationStats.newestTimestamp - curationStats.oldestTimestamp
-                          daysAnalyzed = Math.max(1, Math.round(timeRangeMs / (24 * 60 * 60 * 1000)))
-                          postsPerDay = Math.round(curationStats.totalCount / daysAnalyzed)
-                        }
-
-                        setCurationInitStats({
-                          totalPosts: curationStats.totalCount,
-                          droppedCount: curationStats.droppedCount,
-                          followeeCount,
-                          oldestTimestamp: curationStats.oldestTimestamp,
-                          newestTimestamp: curationStats.newestTimestamp,
-                          daysAnalyzed,
-                          postsPerDay,
-                        })
-
-                        // Clear counter cache and sessionStorage to force fresh load from feed cache
-                        // This ensures the feed is re-numbered with all lookback posts
-                        clearCounters()
-                        sessionStorage.removeItem(getFeedStateKey('curated'))
-
-                        // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
-                        console.log('[Curation Init] Reloading feed with curation data...')
-                        await redisplayFeed()
-
-                        // Show modal
-                        setShowCurationInitModal(true)
-                        isInitialCurationRef.current = false
-                        console.log('[Curation Init] Modal displayed')
-                      } catch (err) {
-                        console.error('[Curation Init] Failed to compute stats:', err)
-                        isInitialCurationRef.current = false
-                      }
-                    }
-                  }).catch((err) => {
-                    console.error('[Lookback] Background lookback failed:', err)
-                    setLookingBack(false)
-                    setLookbackProgress(null)
-                  })
-                }
-              } catch (err) {
-                // Silently fail background fetch
-                console.warn('Background feed update failed:', err)
-              }
-            }, 0)
-            }
             return
           }
         }
@@ -1160,9 +954,8 @@ export default function HomePage() {
                     postsPerDay,
                   })
 
-                  // Clear counter cache and sessionStorage to force fresh load from feed cache
+                  // Clear sessionStorage to force fresh load from feed cache
                   // This ensures the feed is re-numbered with all lookback posts
-                  clearCounters()
                   sessionStorage.removeItem(getFeedStateKey('curated'))
 
                   // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
@@ -1219,7 +1012,7 @@ export default function HomePage() {
       setIsLoading(false)
       setIsLoadingMore(false)
     }
-  }, [agent, session, dbInitialized, setRateLimitStatus, pagedUpdatesEnabled])
+  }, [agent, session, dbInitialized, setRateLimitStatus])
 
   const redisplayFeed = useCallback(async () => {
     if (!agent || !session || !dbInitialized) return
@@ -1432,11 +1225,7 @@ export default function HomePage() {
       })
       console.log('[Debug] Cleared feed_metadata')
 
-      // 3. Clear in-memory counter cache
-      clearCounters()
-      console.log('[Debug] Cleared counter cache')
-
-      // 4. Reset React state
+      // 3. Reset React state
       setFeed([])
       setCursor(undefined)
       setServerCursor(undefined)
@@ -1759,35 +1548,7 @@ export default function HomePage() {
       const currentTimestamp = newestDisplayedPostTimestamp
       if (!currentTimestamp) return
 
-      // Standard mode: check cache for new posts
-      if (!pagedUpdatesEnabled) {
-        // Get posts from cache and filter by curation status to get accurate count
-        const newPosts = await getCachedFeedAfterPosts(currentTimestamp, 100)
-
-        if (newPosts.length === 0) {
-          setNewPostsCount(0)
-          setShowNewPostsButton(false)
-          return
-        }
-
-        // Filter by curation status to get accurate count of displayable posts
-        const feedReceivedTime = new Date()
-        const filteredPosts = await lookupCurationAndFilter(newPosts, feedReceivedTime)
-
-        const count = filteredPosts.length
-        console.log(`[New Posts] Checked for posts newer than ${new Date(currentTimestamp).toISOString()}, found ${newPosts.length} in cache, ${count} after filtering`)
-
-        if (count > 0 && !isInitialLoad) {
-          setNewPostsCount(count)
-          setShowNewPostsButton(true)
-        } else {
-          setNewPostsCount(0)
-          setShowNewPostsButton(false)
-        }
-        return
-      }
-
-      // Paged updates mode: probe server without caching
+      // Paged updates: probe server without caching
       if (!agent || !session) return
 
       try {
@@ -1878,13 +1639,13 @@ export default function HomePage() {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, pagedUpdatesEnabled, agent, session])
+  }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, agent, session])
 
   // Idle timer for partial page display
   // When fullPageWaitMinutes has elapsed since newestDisplayedPostTimestamp and there are partial posts,
   // trigger the "All n new posts" button for partial page display
   useEffect(() => {
-    if (!pagedUpdatesEnabled || !newestDisplayedPostTimestamp || isInitialLoad) {
+    if (!newestDisplayedPostTimestamp || isInitialLoad) {
       setIdleTimerTriggered(false)
       return
     }
@@ -1912,183 +1673,7 @@ export default function HomePage() {
     const interval = setInterval(checkIdleTime, 30000)
 
     return () => clearInterval(interval)
-  }, [newestDisplayedPostTimestamp, pagedUpdatesEnabled, isInitialLoad, partialPageCount])
-
-  // Periodically fetch new posts from Bluesky server to update cache
-  // This ensures the cache stays fresh and the periodic cache check can detect new posts
-  useEffect(() => {
-    if (!agent || !session || !dbInitialized || !newestDisplayedPostTimestamp || isInitialLoad) {
-      return
-    }
-
-    let isPageVisible = true
-    let fetchInterval: NodeJS.Timeout | null = null
-
-    // Check page visibility to pause fetching when tab is in background
-    const handleVisibilityChange = () => {
-      isPageVisible = !document.hidden
-    }
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-
-    const fetchNewPostsFromServer = async () => {
-      // Don't fetch if paged updates is enabled - it manages its own probing
-      if (pagedUpdatesEnabled) {
-        console.log('[Periodic Fetch] Skipping - paged updates enabled')
-        return
-      }
-
-      // Don't fetch if page is not visible
-      if (!isPageVisible) {
-        console.log('[Periodic Fetch] Skipping fetch - page not visible')
-        return
-      }
-
-      // Don't fetch if rate limited
-      if (isRateLimited()) {
-        const timeUntilClear = getTimeUntilClear()
-        console.log(`[Periodic Fetch] Skipping fetch - rate limited for ${Math.ceil(timeUntilClear)}s`)
-        return
-      }
-
-      // Don't fetch if conditions changed
-      if (!agent || !session || !dbInitialized) {
-        return
-      }
-
-      try {
-        // Get cache timestamp from metadata - this is what we've already cached
-        // Periodic server fetch's job is to update the cache, not the display
-        const metadata = await getLastFetchMetadata()
-        const cachedNewestTimestamp = metadata?.newestCachedPostTimestamp || 0
-
-        if (cachedNewestTimestamp === 0) {
-          console.log('[Periodic Fetch] No cached timestamp, skipping fetch')
-          return
-        }
-
-        console.log(`[Periodic Fetch] Fetching new posts from server (newer than cached: ${new Date(cachedNewestTimestamp).toLocaleTimeString()})...`)
-        
-        // Get page length from settings for periodic fetch
-        const periodicSettings = await getSettings()
-        const periodicPageLength = periodicSettings?.feedPageLength || 25
-        
-        // Fetch newest posts from server (no cursor = get latest)
-        const { feed: newFeed, cursor: newCursor } = await getHomeFeed(agent, {
-          limit: periodicPageLength,
-          onRateLimit: (info) => {
-            // Silently handle rate limit - don't spam server
-            console.warn('[Periodic Fetch] Rate limit:', info)
-          }
-        })
-
-        if (newFeed.length === 0) {
-          console.log('[Periodic Fetch] No new posts from server')
-          return
-        }
-
-        console.log(`[Periodic Fetch] Got ${newFeed.length} posts from server`)
-
-        const feedReceivedTime = new Date()
-        const myUsername = session.handle
-        const myDid = session.did
-
-        // Filter posts: only process posts newer than what's already in cache
-        // Use getFeedViewPostTimestamp to get actual post timestamp
-        const newPosts = newFeed.filter(post => {
-          const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime).getTime()
-          return postTimestamp > cachedNewestTimestamp
-        })
-
-        if (newPosts.length === 0) {
-          console.log(`[Periodic Fetch] No posts newer than cached timestamp (${new Date(cachedNewestTimestamp).toISOString()})`)
-          // Still update cursor in case metadata changed
-          if (newCursor) {
-            const updatedMetadata = await getLastFetchMetadata()
-            if (updatedMetadata) {
-              await saveFeedCache([], feedReceivedTime, newCursor)
-            }
-          }
-          return
-        }
-
-        console.log(`[Periodic Fetch] Processing ${newPosts.length} new posts`)
-
-        // New flow: Create entries → Save → Curate
-        // For periodic fetch (like initial fetch), use current time as initialLastPostTime
-        const initialLastPostTime = new Date()
-        const periodicIntervalHours = getIntervalHoursSync(periodicSettings)
-        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime, periodicIntervalHours)
-
-        // Save to feed cache and curate (ensures both happen together for cache integrity)
-        const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
-
-        // Insert edition posts if needed
-        await insertEditionPosts(curatedFeed)
-        console.log(`[Periodic Fetch] Saved ${entries.length} new posts to cache`)
-
-        // Perform limited lookback to fill gaps back to local midnight for consistent counter numbering
-        // Only if we have entries and a cursor for pagination
-        if (entries.length > 0 && newCursor) {
-          const oldestEntryTimestamp = Math.min(...entries.map(e => e.postTimestamp))
-          const localMidnight = getLocalMidnight().getTime()
-          if (oldestEntryTimestamp > localMidnight) {
-            console.log(`[Periodic Fetch] Starting limited lookback from ${new Date(oldestEntryTimestamp).toLocaleTimeString()} to midnight`)
-            await limitedLookbackToMidnight(oldestEntryTimestamp, newCursor, agent, myUsername, myDid, periodicPageLength)
-          }
-        }
-
-        // Step 4: Check for new posts in cache (only for standard mode)
-        // Paged updates mode manages button state via its own probing effect
-        if (!pagedUpdatesEnabled) {
-          // Use displayed timestamp to check cache - this detects posts newer than what's displayed
-          const currentNewest = newestDisplayedPostTimestamp || 0
-          if (currentNewest > 0) {
-            // Get posts and filter by curation status to get accurate count
-            const newPosts = await getCachedFeedAfterPosts(currentNewest, 100)
-
-            if (newPosts.length > 0) {
-              // Filter by curation status to get accurate count of displayable posts
-              const feedReceivedTime = new Date()
-              const filteredPosts = await lookupCurationAndFilter(newPosts, feedReceivedTime)
-              const count = filteredPosts.length
-
-              console.log(`[Periodic Fetch] Found ${newPosts.length} posts in cache, ${count} after filtering`)
-
-              if (count > 0) {
-                setNewPostsCount(count)
-                setShowNewPostsButton(true)
-              } else {
-                // All posts were filtered out
-                setNewPostsCount(0)
-                setShowNewPostsButton(false)
-              }
-            }
-          }
-        }
-
-        // Don't update newestDisplayedPostTimestamp here - it should only be updated when posts are displayed
-        // The periodic cache check will detect new posts using the current displayed timestamp
-        // When user clicks "New Posts" button, handleLoadNewPosts will update displayed timestamp from displayed posts
-      } catch (error) {
-        // Silently fail - don't show errors for background fetches
-        console.warn('[Periodic Fetch] Failed to fetch new posts:', error)
-      }
-    }
-
-    // Fetch immediately after a short delay (don't run immediately on mount)
-    const initialTimeout = setTimeout(() => {
-      fetchNewPostsFromServer()
-    }, 10000) // Wait 10 seconds after initial load
-
-    // Then fetch every 60 seconds
-    fetchInterval = setInterval(fetchNewPostsFromServer, 60000)
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      if (initialTimeout) clearTimeout(initialTimeout)
-      if (fetchInterval) clearInterval(fetchInterval)
-    }
-  }, [agent, session, dbInitialized, newestDisplayedPostTimestamp, isInitialLoad, pagedUpdatesEnabled])
+  }, [newestDisplayedPostTimestamp, isInitialLoad, partialPageCount])
 
   // Scroll event handler (for UI state and scroll position saving)
   useEffect(() => {
@@ -2209,70 +1794,61 @@ export default function HomePage() {
 
     try {
       setIsLoadingMore(true)
-      const feedReceivedTime = new Date()
       const settings = await getSettings()
       const pageLength = settings?.feedPageLength || 25
-      const maxDisplayedFeedSize = settings?.maxDisplayedFeedSize || DEFAULT_MAX_DISPLAYED_FEED_SIZE
-      const timestampToUse = newestDisplayedPostTimestamp || 0
 
-      // Paged updates mode: use secondary cache flow for contiguous caching
-      if (pagedUpdatesEnabled) {
-        console.log('[Paged Updates] Loading next page via secondary cache...')
+      // Paged updates: use secondary cache flow for contiguous caching
+      console.log('[Paged Updates] Loading next page via secondary cache...')
 
-        setSyncInProgress(true)
-        setSyncProgress(0)
+      setSyncInProgress(true)
+      setSyncProgress(0)
 
-        try {
-          // Use secondary cache flow - fetches, caches to secondary, merges to primary
-          const result = await performLookbackFetchToSecondary(
-            agent,
-            session.handle,
-            session.did,
-            pageLength,
-            (progress) => setSyncProgress(Math.round(progress * 0.8)),  // 0-80% for fetch
-            (mergeProgress) => setSyncProgress(80 + Math.round(mergeProgress * 0.2))  // 80-100% for merge
+      try {
+        // Use secondary cache flow - fetches, caches to secondary, merges to primary
+        const result = await performLookbackFetchToSecondary(
+          agent,
+          session.handle,
+          session.did,
+          pageLength,
+          (progress) => setSyncProgress(Math.round(progress * 0.8)),  // 0-80% for fetch
+          (mergeProgress) => setSyncProgress(80 + Math.round(mergeProgress * 0.2))  // 80-100% for merge
+        )
+
+        console.log(`[Paged Updates] Secondary cache flow completed: ${result.postsMerged} posts merged`)
+
+        // Assign numbers to merged posts
+        if (result.postsMerged > 0) {
+          const now = new Date()
+          const todayStart = getLocalMidnight(now).getTime()
+          const todayEnd = todayStart + 24 * 60 * 60 * 1000
+          const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayStart, todayEnd)
+
+          // Get summaries that need numbering (postNumber is null or undefined)
+          const allSummaries = await getPostSummariesInRange(todayStart, todayEnd)
+          const unnumberedSummaries = allSummaries.filter(s =>
+            s.postNumber === null || s.postNumber === undefined
           )
 
-          console.log(`[Paged Updates] Secondary cache flow completed: ${result.postsMerged} posts merged`)
-
-          // Assign numbers to merged posts
-          if (result.postsMerged > 0) {
-            const now = new Date()
-            const todayStart = getLocalMidnight(now).getTime()
-            const todayEnd = todayStart + 24 * 60 * 60 * 1000
-            const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayStart, todayEnd)
-
-            // Get summaries that need numbering (postNumber is null or undefined)
-            const allSummaries = await getPostSummariesInRange(todayStart, todayEnd)
-            const unnumberedSummaries = allSummaries.filter(s =>
-              s.postNumber === null || s.postNumber === undefined
-            )
-
-            if (unnumberedSummaries.length > 0) {
-              await assignIncrementalNumbers(unnumberedSummaries, maxPostNumber, maxCurationNumber)
-              console.log(`[Paged Updates] Assigned numbers to ${unnumberedSummaries.length} posts (max postNumber: ${maxPostNumber}, max curationNumber: ${maxCurationNumber})`)
-            }
+          if (unnumberedSummaries.length > 0) {
+            await assignIncrementalNumbers(unnumberedSummaries, maxPostNumber, maxCurationNumber)
+            console.log(`[Paged Updates] Assigned numbers to ${unnumberedSummaries.length} posts (max postNumber: ${maxPostNumber}, max curationNumber: ${maxCurationNumber})`)
           }
-
-          // Clear UI state
-          setNewPostsCount(0)
-          setShowNewPostsButton(false)
-          setNextPageReady(false)
-          setPartialPageCount(0)
-          setMultiPageCount(0)
-          setIdleTimerTriggered(false)
-          lastDisplayTimeRef.current = Date.now()
-
-          // Clear session storage to force fresh load from cache (not restore old feed)
-          sessionStorage.removeItem(getFeedStateKey('curated'))
-
-          // Load feed fresh from cache (redisplayFeed will fall through to loadFeed)
-          await redisplayFeed()
-
-        } finally {
-          setSyncInProgress(false)
-          setSyncProgress(0)
         }
+
+        // Clear UI state
+        setNewPostsCount(0)
+        setShowNewPostsButton(false)
+        setNextPageReady(false)
+        setPartialPageCount(0)
+        setMultiPageCount(0)
+        setIdleTimerTriggered(false)
+        lastDisplayTimeRef.current = Date.now()
+
+        // Clear session storage to force fresh load from cache (not restore old feed)
+        sessionStorage.removeItem(getFeedStateKey('curated'))
+
+        // Load feed fresh from cache (redisplayFeed will fall through to loadFeed)
+        await redisplayFeed()
 
         // Scroll to top after loading new posts
         isProgrammaticScrollRef.current = true
@@ -2282,53 +1858,10 @@ export default function HomePage() {
           lastScrollTopRef.current = window.scrollY
         }, 1000)
 
-        return  // Exit early - don't fall through to standard mode
-      } else {
-        // Standard mode: load from cache
-        console.log('[New Posts] Loading new posts from cache...')
-
-        const newPostsLength = pageLength * 2
-        const newPosts = await getCachedFeedAfterPosts(timestampToUse, newPostsLength)
-
-        if (newPosts.length === 0) {
-          setNewPostsCount(0)
-          setShowNewPostsButton(false)
-          addToast('No new posts available', 'info')
-          return
-        }
-
-        const filteredNewPosts = await lookupCurationAndFilter(newPosts, feedReceivedTime)
-
-        if (filteredNewPosts.length === 0) {
-          setNewPostsCount(0)
-          setShowNewPostsButton(false)
-          addToast('No new posts to display (filtered by settings)', 'info')
-          return
-        }
-
-        const existingUris = new Set(feed.map(p => getPostUniqueId(p)))
-        const newPostsToAdd = filteredNewPosts.filter(p => !existingUris.has(getPostUniqueId(p)))
-
-        let combinedFeed = [...newPostsToAdd, ...feed]
-        // Trim feed if over maxDisplayedFeedSize (saves adjacent page as previousPageFeed)
-        combinedFeed = trimFeedIfNeeded(combinedFeed, pageLength, feedReceivedTime, maxDisplayedFeedSize)
-
-        setFeed(combinedFeed)
-        const newestTimestamp = getFeedViewPostTimestamp(filteredNewPosts[0], feedReceivedTime).getTime()
-        setNewestDisplayedPostTimestamp(newestTimestamp)
-        setNewPostsCount(0)
-        setShowNewPostsButton(false)
-
-        console.log(`[New Posts] Successfully loaded ${newPostsToAdd.length} new posts`)
+      } finally {
+        setSyncInProgress(false)
+        setSyncProgress(0)
       }
-
-      // Scroll to top
-      isProgrammaticScrollRef.current = true
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-      setTimeout(() => {
-        isProgrammaticScrollRef.current = false
-        lastScrollTopRef.current = window.scrollY
-      }, 1000)
 
     } catch (error) {
       console.error('Failed to load new posts:', error)
@@ -2336,7 +1869,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingMore(false)
     }
-  }, [agent, session, newestDisplayedPostTimestamp, newPostsCount, lookupCurationAndFilter, isLoadingMore, feed, pagedUpdatesEnabled])
+  }, [agent, session, newestDisplayedPostTimestamp, newPostsCount, lookupCurationAndFilter, isLoadingMore, feed])
 
   // Handle "All n new posts" button click
   // Two flows: partial page (incremental) and multi-page (full re-display)
@@ -2883,82 +2416,50 @@ export default function HomePage() {
           </div>
         ) : (
           <>
-            {/* New Page / All New Posts buttons - paged updates mode uses two-button layout */}
-            {pagedUpdatesEnabled ? (
-              // Paged updates mode: Two-button layout
-              <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
-                <div className="flex gap-2">
-                  {/* "New Page" button - always visible, grayed out when inactive */}
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      console.log('[New Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady })
-                      handleLoadNewPosts()
-                    }}
-                    disabled={isLoadingMore || !nextPageReady}
-                    className={`flex-1 btn flex items-center justify-center gap-2 ${
-                      nextPageReady
-                        ? 'btn-primary'
-                        : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                    } disabled:opacity-50`}
-                    aria-label="Load next page of posts"
-                  >
-                    {isLoadingMore ? (
-                      <>
-                        <Spinner size="sm" />
-                        Loading...
-                      </>
-                    ) : (
-                      <>
-                        <span>📄</span>
-                        New Page
-                      </>
-                    )}
-                  </button>
-
-                  {/* "All n new posts" button - shown when idle timer triggered and posts available */}
-                  {idleTimerTriggered && partialPageCount > 0 && (
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        console.log('[All New Posts] Button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
-                        handleLoadAllNewPosts()
-                      }}
-                      disabled={isLoadingMore}
-                      className="flex-1 btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
-                      aria-label={`Load all ${partialPageCount} new posts`}
-                    >
-                      {isLoadingMore ? (
-                        <>
-                          <Spinner size="sm" />
-                          Loading...
-                        </>
-                      ) : (
-                        <>
-                          <span>📬</span>
-                          All new posts ({partialPageCount})
-                        </>
-                      )}
-                    </button>
+            {/* New Page / All New Posts buttons - two-button layout */}
+            <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex gap-2">
+                {/* "New Page" button - always visible, grayed out when inactive */}
+                <button
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    console.log('[New Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady })
+                    handleLoadNewPosts()
+                  }}
+                  disabled={isLoadingMore || !nextPageReady}
+                  className={`flex-1 btn flex items-center justify-center gap-2 ${
+                    nextPageReady
+                      ? 'btn-primary'
+                      : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                  } disabled:opacity-50`}
+                  aria-label="Load next page of posts"
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <Spinner size="sm" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <span>📄</span>
+                      New Page
+                    </>
                   )}
-                </div>
-              </div>
-            ) : (
-              // Standard mode: Single button (existing behavior)
-              showNewPostsButton && newPostsCount > 0 && (
-                <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+                </button>
+
+                {/* "All n new posts" button - shown when idle timer triggered and posts available */}
+                {idleTimerTriggered && partialPageCount > 0 && (
                   <button
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      console.log('[New Posts] Button clicked', { newPostsCount, isLoadingMore, newestDisplayedPostTimestamp })
-                      handleLoadNewPosts()
+                      console.log('[All New Posts] Button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
+                      handleLoadAllNewPosts()
                     }}
                     disabled={isLoadingMore}
-                    className="w-full btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    aria-label={`Load ${newPostsCount} new post${newPostsCount !== 1 ? 's' : ''}`}
+                    className="flex-1 btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
+                    aria-label={`Load all ${partialPageCount} new posts`}
                   >
                     {isLoadingMore ? (
                       <>
@@ -2968,13 +2469,13 @@ export default function HomePage() {
                     ) : (
                       <>
                         <span>📬</span>
-                        {newPostsCount} new post{newPostsCount !== 1 ? 's' : ''}
+                        All new posts ({partialPageCount})
                       </>
                     )}
                   </button>
-                </div>
-              )
-            )}
+                )}
+              </div>
+            </div>
             
             {filteredFeed.map((post, index) => (
               <div

@@ -41,69 +41,10 @@ export async function getPostNumberFromSummary(uniqueId: string): Promise<number
 }
 
 /**
- * Legacy function for backward compatibility
- * Now delegates to getCurationNumber
- *
- * @param postUri - The unique ID of the post (from getPostUniqueId)
- * @param isDropped - Whether this post was dropped by curation (if true, returns 0)
- * @returns curationNumber or 0 if dropped/not found
- * @deprecated Use getCurationNumber instead
- */
-export async function getPostNumber(
-  postUri: string,
-  isDropped = false
-): Promise<number> {
-  // Dropped posts should return 0
-  if (isDropped) {
-    return 0
-  }
-
-  const curationNum = await getCurationNumber(postUri)
-
-  // If curationNumber is null (unassigned), return 0 for backward compatibility
-  // The display logic in PostCard will handle null differently
-  return curationNum ?? 0
-}
-
-/**
- * Get post number without assigning (if post already counted)
- * Now just returns the pre-computed number
- *
- * @param postUri - The unique ID of the post (from getPostUniqueId)
- * @deprecated Use getCurationNumber instead
- */
-export async function getPostNumberIfExists(
-  postUri: string
-): Promise<number | null> {
-  return getCurationNumber(postUri)
-}
-
-/**
- * Clear in-memory caches
- * Now a no-op since numbers are stored persistently in IndexedDB
- * Kept for backward compatibility with existing callers
- */
-export function clearCounters(): void {
-  // No-op - numbers are now stored persistently in summaries
-  console.log('[Counter] clearCounters called (no-op - numbers are persistent in summaries)')
-}
-
-/**
  * Check if counter should be displayed
  */
 export function shouldShowCounter(): boolean {
   // This will be controlled by settings
   // For now, always return true
   return true
-}
-
-/**
- * Get all counters (for debugging)
- * Now returns empty object - use getAllPostSummaries for debugging
- *
- * @deprecated Numbers are now in PostSummary, use getAllPostSummaries
- */
-export async function getAllCounters(): Promise<Record<string, number>> {
-  console.log('[Counter] getAllCounters is deprecated - numbers are in PostSummary')
-  return {}
 }
