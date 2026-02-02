@@ -155,6 +155,7 @@ export default function HomePage() {
   const [feed, setFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])
   const [previousPageFeed, setPreviousPageFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])  // Pre-fetched next page for instant Prev Page
   const [isPrefetching, setIsPrefetching] = useState(false)  // True while fetching next page after Prev Page
+  const [initialPrefetchDone, setInitialPrefetchDone] = useState(false)  // True after first prefetch completes (to distinguish "Initializing..." from "No more posts")
   const [cursor, setCursor] = useState<string | undefined>()  // Keep for backward compatibility
   const [hasMorePosts, setHasMorePosts] = useState(false)  // Deprecated - use previousPageFeed.length > 0
   const [serverCursor, setServerCursor] = useState<string | undefined>(undefined)  // Cursor for server fallback fetches
@@ -804,6 +805,7 @@ export default function HomePage() {
             // Use local variable since state updates are async
             setTimeout(async () => {
               await prefetchNextPage(oldestDisplayedTimestamp)
+              setInitialPrefetchDone(true)
             }, 100)
 
             return
@@ -916,6 +918,7 @@ export default function HomePage() {
           if (cacheIsFresh && !cursor) {
             setTimeout(async () => {
               await prefetchNextPage(oldestDisplayedTimestamp)
+              setInitialPrefetchDone(true)
             }, 100)
           }
 
@@ -1005,6 +1008,7 @@ export default function HomePage() {
               console.error('[Lookback] Background lookback failed:', err)
               setLookingBack(false)
               setLookbackProgress(null)
+              setInitialPrefetchDone(true)  // Mark done so we don't show "Initializing..." forever
             })
           }
 
@@ -1146,11 +1150,13 @@ export default function HomePage() {
           true        // skipFiltering - don't re-filter restored posts
         )
         setPreviousPageFeed(previousWithCuration)
+        setInitialPrefetchDone(true)  // Restored from saved state, so prefetch is already done
         console.log(`[Redisplay] Restored previousPageFeed: ${previousWithCuration.length} posts`)
       } else if (oldestTimestamp) {
         // Pre-fetch if not saved (NO SPINNER)
         setTimeout(async () => {
           await prefetchNextPage(oldestTimestamp)
+          setInitialPrefetchDone(true)
         }, 100)
       }
 
@@ -1263,6 +1269,7 @@ export default function HomePage() {
       setPreviousPageFeed([])  // Clear pre-fetched posts to avoid stale data
       setIsLoading(true)
       setIsInitialLoad(true)
+      setInitialPrefetchDone(false)  // Reset so "Initializing..." shows during re-init
       setNewestDisplayedPostTimestamp(null)
       setOldestDisplayedPostTimestamp(null)
       setNewPostsCount(0)
@@ -2614,8 +2621,17 @@ export default function HomePage() {
                 )}
               </button>
             ) : !isLoading && feed.length > 0 ? (
-              // State 3: No more posts (only show after initial load completes)
-              <span className="text-gray-500 dark:text-gray-400">No more posts</span>
+              // State 3: Initializing or No more posts
+              !initialPrefetchDone ? (
+                // Still initializing (prefetch not complete yet)
+                <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
+                  <Spinner size="sm" />
+                  <span>Initializing...</span>
+                </div>
+              ) : (
+                // Prefetch done but no more posts available
+                <span className="text-gray-500 dark:text-gray-400">No more posts</span>
+              )
             ) : null}
           </div>
         )}
