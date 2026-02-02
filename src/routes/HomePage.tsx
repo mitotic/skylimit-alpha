@@ -198,7 +198,9 @@ export default function HomePage() {
   const firstPostRef = useRef<HTMLDivElement>(null)
   const scrollSentinelRef = useRef<HTMLDivElement>(null)  // Sentinel element for intersection observer
   const intersectionObserverRef = useRef<IntersectionObserver | null>(null)  // Observer instance
-  
+  const previousPageFeedRef = useRef<CurationFeedViewPost[]>([])  // Ref for observer callback (avoids stale closure)
+  const isPrefetchingRef = useRef(false)  // Ref for observer callback (avoids stale closure)
+
   // Scroll state refs (for UI state and restoration)
   const isProgrammaticScrollRef = useRef(false)
   const lastScrollTopRef = useRef(0)
@@ -207,8 +209,7 @@ export default function HomePage() {
   const scrollRestoreBlockedRef = useRef(false)  // Blocks restoration if user is actively scrolling
   const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)  // For debouncing scroll saves
   const scrollSaveBlockedRef = useRef(false)  // Blocks scroll saves during restoration phase
-  const prevPageLastCallRef = useRef<number>(0)  // For debouncing Prev Page button
-
+  
   // Tab state - initialize from sessionStorage
   const getInitialTab = (): HomeTab => {
     const savedTab = sessionStorage.getItem(HOME_TAB_STATE_KEY)
@@ -289,6 +290,15 @@ export default function HomePage() {
       loadInfiniteScrollingSetting()
     }
   }, [dbInitialized])
+
+  // Sync refs for IntersectionObserver callback (avoids stale closures)
+  useEffect(() => {
+    previousPageFeedRef.current = previousPageFeed
+  }, [previousPageFeed])
+
+  useEffect(() => {
+    isPrefetchingRef.current = isPrefetching
+  }, [isPrefetching])
 
   // Load paged updates settings
 
@@ -2094,14 +2104,6 @@ export default function HomePage() {
     // Check if already loading or prefetching
     if (isPrefetching) return
 
-    // Debounce: Skip if called within 300ms of last call
-    const now = Date.now()
-    if (now - prevPageLastCallRef.current < 300) {
-      console.log('[Prev Page] Debounced - called too quickly')
-      return
-    }
-    prevPageLastCallRef.current = now
-
     // Check if background lookback is in progress
     if (lookingBack) {
       addToast('Still syncing older posts... Please wait.', 'info')
@@ -2151,6 +2153,7 @@ export default function HomePage() {
   }, [feed, previousPageFeed, isPrefetching, lookingBack, prefetchNextPage])
 
   // Set up IntersectionObserver for infinite scrolling
+  // Note: Uses refs (previousPageFeedRef, isPrefetchingRef) to avoid stale closures in callback
   useEffect(() => {
     // Only set up if infinite scrolling is enabled
     if (!infiniteScrollingEnabled) {
@@ -2162,12 +2165,6 @@ export default function HomePage() {
       return
     }
 
-    // Check if conditions are met - use previousPageFeed instead of hasMorePosts
-    const canLoadMore = previousPageFeed.length > 0
-    if (!scrollSentinelRef.current || !canLoadMore || isPrefetching) {
-      return
-    }
-
     // Clean up previous observer if exists
     if (intersectionObserverRef.current) {
       intersectionObserverRef.current.disconnect()
@@ -2175,10 +2172,13 @@ export default function HomePage() {
     }
 
     // Create new IntersectionObserver
+    // Uses refs to read current state at callback time (avoids stale closure issue)
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0]
-        if (entry.isIntersecting && previousPageFeed.length > 0 && !isPrefetching) {
+        if (entry.isIntersecting &&
+            previousPageFeedRef.current.length > 0 &&
+            !isPrefetchingRef.current) {
           // Call handlePrevPage when sentinel is visible
           handlePrevPage()
         }
@@ -2201,7 +2201,7 @@ export default function HomePage() {
         intersectionObserverRef.current = null
       }
     }
-  }, [infiniteScrollingEnabled, previousPageFeed, isPrefetching, handlePrevPage])
+  }, [infiniteScrollingEnabled, handlePrevPage])
 
   const handleLike = async (uri: string, cid: string) => {
     if (!agent) return
@@ -2570,8 +2570,8 @@ export default function HomePage() {
           </>
         )}
 
-        {/* Infinite scroll sentinel - show when infinite scrolling enabled and more posts available */}
-        {infiniteScrollingEnabled && !lookingBack && (previousPageFeed.length > 0 || isPrefetching) && (
+        {/* Infinite scroll sentinel - always mounted when infinite scrolling enabled to avoid observer disconnection */}
+        {infiniteScrollingEnabled && !lookingBack && (
           <div ref={scrollSentinelRef} className="py-4">
             {isPrefetching && (
               <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">

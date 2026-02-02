@@ -479,6 +479,16 @@ export default function SettingsPage() {
               <label className="flex items-center space-x-3">
                 <input
                   type="checkbox"
+                  checked={settings.infiniteScrollingOption || false}
+                  onChange={(e) => updateSetting('infiniteScrollingOption', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Enable "infinite" scroll down</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
                   checked={settings.disabled}
                   onChange={(e) => updateSetting('disabled', e.target.checked)}
                   className="w-5 h-5"
@@ -660,21 +670,6 @@ export default function SettingsPage() {
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                       Maximum number of posts to keep in displayed feed. Older posts are trimmed during navigation. Range: 50-500.
-                    </p>
-                  </div>
-
-                  <div className="mb-4">
-                    <label className="flex items-center space-x-3">
-                      <input
-                        type="checkbox"
-                        checked={settings.infiniteScrollingOption || false}
-                        onChange={(e) => updateSetting('infiniteScrollingOption', e.target.checked)}
-                        className="w-5 h-5"
-                      />
-                      <span>Enable Infinite Scrolling</span>
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-8">
-                      Automatically load more posts as you scroll down. When disabled, use 'Load More' button instead.
                     </p>
                   </div>
 
