@@ -231,7 +231,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     try {
       setLoading(true)
       await ampUp(ampUsername)
-      setShowPopup(false)
+      // Refresh followInfo to get updated amp_factor for display
+      const follow = await getFollow(ampUsername)
+      setFollowInfo(follow)
       if (onAmpChange) {
         onAmpChange()
       }
@@ -247,7 +249,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     try {
       setLoading(true)
       await ampDown(ampUsername)
-      setShowPopup(false)
+      // Refresh followInfo to get updated amp_factor for display
+      const follow = await getFollow(ampUsername)
+      setFollowInfo(follow)
       if (onAmpChange) {
         onAmpChange()
       }
@@ -348,12 +352,16 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   anchorRect={popupAnchorRect || undefined}
                   rawPostNumber={rawPostNumber}
                   postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
-                  repostingPerDay={userEntry?.repost_daily}
+                  originalsPerDay={userEntry?.original_daily}
+                  repostsPerDay={userEntry?.repost_daily}
+                  followedRepliesPerDay={userEntry?.followed_reply_daily}
+                  unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
                   regularProb={userEntry?.regular_prob}
                   priorityProb={userEntry?.priority_prob}
                   curationMsg={curation.curation_msg}
                   isDropped={isStatusDrop(curation.curation_status)}
                   showAmpButtons={true}
+                  ampFactor={followInfo?.amp_factor ?? userEntry?.amp_factor}
                   onAmpUp={handleAmpUp}
                   onAmpDown={handleAmpDown}
                   ampLoading={loading}
@@ -417,12 +425,16 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 anchorRect={popupAnchorRect || undefined}
                 rawPostNumber={rawPostNumber}
                 postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
-                repostingPerDay={userEntry?.repost_daily}
+                originalsPerDay={userEntry?.original_daily}
+                repostsPerDay={userEntry?.repost_daily}
+                followedRepliesPerDay={userEntry?.followed_reply_daily}
+                unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
                 regularProb={userEntry?.regular_prob}
                 priorityProb={userEntry?.priority_prob}
                 curationMsg={curation.curation_msg}
                 isDropped={isStatusDrop(curation.curation_status)}
                 showAmpButtons={true}
+                ampFactor={followInfo?.amp_factor ?? userEntry?.amp_factor}
                 onAmpUp={handleAmpUp}
                 onAmpDown={handleAmpDown}
                 ampLoading={loading}
@@ -495,12 +507,16 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     anchorRect={popupAnchorRect || undefined}
                     rawPostNumber={rawPostNumber}
                     postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
-                    repostingPerDay={userEntry?.repost_daily}
+                    originalsPerDay={userEntry?.original_daily}
+                    repostsPerDay={userEntry?.repost_daily}
+                    followedRepliesPerDay={userEntry?.followed_reply_daily}
+                    unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
                     regularProb={userEntry?.regular_prob}
                     priorityProb={userEntry?.priority_prob}
                     curationMsg={curation.curation_msg}
                     isDropped={isStatusDrop(curation.curation_status)}
                     showAmpButtons={true}
+                    ampFactor={followInfo?.amp_factor ?? userEntry?.amp_factor}
                     onAmpUp={handleAmpUp}
                     onAmpDown={handleAmpDown}
                     ampLoading={loading}

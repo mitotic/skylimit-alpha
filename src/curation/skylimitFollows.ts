@@ -217,26 +217,26 @@ export async function updateAmplificationFactor(
 }
 
 /**
- * Amp up a follow (multiply by 2)
+ * Amp up a follow (multiply by √2, approximately +41%)
  */
 export async function ampUp(username: string): Promise<void> {
   const follows = await getAllFollows()
   const follow = follows.find(f => f.username === username)
-  
+
   if (follow) {
-    await updateAmplificationFactor(username, follow.amp_factor * 2)
+    await updateAmplificationFactor(username, follow.amp_factor * Math.SQRT2)
   }
 }
 
 /**
- * Amp down a follow (divide by 2)
+ * Amp down a follow (divide by √2, approximately -29%)
  */
 export async function ampDown(username: string): Promise<void> {
   const follows = await getAllFollows()
   const follow = follows.find(f => f.username === username)
-  
+
   if (follow) {
-    await updateAmplificationFactor(username, follow.amp_factor / 2)
+    await updateAmplificationFactor(username, follow.amp_factor / Math.SQRT2)
   }
 }
 

@@ -12,8 +12,11 @@ export interface CurationPopupProps {
 
   // Curation stats (optional - different data for PostCard vs SkylimitStatistics)
   rawPostNumber?: number | null        // PostCard only
-  postingPerDay?: number               // SkylimitStatistics only
-  repostingPerDay?: number             // SkylimitStatistics only
+  postingPerDay?: number               // Total posts/day (all types)
+  originalsPerDay?: number             // Original posts/day (Debug Info)
+  repostsPerDay?: number               // Reposts/day (Debug Info)
+  followedRepliesPerDay?: number       // Replies to followees/day (Debug Info)
+  unfollowedRepliesPerDay?: number     // Replies to non-followees/day (Debug Info)
   regularProb?: number                 // Both (0-1 scale)
   priorityProb?: number                // Both (0-1 scale)
   curationMsg?: string                 // Fallback message
@@ -21,6 +24,7 @@ export interface CurationPopupProps {
 
   // Amp buttons
   showAmpButtons: boolean
+  ampFactor?: number                  // Current amplification factor (0.125-8.0)
   onAmpUp: () => void
   onAmpDown: () => void
   ampLoading: boolean
@@ -43,12 +47,16 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   anchorRect,
   rawPostNumber,
   postingPerDay,
-  repostingPerDay,
+  originalsPerDay,
+  repostsPerDay,
+  followedRepliesPerDay,
+  unfollowedRepliesPerDay,
   regularProb,
   priorityProb,
   curationMsg,
   isDropped,
   showAmpButtons,
+  ampFactor,
   onAmpUp,
   onAmpDown,
   ampLoading,
@@ -66,7 +74,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       return {}
     }
 
-    const popupWidth = 256 // w-64 = 16rem = 256px
+    const popupWidth = 320 // w-80 = 20rem = 320px
     const margin = 4 // 1 unit of margin
 
     // Calculate horizontal position - align right edge with anchor right edge, but keep within viewport
@@ -105,7 +113,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   const popupContent = (
     <div
       ref={ref}
-      className={`${useFixedPositioning ? '' : 'absolute right-0'} w-64 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
+      className={`${useFixedPositioning ? '' : 'absolute right-0'} w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
         !useFixedPositioning && popupPosition === 'above'
           ? 'bottom-full mb-1'
           : !useFixedPositioning ? 'top-full mt-1' : ''
@@ -154,21 +162,23 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       {/* Amp buttons */}
       {showAmpButtons && (
         <div className="p-3">
-          <div className="text-xs font-semibold mb-2">Amplification Factor</div>
+          <div className="text-xs font-semibold mb-2">
+            Amplification Factor: {ampFactor !== undefined ? ampFactor.toFixed(1) : '1.0'}
+          </div>
           <div className="flex gap-2">
             <button
               onClick={onAmpDown}
               disabled={ampLoading}
               className="flex-1 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
             >
-              Amp Down (÷2)
+              Amp Down (by 30%)
             </button>
             <button
               onClick={onAmpUp}
               disabled={ampLoading}
               className="flex-1 px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
             >
-              Amp Up (×2)
+              Amp Up (by 40%)
             </button>
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
@@ -197,8 +207,11 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             {curationStatus !== undefined && (
               <div>Curation status: {curationStatus || 'none'}</div>
             )}
-            {repostingPerDay !== undefined && (
-              <div>Reposting {repostingPerDay.toFixed(1)}/day</div>
+            {(originalsPerDay !== undefined || repostsPerDay !== undefined) && (
+              <div>Originals {(originalsPerDay ?? 0).toFixed(1)}/day, Reposts {(repostsPerDay ?? 0).toFixed(1)}/day</div>
+            )}
+            {(followedRepliesPerDay !== undefined || unfollowedRepliesPerDay !== undefined) && (
+              <div>Replies (followed: {(followedRepliesPerDay ?? 0).toFixed(1)}/day, unfollowed: {(unfollowedRepliesPerDay ?? 0).toFixed(1)}/day)</div>
             )}
             {followedAt && (
               <div>Followed at: {new Date(followedAt).toLocaleString()}</div>

@@ -241,26 +241,31 @@ export default function SkylimitStatistics() {
   // Now returns structured data for the new popup format
   const formatCurationStats = (userEntry: UserEntry, followInfo?: FollowInfo): {
     postingCount: number
-    repostingCount: number
+    originalsPerDay: number
+    repostsPerDay: number
+    followedRepliesPerDay: number
+    unfollowedRepliesPerDay: number
     regularProb: number
     priorityProb: number
     ampFactor: number | null
   } => {
     const postingCount = Math.round(countTotalPostsForUser(userEntry))
-    const repostingCount = Math.round(userEntry.repost_daily)
+    const originalsPerDay = userEntry.original_daily
+    const repostsPerDay = userEntry.repost_daily
+    const followedRepliesPerDay = userEntry.followed_reply_daily
+    const unfollowedRepliesPerDay = userEntry.unfollowed_reply_daily
     const regularProb = userEntry.regular_prob * 100
     const priorityProb = userEntry.priority_prob * 100
     const ampFactor = followInfo?.amp_factor ?? userEntry.amp_factor ?? null
 
-    return { postingCount, repostingCount, regularProb, priorityProb, ampFactor }
+    return { postingCount, originalsPerDay, repostsPerDay, followedRepliesPerDay, unfollowedRepliesPerDay, regularProb, priorityProb, ampFactor }
   }
 
   const handleAmpUp = async (username: string) => {
     try {
       setLoadingAmp(true)
       await ampUp(username)
-      setShowPopup(null)
-      // Reload statistics to reflect the change
+      // Reload statistics to reflect the change (popup stays open)
       await loadStatistics()
     } catch (error) {
       console.error('Failed to amp up:', error)
@@ -274,8 +279,7 @@ export default function SkylimitStatistics() {
     try {
       setLoadingAmp(true)
       await ampDown(username)
-      setShowPopup(null)
-      // Reload statistics to reflect the change
+      // Reload statistics to reflect the change (popup stays open)
       await loadStatistics()
     } catch (error) {
       console.error('Failed to amp down:', error)
@@ -586,10 +590,14 @@ export default function SkylimitStatistics() {
                           popupPosition={popupPosition}
                           anchorRect={popupAnchorRect || undefined}
                           postingPerDay={curationStats.postingCount}
-                          repostingPerDay={curationStats.repostingCount}
+                          originalsPerDay={curationStats.originalsPerDay}
+                          repostsPerDay={curationStats.repostsPerDay}
+                          followedRepliesPerDay={curationStats.followedRepliesPerDay}
+                          unfollowedRepliesPerDay={curationStats.unfollowedRepliesPerDay}
                           regularProb={curationStats.regularProb / 100}
                           priorityProb={curationStats.priorityProb / 100}
                           showAmpButtons={!account.isHashtag}
+                          ampFactor={curationStats.ampFactor ?? undefined}
                           onAmpUp={() => handleAmpUp(account.username)}
                           onAmpDown={() => handleAmpDown(account.username)}
                           ampLoading={loadingAmp}
