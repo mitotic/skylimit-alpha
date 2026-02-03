@@ -363,6 +363,8 @@ interface FeedCacheMetadata {
   // Lookback caching tracking
   lookbackCompleted?: boolean          // true if lookback fetch completed
   lookbackCompletedAt?: number         // timestamp when lookback finished
+  // Initial lookback/curation completion flag
+  initialLookbackCompleted?: boolean   // true after first curation round completes
   // Secondary cache tracking (for gap-filling lookback)
   secondaryCacheActive?: boolean       // true if secondary cache is being populated
   secondaryCacheNewestTimestamp?: number  // newest post in secondary cache
@@ -1796,6 +1798,57 @@ export async function resetLookbackStatus(): Promise<void> {
     }
   } catch (error) {
     console.error('Failed to reset lookback status:', error)
+  }
+}
+
+/**
+ * Check if initial lookback (first curation round) has completed.
+ * Returns false by default (initial lookback is still active).
+ */
+export async function isInitialLookbackCompleted(): Promise<boolean> {
+  try {
+    const metadata = await getLastFetchMetadata()
+    return metadata?.initialLookbackCompleted ?? false
+  } catch (error) {
+    console.warn('Failed to check initial lookback status:', error)
+    return false
+  }
+}
+
+/**
+ * Mark initial lookback as completed (first curation round done).
+ * Called after recomputeCurationDecisions() completes.
+ */
+export async function markInitialLookbackCompleted(): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction(['feed_metadata'], 'readwrite')
+    const store = transaction.objectStore('feed_metadata')
+
+    // Get existing metadata
+    const existingMetadata = await new Promise<FeedCacheMetadata | null>((resolve, reject) => {
+      const request = store.get('last_fetch')
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => reject(request.error)
+    })
+
+    if (existingMetadata) {
+      // Update with initial lookback completion
+      const updatedMetadata: FeedCacheMetadata = {
+        ...existingMetadata,
+        initialLookbackCompleted: true
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const request = store.put(updatedMetadata)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
+
+      console.log('[Lookback] Marked initial lookback as complete')
+    }
+  } catch (error) {
+    console.error('Failed to mark initial lookback complete:', error)
   }
 }
 

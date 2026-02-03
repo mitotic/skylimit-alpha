@@ -730,6 +730,28 @@ export default function SettingsPage() {
                       Length of curation intervals. Default: 2 hours. Must be a factor of 24 (1-12). Changing this affects statistics calculations.
                     </p>
                   </div>
+
+                  {/* Reply Handling Debug Setting */}
+                  <h3 className="text-lg font-semibold mb-4 mt-6">Reply Handling</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                    Control how replies to non-followees are handled in your feed.
+                  </p>
+
+                  <div className="mb-4">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.hideUnfollowedReplies ?? false}
+                        onChange={(e) => updateSetting('hideUnfollowedReplies', e.target.checked)}
+                        className="w-5 h-5"
+                      />
+                      <span>Hide replies to non-followees</span>
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-8">
+                      When enabled, all replies to non-followees are hidden. When disabled,
+                      replies from &quot;quiet posters&quot; (those with 100% show probability) are shown.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>

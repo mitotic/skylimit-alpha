@@ -20,7 +20,7 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { assignIncrementalNumbers, getMaxNumbersForDay } from '../curation/skylimitNumbering'
@@ -968,6 +968,10 @@ export default function HomePage() {
                   // Recompute curation status for all cached posts (updates summaries with drop decisions)
                   console.log('[Curation Init] Updating curation decisions for cached posts...')
                   await recomputeCurationDecisions(agent, myUsername, myDid)
+
+                  // Mark that initial lookback is complete - subsequent rounds will use normal logic
+                  await markInitialLookbackCompleted()
+                  console.log('[Curation Init] Initial lookback complete, flag set')
 
                   console.log('[Curation Init] Getting curation statistics...')
                   const curationStats = await getCurationInitStats()

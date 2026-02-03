@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   infiniteScrollingOption: false, // default to "Load More" button
   curationIntervalHours: 2, // curation interval in hours, must be factor of 24 (1, 2, 3, 4, 6, 8, 12)
   minFolloweeDayCount: 1, // minimum followee day count (debug setting)
+  hideUnfollowedReplies: false, // hide all replies to non-followees, default false
 }
 
 /**

@@ -137,7 +137,9 @@ export default function SkylimitStatistics() {
           amp_factor: follow.amp_factor || 1.0,
           motx_daily: 0,
           priority_daily: 0,
-          post_daily: 0,
+          original_daily: 0,
+          followed_reply_daily: 0,
+          unfollowed_reply_daily: 0,
           repost_daily: 0,
           engaged_daily: 0,
           total_daily: 0,
@@ -150,7 +152,7 @@ export default function SkylimitStatistics() {
         // If total_daily is not set, calculate it from the daily values
         const postsPerDay = entry.total_daily > 0
           ? entry.total_daily
-          : (entry.motx_daily || 0) + (entry.priority_daily || 0) + (entry.post_daily || 0) + (entry.repost_daily || 0)
+          : (entry.motx_daily || 0) + (entry.priority_daily || 0) + (entry.original_daily || 0) + (entry.followed_reply_daily || 0) + (entry.unfollowed_reply_daily || 0) + (entry.repost_daily || 0)
         const displayProbability = (entry.net_prob || 0) * 100
         
         // Get amplification factor from follow info
@@ -395,11 +397,11 @@ export default function SkylimitStatistics() {
                   <strong>Following tags: #{followedTags.join(', #')}</strong>
                 </div>
               )}
-              {/* Posts/day breakdown with original vs reposts */}
+              {/* Posts/day breakdown with original, replies, and reposts */}
               <div>
                 Analyzed {stats.post_daily.toFixed(0)} posts/day
-                {stats.original_posts_daily !== undefined && stats.reposts_daily !== undefined && (
-                  <> ({stats.original_posts_daily.toFixed(0)} original, {stats.reposts_daily.toFixed(0)} reposts)</>
+                {stats.original_daily !== undefined && (
+                  <> ({stats.original_daily.toFixed(0)} original, {stats.followed_reply_daily?.toFixed(0) ?? 0} followed replies, {stats.unfollowed_reply_daily?.toFixed(0) ?? 0} unfollowed replies, {stats.reposts_daily?.toFixed(0) ?? 0} reposts)</>
                 )}
                 {' '}by {Object.keys(userFilter || {}).length} followees over{' '}
                 {stats.complete_intervals_days !== undefined && stats.complete_intervals_days > 0 ? (

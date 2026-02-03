@@ -17,6 +17,7 @@ export type CurationStatus =
   | 'priority_drop'    // Priority post fails probability filter
   | 'regular_show'     // Regular post passes probability filter
   | 'regular_drop'     // Regular post fails probability filter
+  | 'reply_drop'       // Unfollowed reply dropped
   | 'edition_drop'     // Post saved for edition digest
   | 'untracked_show'   // User not tracked - shown by default
   | 'temp_show'        // Temporary show during initial lookback (before stats computed)
@@ -80,6 +81,21 @@ export function getIntervalsPerDaySync(settings: SkylimitSettingsForInterval): n
 }
 
 /**
+ * Extract DID from an AT Protocol URI.
+ * AT URIs follow the format: at://did:plc:xxx/app.bsky.feed.post/rkey
+ * @param uri - The AT Protocol URI
+ * @returns The DID portion, or null if the URI is invalid
+ */
+export function extractDidFromUri(uri: string): string | null {
+  if (!uri || !uri.startsWith('at://')) return null
+  const parts = uri.replace('at://', '').split('/')
+  if (parts.length >= 1 && parts[0].startsWith('did:')) {
+    return parts[0]
+  }
+  return null
+}
+
+/**
  * Global statistics for curation across all followed users.
  *
  * Skylimit Number: The core metric determining guaranteed views per day.
@@ -107,7 +123,9 @@ export interface GlobalStats {
   analysis_end_time?: string            // ISO string of analysis end (UTC)
 
   // Posts breakdown
-  original_posts_daily?: number         // motx + priority + post (excluding boosts)
+  original_daily?: number               // Original posts (not replies)
+  followed_reply_daily?: number         // Replies to followees
+  unfollowed_reply_daily?: number       // Replies to non-followees
   reposts_daily?: number                // boost_total / dayTotal
 
   // Cache vs accumulated diagnostics
@@ -142,7 +160,9 @@ export interface UserEntry {
   amp_factor: number
   motx_daily: number
   priority_daily: number
-  post_daily: number
+  original_daily: number       // Original posts (not replies)
+  followed_reply_daily: number // Replies to followees
+  unfollowed_reply_daily: number // Replies to non-followees
   repost_daily: number         // Daily repost count for this user
   engaged_daily: number
   total_daily: number
@@ -222,7 +242,9 @@ export interface UserAccumulator {
   repost_total: number         // Total reposts accumulated
   motx_total: number
   priority_total: number
-  post_total: number
+  original_total: number       // Original posts (not replies)
+  followed_reply_total: number // Replies to followees
+  unfollowed_reply_total: number // Replies to non-followees
   engaged_total: number
   weight: number
   normalized_daily: number
@@ -271,6 +293,8 @@ export interface SkylimitSettings {
   curationIntervalHours?: number // curation interval in hours, default 2, must be 1-12 and factor of 24 (1, 2, 3, 4, 6, 8, 12)
   // Debug settings for effective day count
   minFolloweeDayCount?: number // minimum followee day count to prevent inflated posting rates, default 1
+  // Reply handling settings
+  hideUnfollowedReplies?: boolean // Hide all replies to non-followees, default false
 }
 
 /**

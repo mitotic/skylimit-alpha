@@ -10,7 +10,8 @@ import {
   MOT_TAGS,
   getIntervalHoursSync,
   getIntervalsPerDaySync,
-  isStatusDrop
+  isStatusDrop,
+  extractDidFromUri
 } from './types'
 import {
   getAllPostSummaries,
@@ -21,6 +22,7 @@ import {
 } from './skylimitCache'
 import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral, getIntervalString } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
+import { isInitialLookbackCompleted } from './skylimitFeedCache'
 // countTotalPosts is defined in this file
 import { hmacHex } from '../utils/hmac'
 
@@ -28,14 +30,14 @@ import { hmacHex } from '../utils/hmac'
 const POST_STATS_PROTO: PostStats = { repost_count: 0, followed_repost_count: 0, repostCount: 0 }
 
 /**
- * Count total posts for a user entry
- */
-/**
  * Count total posts per day for a user entry.
- * Includes: MOTx posts + priority posts + regular posts + reposts.
+ * Includes: MOTx posts + priority posts + original posts + followed replies + unfollowed replies + reposts.
+ * Unfollowed replies are already filtered during accumulation (only non-dropped ones counted).
  */
 export function countTotalPostsForUser(userEntry: UserEntry): number {
-  return userEntry.motx_daily + userEntry.priority_daily + userEntry.post_daily + userEntry.repost_daily
+  return userEntry.motx_daily + userEntry.priority_daily +
+         userEntry.original_daily + userEntry.followed_reply_daily +
+         userEntry.unfollowed_reply_daily + userEntry.repost_daily
 }
 
 /**
@@ -119,6 +121,17 @@ export async function computePostStats(
   const currentFollows = await getCurrentFollows()
   const summaryCache: Record<string, any> = {}
   const postStats: Record<string, PostStats> = {}
+
+  // Build DID to username map for efficient reply parent lookup
+  const didToUsername: Record<string, string> = {}
+  for (const [username, follow] of Object.entries(currentFollows)) {
+    if (follow.accountDid) {
+      didToUsername[follow.accountDid] = username
+    }
+  }
+
+  // Check if initial lookback (first curation round) has completed
+  const initialLookbackActive = !(await isInitialLookbackCompleted())
 
   const userAccum: Record<string, UserAccumulator> = {}
 
@@ -317,7 +330,7 @@ export async function computePostStats(
   const sparseIntervals = completeIntervalCounts.filter(c => c < sparseThreshold).length
 
   // Accumulate status counts ONCE after all intervals are processed
-  const summariesAccumulated = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername)
+  const summariesAccumulated = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername, didToUsername, initialLookbackActive)
 
   const summariesTotal = Object.keys(summaryCache).length
   // Total cached summaries across ALL intervals (complete + incomplete)
@@ -436,11 +449,12 @@ async function accumulateStatusCounts(
   currentFollows: Record<string, FollowInfo>,
   userAccum: Record<string, UserAccumulator>,
   summaryCache: Record<string, any>,
-   
+
   _postStats: Record<string, PostStats>,
   secretKey: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _myUsername: string
+  _myUsername: string,
+  didToUsername: Record<string, string>,
+  initialLookbackActive: boolean
 ): Promise<number> {
   let accumulated = 0
 
@@ -488,7 +502,28 @@ async function accumulateStatusCounts(
       } else if (isPriorityPost(summaryInfo, accum.userEntry.topics)) {
         accum.priority_total += 1
       } else {
-        accum.post_total += 1
+        // Regular post - categorize by reply status
+        if (summaryInfo.inReplyToUri) {
+          const parentDid = extractDidFromUri(summaryInfo.inReplyToUri)
+          const isParentFollowed = parentDid ? (parentDid in didToUsername) : false
+
+          if (isParentFollowed) {
+            accum.followed_reply_total += 1
+          } else {
+            // Unfollowed reply - only count if NOT during initial lookback
+            // AND the post was NOT dropped (curation_status != 'reply_drop')
+            if (initialLookbackActive) {
+              // During initial lookback: don't count unfollowed replies at all
+              // (unfollowed_reply_total stays 0 for this post)
+            } else if (summaryInfo.curation_status !== 'reply_drop') {
+              // After initial curation: only count if not dropped
+              accum.unfollowed_reply_total += 1
+            }
+            // Note: If reply_drop, we don't count it (already handled by curation)
+          }
+        } else {
+          accum.original_total += 1
+        }
       }
     }
 
@@ -538,7 +573,7 @@ function computeUserProbabilities(
   minFolloweeDayCount: number
 ): [GlobalStats, UserFilter] {
   // Use complete intervals for dayTotal if available, fallback to all processed intervals
-  let dayTotal = intervalDiagnostics.completeIntervalsDays > 0
+  const dayTotal = intervalDiagnostics.completeIntervalsDays > 0
     ? intervalDiagnostics.completeIntervalsDays
     : (intervalCount / intervalsPerDay)
   
@@ -562,7 +597,9 @@ function computeUserProbabilities(
     const denominator = Math.max(minFolloweeDayCount, userDayCount)
     userEntry.motx_daily = accum.motx_total / denominator
     userEntry.priority_daily = accum.priority_total / denominator
-    userEntry.post_daily = accum.post_total / denominator
+    userEntry.original_daily = accum.original_total / denominator
+    userEntry.followed_reply_daily = accum.followed_reply_total / denominator
+    userEntry.unfollowed_reply_daily = accum.unfollowed_reply_total / denominator
     userEntry.repost_daily = accum.repost_total / denominator
     userEntry.engaged_daily = accum.engaged_total / denominator
 
@@ -609,7 +646,13 @@ function computeUserProbabilities(
     // Math.max(1, netCount) prevents division by zero, Math.min(1, ...) bounds result
     userEntry.net_prob = Math.min(1, skylimitNumber / Math.max(1, netCount))
 
-    const regularPostsPlusReposts = Math.max(1, userEntry.post_daily + userEntry.repost_daily)
+    // Regular posts = original + followed replies + unfollowed replies + reposts
+    // Note: unfollowed_reply_daily is already filtered during accumulation:
+    // - During initial lookback: always 0
+    // - After initial curation: only non-dropped replies counted
+    const regularPostsPlusReposts = Math.max(1,
+      userEntry.original_daily + userEntry.followed_reply_daily +
+      userEntry.unfollowed_reply_daily + userEntry.repost_daily)
     const userSkylimitNumber = skylimitNumber * (accum.weight || 1)
     let availableViews = userSkylimitNumber - userEntry.motx_daily
     
@@ -630,14 +673,19 @@ function computeUserProbabilities(
   }
   
   // Calculate global stats - total posts across all users
+  // postTotal now simply sums all counts - unfollowed replies are already filtered during accumulation
   const postTotal = Object.values(userAccum).reduce((sum, accum) =>
-    sum + accum.post_total + accum.repost_total + accum.motx_total + accum.priority_total, 0
+    sum + accum.original_total + accum.followed_reply_total + accum.unfollowed_reply_total +
+          accum.repost_total + accum.motx_total + accum.priority_total, 0
   )
 
-  // Calculate original posts vs reposts breakdown
-  const originalPostsTotal = Object.values(userAccum).reduce((sum, accum) =>
-    sum + accum.post_total + accum.motx_total + accum.priority_total, 0
-  )
+  // Calculate posts breakdown
+  const originalTotal = Object.values(userAccum).reduce((sum, accum) =>
+    sum + accum.original_total, 0)
+  const followedReplyTotal = Object.values(userAccum).reduce((sum, accum) =>
+    sum + accum.followed_reply_total, 0)
+  const unfollowedReplyTotal = Object.values(userAccum).reduce((sum, accum) =>
+    sum + accum.unfollowed_reply_total, 0)
   const repostsTotal = Object.values(userAccum).reduce((sum, accum) =>
     sum + accum.repost_total, 0
   )
@@ -663,7 +711,9 @@ function computeUserProbabilities(
     analysis_end_time: intervalDiagnostics.endTime.toISOString(),
 
     // Posts breakdown
-    original_posts_daily: originalPostsTotal / dayTotal,
+    original_daily: originalTotal / dayTotal,
+    followed_reply_daily: followedReplyTotal / dayTotal,
+    unfollowed_reply_daily: unfollowedReplyTotal / dayTotal,
     reposts_daily: repostsTotal / dayTotal,
 
     // Cache diagnostics

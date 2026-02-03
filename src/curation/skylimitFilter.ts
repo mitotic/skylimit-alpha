@@ -17,7 +17,8 @@ import {
   PRIORITY_TAG,
   MOTD_MIN_SKYLIMIT_NUMBER,
   USER_TOPICS_KEY,
-  USER_TIMEZONE_KEY
+  USER_TIMEZONE_KEY,
+  extractDidFromUri
 } from './types'
 import { hmacRandom } from '../utils/hmac'
 import {
@@ -26,18 +27,20 @@ import {
   getFeedViewPostTimestamp
 } from './skylimitGeneral'
 import { saveFollow } from './skylimitCache'
+import { isInitialLookbackCompleted } from './skylimitFeedCache'
 
 const DIGEST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000  // 7 days - posts within this window are digestible
 
 /**
- * Count total posts for a user entry
- */
-/**
  * Count total posts per day for a user entry.
- * Includes: MOTx posts + priority posts + regular posts + reposts.
+ * Unfollowed replies are always included - filtering is done during accumulation.
  */
-export function countTotalPosts(userEntry: { motx_daily: number; priority_daily: number; post_daily: number; repost_daily: number }): number {
-  return userEntry.motx_daily + userEntry.priority_daily + userEntry.post_daily + userEntry.repost_daily
+export function countTotalPosts(
+  userEntry: { motx_daily: number; priority_daily: number; original_daily: number; followed_reply_daily: number; unfollowed_reply_daily: number; repost_daily: number }
+): number {
+  return userEntry.motx_daily + userEntry.priority_daily +
+         userEntry.original_daily + userEntry.followed_reply_daily +
+         userEntry.unfollowed_reply_daily + userEntry.repost_daily
 }
 
 /**
@@ -201,8 +204,42 @@ export async function curateSinglePost(
       modStatus.curation_status = priorityDrop ? 'priority_drop' : 'priority_show'
       if (priorityDrop) dropReason = 'random (priority)'
     } else {
-      modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
-      if (regularDrop) dropReason = 'random (regular)'
+      // Check if this is an unfollowed reply
+      const isUnfollowedReply = summary.inReplyToUri && (() => {
+        const parentDid = extractDidFromUri(summary.inReplyToUri!)
+        if (!parentDid) return false
+        // Check if parent author is NOT in currentFollows
+        return !Object.values(currentFollows).some(f => f.accountDid === parentDid)
+      })()
+
+      if (isUnfollowedReply) {
+        // Check if this is the first curation round (initial lookback active)
+        const initialLookbackActive = !(await isInitialLookbackCompleted())
+
+        if (initialLookbackActive) {
+          // First round: ALWAYS drop unfollowed replies
+          modStatus.curation_status = 'reply_drop'
+          dropReason = 'unfollowed reply (initial)'
+        } else {
+          // Subsequent rounds: apply normal logic
+          const { getSettings } = await import('./skylimitStore')
+          const settings = await getSettings()
+          const hideUnfollowedReplies = settings?.hideUnfollowedReplies ?? false
+
+          if (hideUnfollowedReplies || userEntry.regular_prob < 1) {
+            // Drop: setting is on OR poster is not a quiet poster
+            modStatus.curation_status = 'reply_drop'
+            dropReason = 'unfollowed reply'
+          } else {
+            // Show: quiet poster (regular_prob=1) AND setting is off
+            modStatus.curation_status = 'regular_show'
+          }
+        }
+      } else {
+        // Original post or followed reply - standard logic
+        modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
+        if (regularDrop) dropReason = 'random (regular)'
+      }
     }
 
     // Check if should save for edition (only for shown posts)
