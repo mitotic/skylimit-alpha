@@ -19,7 +19,7 @@ const MAX_PAGE_RAW = 100
 
 // Default settings
 export const PAGED_UPDATES_DEFAULTS = {
-  varFactor: 1.5,
+  varFactor: 2,
   fullPageWaitMinutes: 10,  // Time to wait for full page before showing partial page button
 }
 

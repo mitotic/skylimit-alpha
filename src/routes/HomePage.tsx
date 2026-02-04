@@ -2063,11 +2063,57 @@ export default function HomePage() {
         setIdleTimerTriggered(false)
         lastDisplayTimeRef.current = Date.now()
 
-        // Clear session storage to force fresh load from cache (not restore old feed)
-        sessionStorage.removeItem(getFeedStateKey('curated'))
+        // Load exactly one page of curated posts from cache
+        // (Don't use redisplayFeed which loads pageLength * 2)
+        const pagedSettings = await getPagedUpdatesSettings()
+        const [, currentProbs] = await getFilter() || [null, null]
+        const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
+        const rawPostsNeeded = calculatePageRaw(pageLength, currentFilterFrac, pagedSettings.varFactor)
 
-        // Load feed fresh from cache (redisplayFeed will fall through to loadFeed)
-        await redisplayFeed()
+        const feedReceivedTime = new Date()
+        const cachedPosts = await getCachedFeed(rawPostsNeeded)
+
+        if (cachedPosts.length > 0) {
+          // Apply curation filtering
+          let filteredPosts = await lookupCurationAndFilter(
+            cachedPosts,
+            feedReceivedTime,
+            undefined,
+            false  // Apply filtering
+          )
+
+          // Trim to pageLength if we got more than expected
+          if (filteredPosts.length > pageLength) {
+            filteredPosts = filteredPosts.slice(0, pageLength)
+          }
+
+          console.log(`[New Page] Displaying ${filteredPosts.length} curated posts (from ${cachedPosts.length} raw, filterFrac=${currentFilterFrac.toFixed(2)})`)
+
+          // Update feed state
+          setFeed(filteredPosts)
+
+          // Update timestamps
+          const newestTimestamp = getFeedViewPostTimestamp(filteredPosts[0], feedReceivedTime).getTime()
+          const oldestTimestamp = getFeedViewPostTimestamp(filteredPosts[filteredPosts.length - 1], feedReceivedTime).getTime()
+          setNewestDisplayedPostTimestamp(newestTimestamp)
+          setOldestDisplayedPostTimestamp(oldestTimestamp)
+
+          // Save state to session storage
+          const stateToSave: SavedFeedState = {
+            displayedFeed: filteredPosts,
+            previousPageFeed: [],
+            newestDisplayedPostTimestamp: newestTimestamp,
+            oldestDisplayedPostTimestamp: oldestTimestamp,
+            hasMorePosts: true,
+            cursor: undefined,
+            savedAt: Date.now(),
+            lowestVisiblePostTimestamp: null,
+            newPostsCount: 0,
+            showNewPostsButton: false,
+            sessionDid: session.did
+          }
+          sessionStorage.setItem(getFeedStateKey('curated'), JSON.stringify(stateToSave))
+        }
 
         // Scroll to top after loading new posts
         isProgrammaticScrollRef.current = true
