@@ -12,7 +12,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, getPostSummariesInRange } from '../curation/skylimitCache'
+import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, getPostSummariesInRange, getNewestSummaryTimestamp, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
@@ -760,43 +760,80 @@ export default function HomePage() {
       // Clear rate limit status when starting a new request
       setRateLimitStatus(null)
 
-      // Check if cache is fresh (lookback was completed within lookback period)
-      const cacheIsFresh = await shouldUseCacheOnLoad(lookbackDays)
-      console.log(`[Feed] Cache freshness check: ${cacheIsFresh ? 'fresh' : 'stale'}`)
+      // Check both feed cache and summaries cache freshness
+      const feedCacheIsFresh = await shouldUseCacheOnLoad(lookbackDays)
+      const summariesCacheIsFresh = await isSummariesCacheFresh()
+      console.log(`[Feed] Cache status: feedCache=${feedCacheIsFresh ? 'fresh' : 'stale'}, summariesCache=${summariesCacheIsFresh ? 'fresh' : 'stale'}`)
+
+      // Idle threshold check (uses feedRedisplayIdleInterval)
+      const idleThreshold = settings?.feedRedisplayIdleInterval ?? 5 * 60 * 1000  // Default 5 min
+      const metadata = await getLastFetchMetadata()
+      const timeSinceLastFetch = metadata?.lastFetchTime ? Date.now() - metadata.lastFetchTime : Infinity
+      const idleTimeExceeded = timeSinceLastFetch > idleThreshold
+
+      // Determine load mode based on decision matrix:
+      // - Summaries stale → Initial load (regardless of feed cache)
+      // - Summaries fresh + feed stale → Clear feed cache → Idle return load
+      // - Summaries fresh + feed fresh + idle exceeded → Idle return load
+      // - Both fresh + within idle interval → Use cache
+      let isIdleReturnMode = false
+      let isInitialLoadMode = false
+
+      if (!summariesCacheIsFresh) {
+        // Summaries stale → must do initial load (compute stats first)
+        isInitialLoadMode = true
+        console.log('[Feed] Mode: INITIAL LOAD - summaries cache stale (< 24h span), clearing feed cache')
+        await clearFeedCache()
+        await clearFeedMetadata()
+      } else if (!feedCacheIsFresh) {
+        // Summaries fresh, feed stale → clear feed, do idle return load
+        isIdleReturnMode = true
+        console.log('[Feed] Mode: IDLE RETURN - feed cache stale but summaries fresh, clearing feed cache')
+        await clearFeedCache()
+        await clearFeedMetadata()
+      } else if (idleTimeExceeded) {
+        // Both fresh, but idle time exceeded → idle return load (don't clear cache)
+        isIdleReturnMode = true
+        console.log(`[Feed] Mode: IDLE RETURN - idle time exceeded (${Math.round(timeSinceLastFetch / 60000)} min > ${Math.round(idleThreshold / 60000)} min threshold), preserving cache`)
+      } else {
+        // Both caches fresh and within idle interval → use cache
+        console.log(`[Feed] Mode: USE CACHE - both caches fresh, idle time ${Math.round(timeSinceLastFetch / 60000)} min within ${Math.round(idleThreshold / 60000)} min threshold`)
+      }
 
       // ALWAYS try cache first (for initial load without cursor)
-      if (!cursor && useCache) {
+      // EXCEPTION: Skip cache-only path for idle return mode or initial load mode
+      if (!cursor && useCache && !isIdleReturnMode && !isInitialLoadMode) {
         const cachedPosts = await getCachedFeed(initialCacheLength)
         if (cachedPosts.length > 0) {
           // Get last cursor from metadata so "Prev Page" button appears
-          const metadata = await getLastFetchMetadata()
-          const lastCursor = metadata?.lastCursor
-          
+          const cachedMetadata = await getLastFetchMetadata()
+          const lastCursor = cachedMetadata?.lastCursor
+
           // Look up curation status and filter
           const feedReceivedTime = new Date()
           const filteredPosts = await lookupCurationAndFilter(cachedPosts, feedReceivedTime)
-          
+
           if (filteredPosts.length > 0) {
             setFeed(filteredPosts)
             setPreviousPageFeed([])  // Clear - will be populated by prefetch
             setCursor(lastCursor)  // Keep for backward compatibility
-            
+
             // Track newest post timestamp for new posts detection
             const newestTimestamp = getFeedViewPostTimestamp(filteredPosts[0], feedReceivedTime).getTime()
             setNewestDisplayedPostTimestamp(newestTimestamp)
-            
+
             // Track oldest post timestamp from displayed posts for pagination
             const oldestDisplayedTimestamp = getFeedViewPostTimestamp(filteredPosts[filteredPosts.length - 1], feedReceivedTime).getTime()
             setOldestDisplayedPostTimestamp(oldestDisplayedTimestamp)
             console.log(`[Feed] Set oldestDisplayedPostTimestamp from displayed posts: ${new Date(oldestDisplayedTimestamp).toISOString()} (from ${filteredPosts.length} displayed posts)`)
-            
+
             // IMPORTANT: Update oldestCachedPostTimestamp in metadata to the oldest postTimestamp from ALL cached posts (not just filtered)
             // This ensures we don't query for posts that were already in the initial cache batch
             // Use the last post from cachedPosts (which are sorted newest first) as the boundary
             const oldestCachedTimestamp = getFeedViewPostTimestamp(cachedPosts[cachedPosts.length - 1], feedReceivedTime).getTime()
             await updateFeedCacheOldestPostTimestamp(oldestCachedTimestamp)
             console.log(`[Feed] Updated oldestCachedPostTimestamp in metadata to oldest cached post: ${new Date(oldestCachedTimestamp).toISOString()} (from ${cachedPosts.length} cached posts, ${filteredPosts.length} displayed)`)
-            
+
             // Check if there are more posts available (based on oldestDisplayedPostTimestamp)
             // Use the local variable oldestDisplayedTimestamp (not state) since state updates are async
             // If oldestDisplayedTimestamp is set, there may be more posts in cache
@@ -804,7 +841,7 @@ export default function HomePage() {
             const shouldShowLoadMore = oldestDisplayedTimestamp !== null || lastCursor !== undefined
             setHasMorePosts(shouldShowLoadMore)
             console.log(`[Feed] Set hasMorePosts to ${shouldShowLoadMore} (oldestDisplayedTimestamp: ${oldestDisplayedTimestamp !== null}, lastCursor: ${lastCursor !== undefined})`)
-            
+
             // Mark initial load as complete
             setIsInitialLoad(false)
 
@@ -869,8 +906,42 @@ export default function HomePage() {
       const fetchIntervalHours = getIntervalHoursSync(fetchSettings)
       const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime, fetchIntervalHours)
 
+      // For idle return mode, filter out entries that already have cached summaries
+      // This avoids redundant curation work for posts we've already processed
+      let entriesToSave = entries
+      let allEntriesHadSummaries = false
+      let firstCachedSummaryIndex = -1
+
+      if (isIdleReturnMode && !cursor) {
+        // Check each entry for existing summary (posts are newest-first, so check in order)
+        for (let i = 0; i < entries.length; i++) {
+          const summaryExists = await checkPostSummaryExists(entries[i].uniqueId)
+          if (summaryExists) {
+            firstCachedSummaryIndex = i
+            break
+          }
+        }
+
+        if (firstCachedSummaryIndex === 0) {
+          // All entries already have summaries - gap is already filled
+          entriesToSave = []
+          allEntriesHadSummaries = true
+          console.log(`[Idle Return] All ${entries.length} posts already have cached summaries - gap already filled`)
+        } else if (firstCachedSummaryIndex > 0) {
+          // Some entries need saving (newer posts), some already have summaries (older posts in gap)
+          entriesToSave = entries.slice(0, firstCachedSummaryIndex)
+          console.log(`[Idle Return] ${entriesToSave.length} posts need curation, ${entries.length - firstCachedSummaryIndex} already have summaries`)
+        } else {
+          // No cached summaries found in this page - need full lookback
+          console.log(`[Idle Return] No cached summaries found in first page - full lookback needed`)
+        }
+      }
+
       // Save to feed cache and curate (ensures both happen together for cache integrity)
-      const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
+      // For idle return with some cached summaries, only save the new entries
+      const { curatedFeed } = entriesToSave.length > 0
+        ? await savePostsWithCuration(entriesToSave, newCursor, agent, myUsername, myDid)
+        : { curatedFeed: [] }
 
       // Debug: Log curation results
       if (newFeed.length > 0 && !cursor) {
@@ -925,105 +996,193 @@ export default function HomePage() {
 
           // Pre-fetch next page for instant Prev Page (when no lookback needed)
           // If lookback will happen, prefetch is done after redisplayFeed
-          if (cacheIsFresh && !cursor) {
+          if (!isIdleReturnMode && !isInitialLoadMode && !cursor) {
             setTimeout(async () => {
               await prefetchNextPage(oldestDisplayedTimestamp)
               setInitialPrefetchDone(true)
             }, 100)
           }
 
-          // Start background lookback if cache was not fresh (stale or empty)
-          if (!cacheIsFresh && !cursor) {
-            console.log('[Lookback] Cache is stale/empty, clearing feed cache before lookback...')
-            await clearFeedCache()
-            await clearFeedMetadata()
-            await clearPrevPageCursor()
-
-            setLookingBack(true)
-            setLookbackProgress(0)
-
+          // Start background lookback if in initial load mode or idle return mode
+          // For idle return: skip if all entries had summaries OR if a cached summary was found in the first page
+          const skipIdleReturnLookback = isIdleReturnMode && (allEntriesHadSummaries || firstCachedSummaryIndex > 0)
+          if ((isInitialLoadMode || isIdleReturnMode) && !cursor && !skipIdleReturnLookback) {
             const lookbackBoundary = getLookbackBoundary(lookbackDays)
 
-            performLookbackFetch(
-              agent,
-              myUsername,
-              myDid,
-              lookbackBoundary,
-              pageLength,
-              (progress) => {
-                setLookbackProgress(progress)
-              }
-            ).then(async (completed) => {
-              console.log(`[Lookback] Background lookback ${completed ? 'completed' : 'interrupted'}`)
-              setLookingBack(false)
-              setLookbackProgress(100)
+            if (isIdleReturnMode) {
+              // IDLE RETURN MODE: Curate while fetching, stop on cached summary
+              console.log('[Idle Return Lookback] Starting idle return lookback...')
 
-              // If this was initial curation, compute stats and show modal
-              if (isInitialCurationRef.current && completed) {
-                try {
-                  console.log('[Curation Init] Computing filter statistics...')
-                  // Compute stats/filter first (this populates the filter cache)
-                  await computeStatsInBackground(agent, myUsername, myDid, true)
+              // Get newest summary timestamp for progress calculation
+              const newestSummaryTs = await getNewestSummaryTimestamp()
 
-                  // Recompute curation status for all cached posts (updates summaries with drop decisions)
-                  console.log('[Curation Init] Updating curation decisions for cached posts...')
-                  await recomputeCurationDecisions(agent, myUsername, myDid)
+              setLookingBack(true)
+              setLookbackProgress(0)
 
-                  // Mark that initial lookback is complete - subsequent rounds will use normal logic
-                  await markInitialLookbackCompleted()
-                  console.log('[Curation Init] Initial lookback complete, flag set')
-
-                  console.log('[Curation Init] Getting curation statistics...')
-                  const curationStats = await getCurationInitStats()
-
-                  // Get followee count from filter (now populated)
-                  const filterResult = await getFilter()
-                  const followeeCount = filterResult
-                    ? Object.keys(filterResult[1]).filter(k => !k.startsWith('#')).length
-                    : 0
-
-                  // Calculate days analyzed and posts per day
-                  let daysAnalyzed = 0
-                  let postsPerDay = 0
-                  if (curationStats.oldestTimestamp && curationStats.newestTimestamp) {
-                    const timeRangeMs = curationStats.newestTimestamp - curationStats.oldestTimestamp
-                    daysAnalyzed = Math.max(1, Math.round(timeRangeMs / (24 * 60 * 60 * 1000)))
-                    postsPerDay = Math.round(curationStats.totalCount / daysAnalyzed)
-                  }
-
-                  setCurationInitStats({
-                    totalPosts: curationStats.totalCount,
-                    droppedCount: curationStats.droppedCount,
-                    followeeCount,
-                    oldestTimestamp: curationStats.oldestTimestamp,
-                    newestTimestamp: curationStats.newestTimestamp,
-                    daysAnalyzed,
-                    postsPerDay,
-                  })
-
-                  // Clear sessionStorage to force fresh load from feed cache
-                  // This ensures the feed is re-numbered with all lookback posts
-                  sessionStorage.removeItem(getFeedStateKey('curated'))
-
-                  // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
-                  console.log('[Curation Init] Reloading feed with curation data...')
-                  await redisplayFeed()
-
-                  // Show modal
-                  setShowCurationInitModal(true)
-                  isInitialCurationRef.current = false
-                  console.log('[Curation Init] Modal displayed')
-                } catch (err) {
-                  console.error('[Curation Init] Failed to compute stats:', err)
-                  isInitialCurationRef.current = false
+              performLookbackFetch(
+                agent,
+                myUsername,
+                myDid,
+                lookbackBoundary,
+                pageLength,
+                (progress) => {
+                  setLookbackProgress(progress)
+                },
+                undefined,  // initialLastPostTimeParam
+                {
+                  isIdleReturn: true,
+                  progressTargetTimestamp: newestSummaryTs ?? undefined
                 }
+              ).then(async (result) => {
+                console.log(`[Idle Return Lookback] Completed: ${result.postsCached} posts cached, stoppedOnCachedSummary: ${result.stoppedOnCachedSummary}`)
+                setLookingBack(false)
+                setLookbackProgress(100)
+
+                // Assign numbers to unnumbered summaries for today
+                const todayMidnight = getLocalMidnight(new Date()).getTime()
+                const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
+                const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
+                const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
+                const unnumbered = allSummaries.filter(s => s.postNumber === null || s.postNumber === undefined)
+
+                if (unnumbered.length > 0) {
+                  await assignIncrementalNumbers(unnumbered, maxPostNumber, maxCurationNumber)
+                  console.log(`[Idle Return Lookback] Assigned numbers to ${unnumbered.length} posts`)
+                }
+
+                // Clear sessionStorage to force fresh load from feed cache with updated numbers
+                sessionStorage.removeItem(getFeedStateKey('curated'))
+
+                // Refresh feed display with numbered posts
+                console.log('[Idle Return Lookback] Refreshing feed display with numbered posts...')
+                await redisplayFeed()
+
+                setInitialPrefetchDone(true)
+              }).catch((err) => {
+                console.error('[Idle Return Lookback] Failed:', err)
+                setLookingBack(false)
+                setLookbackProgress(null)
+                setInitialPrefetchDone(true)
+              })
+            } else {
+              // INITIAL LOAD MODE: Full lookback with delayed curation, stats computation
+              console.log('[Initial Load] Starting full lookback...')
+              await clearPrevPageCursor()
+
+              setLookingBack(true)
+              setLookbackProgress(0)
+
+              performLookbackFetch(
+                agent,
+                myUsername,
+                myDid,
+                lookbackBoundary,
+                pageLength,
+                (progress) => {
+                  setLookbackProgress(progress)
+                }
+              ).then(async (result) => {
+                console.log(`[Lookback] Background lookback ${result.completed ? 'completed' : 'interrupted'}`)
+                setLookingBack(false)
+                setLookbackProgress(100)
+
+                // If this was initial curation, compute stats and show modal
+                if (isInitialCurationRef.current && result.completed) {
+                  try {
+                    console.log('[Curation Init] Computing filter statistics...')
+                    // Compute stats/filter first (this populates the filter cache)
+                    await computeStatsInBackground(agent, myUsername, myDid, true)
+
+                    // Recompute curation status for all cached posts (updates summaries with drop decisions)
+                    console.log('[Curation Init] Updating curation decisions for cached posts...')
+                    await recomputeCurationDecisions(agent, myUsername, myDid)
+
+                    // Mark that initial lookback is complete - subsequent rounds will use normal logic
+                    await markInitialLookbackCompleted()
+                    console.log('[Curation Init] Initial lookback complete, flag set')
+
+                    console.log('[Curation Init] Getting curation statistics...')
+                    const curationStats = await getCurationInitStats()
+
+                    // Get followee count from filter (now populated)
+                    const filterResult = await getFilter()
+                    const followeeCount = filterResult
+                      ? Object.keys(filterResult[1]).filter(k => !k.startsWith('#')).length
+                      : 0
+
+                    // Calculate days analyzed and posts per day
+                    let daysAnalyzed = 0
+                    let postsPerDay = 0
+                    if (curationStats.oldestTimestamp && curationStats.newestTimestamp) {
+                      const timeRangeMs = curationStats.newestTimestamp - curationStats.oldestTimestamp
+                      daysAnalyzed = Math.max(1, Math.round(timeRangeMs / (24 * 60 * 60 * 1000)))
+                      postsPerDay = Math.round(curationStats.totalCount / daysAnalyzed)
+                    }
+
+                    setCurationInitStats({
+                      totalPosts: curationStats.totalCount,
+                      droppedCount: curationStats.droppedCount,
+                      followeeCount,
+                      oldestTimestamp: curationStats.oldestTimestamp,
+                      newestTimestamp: curationStats.newestTimestamp,
+                      daysAnalyzed,
+                      postsPerDay,
+                    })
+
+                    // Clear sessionStorage to force fresh load from feed cache
+                    // This ensures the feed is re-numbered with all lookback posts
+                    sessionStorage.removeItem(getFeedStateKey('curated'))
+
+                    // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
+                    console.log('[Curation Init] Reloading feed with curation data...')
+                    await redisplayFeed()
+
+                    // Show modal
+                    setShowCurationInitModal(true)
+                    isInitialCurationRef.current = false
+                    console.log('[Curation Init] Modal displayed')
+                  } catch (err) {
+                    console.error('[Curation Init] Failed to compute stats:', err)
+                    isInitialCurationRef.current = false
+                  }
+                }
+              }).catch((err) => {
+                console.error('[Lookback] Background lookback failed:', err)
+                setLookingBack(false)
+                setLookbackProgress(null)
+                setInitialPrefetchDone(true)  // Mark done so we don't show "Initializing..." forever
+              })
+            }
+          } else if (skipIdleReturnLookback) {
+            // Idle return with gap already filled - just assign numbers to any new posts and prefetch
+            console.log('[Idle Return] Gap already filled by first page - skipping background lookback')
+
+            // Assign numbers to unnumbered summaries for today (if any new posts were curated)
+            if (entriesToSave.length > 0) {
+              const todayMidnight = getLocalMidnight(new Date()).getTime()
+              const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
+              const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
+              const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
+              const unnumbered = allSummaries.filter(s => s.postNumber === null || s.postNumber === undefined)
+
+              if (unnumbered.length > 0) {
+                await assignIncrementalNumbers(unnumbered, maxPostNumber, maxCurationNumber)
+                console.log(`[Idle Return] Assigned numbers to ${unnumbered.length} posts`)
+
+                // Clear sessionStorage to force fresh load with updated numbers
+                sessionStorage.removeItem(getFeedStateKey('curated'))
+
+                // Refresh feed display with numbered posts
+                console.log('[Idle Return] Refreshing feed display with numbered posts...')
+                await redisplayFeed()
               }
-            }).catch((err) => {
-              console.error('[Lookback] Background lookback failed:', err)
-              setLookingBack(false)
-              setLookbackProgress(null)
-              setInitialPrefetchDone(true)  // Mark done so we don't show "Initializing..." forever
-            })
+            }
+
+            // Pre-fetch next page for instant Prev Page
+            setTimeout(async () => {
+              await prefetchNextPage(oldestDisplayedTimestamp)
+              setInitialPrefetchDone(true)
+            }, 100)
           }
 
           // Update hasMorePosts based on oldestDisplayedTimestamp (use local variable, not state)
@@ -1826,6 +1985,13 @@ export default function HomePage() {
   // Standard mode: loads posts from cache (already curated)
   // Paged updates mode: fetches fresh from server, curates one-by-one until PageSize displayed
   const handleLoadNewPosts = useCallback(async () => {
+    // Prevent loading during background lookback
+    if (lookingBack) {
+      console.log('[New Posts] Background lookback in progress, ignoring click')
+      addToast('Still syncing posts... Please wait.', 'info')
+      return
+    }
+
     // Prevent multiple simultaneous calls
     if (isLoadingMore) {
       console.log('[New Posts] Already loading, ignoring click')
@@ -1927,6 +2093,13 @@ export default function HomePage() {
   // Handle "All n new posts" button click
   // Two flows: partial page (incremental) and multi-page (full re-display)
   const handleLoadAllNewPosts = useCallback(async () => {
+    // Prevent loading during background lookback
+    if (lookingBack) {
+      console.log('[All New Posts] Background lookback in progress, ignoring click')
+      addToast('Still syncing posts... Please wait.', 'info')
+      return
+    }
+
     if (isLoadingMore || !agent || !session) {
       console.log('[All New Posts] Cannot load: isLoadingMore or missing agent/session')
       return
@@ -2496,17 +2669,17 @@ export default function HomePage() {
             {/* New Page / All New Posts buttons - two-button layout */}
             <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
               <div className="flex gap-2">
-                {/* "New Page" button - always visible, grayed out when inactive */}
+                {/* "New Page" button - always visible, grayed out when inactive or during lookback */}
                 <button
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    console.log('[New Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady })
+                    console.log('[New Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady, lookingBack })
                     handleLoadNewPosts()
                   }}
-                  disabled={isLoadingMore || !nextPageReady}
+                  disabled={isLoadingMore || !nextPageReady || lookingBack}
                   className={`flex-1 btn flex items-center justify-center gap-2 ${
-                    nextPageReady
+                    nextPageReady && !lookingBack
                       ? 'btn-primary'
                       : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
                   } disabled:opacity-50`}
@@ -2525,8 +2698,8 @@ export default function HomePage() {
                   )}
                 </button>
 
-                {/* "All n new posts" button - shown when idle timer triggered and posts available */}
-                {idleTimerTriggered && partialPageCount > 0 && (
+                {/* "All n new posts" button - shown when idle timer triggered and posts available, hidden during lookback */}
+                {idleTimerTriggered && partialPageCount > 0 && !lookingBack && (
                   <button
                     onClick={(e) => {
                       e.preventDefault()
@@ -2534,7 +2707,7 @@ export default function HomePage() {
                       console.log('[All New Posts] Button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
                       handleLoadAllNewPosts()
                     }}
-                    disabled={isLoadingMore}
+                    disabled={isLoadingMore || lookingBack}
                     className="flex-1 btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
                     aria-label={`Load all ${partialPageCount} new posts`}
                   >

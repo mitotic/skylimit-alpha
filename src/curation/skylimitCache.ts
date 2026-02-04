@@ -292,6 +292,87 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
 }
 
 /**
+ * Get the newest post timestamp from the post summaries cache
+ * Uses the postTimestamp index for efficient O(1) lookup
+ *
+ * @returns Newest postTimestamp in summaries cache, or null if empty
+ */
+export async function getNewestSummaryTimestamp(): Promise<number | null> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
+    const index = store.index('postTimestamp')
+
+    return new Promise((resolve, reject) => {
+      // Open cursor in descending order to get newest first
+      const request = index.openCursor(null, 'prev')
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (cursor) {
+          resolve(cursor.value.postTimestamp)
+        } else {
+          resolve(null)  // Empty cache
+        }
+      }
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('Failed to get newest summary timestamp:', error)
+    return null
+  }
+}
+
+/**
+ * Get the oldest post timestamp from the post summaries cache
+ * Uses the postTimestamp index for efficient O(1) lookup
+ *
+ * @returns Oldest postTimestamp in summaries cache, or null if empty
+ */
+export async function getOldestSummaryTimestamp(): Promise<number | null> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
+    const index = store.index('postTimestamp')
+
+    return new Promise((resolve, reject) => {
+      // Open cursor in ascending order to get oldest first
+      const request = index.openCursor(null, 'next')
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (cursor) {
+          resolve(cursor.value.postTimestamp)
+        } else {
+          resolve(null)  // Empty cache
+        }
+      }
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('Failed to get oldest summary timestamp:', error)
+    return null
+  }
+}
+
+/**
+ * Check if summaries cache has at least 1 day of data.
+ * Returns true if the time span between oldest and newest summaries is >= 24 hours.
+ * This correctly handles the case where the user was idle for a long time
+ * and only has stale summaries from days ago.
+ */
+export async function isSummariesCacheFresh(): Promise<boolean> {
+  const oldestTimestamp = await getOldestSummaryTimestamp()
+  const newestTimestamp = await getNewestSummaryTimestamp()
+
+  if (!oldestTimestamp || !newestTimestamp) return false
+
+  const timeSpan = newestTimestamp - oldestTimestamp
+  const oneDayMs = 24 * 60 * 60 * 1000
+  return timeSpan >= oneDayMs
+}
+
+/**
  * Get post summary by unique ID (post URI for originals, `${did}:${uri}` for reposts)
  * Direct O(1) lookup by uniqueId key
  */

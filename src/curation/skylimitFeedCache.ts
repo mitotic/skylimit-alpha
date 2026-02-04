@@ -7,6 +7,7 @@ import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
 import {
   initDB,
   getPostSummary,
+  checkPostSummaryExists,
   clearPostSummaries,
   clearSecondaryFeedCache,
   getAllSecondaryPostsOldestFirst,
@@ -481,12 +482,39 @@ export async function extendFeedCache(
 }
 
 /**
+ * Options for idle return mode in performLookbackFetch
+ */
+export interface IdleReturnLookbackOptions {
+  /** Enable idle return behavior (stop on cached summary, different progress calc) */
+  isIdleReturn?: boolean
+  /** Newest cached summary timestamp for progress calculation */
+  progressTargetTimestamp?: number
+}
+
+/**
+ * Result of performLookbackFetch
+ */
+export interface LookbackFetchResult {
+  /** Whether lookback completed successfully */
+  completed: boolean
+  /** Whether lookback stopped because it found a cached summary (idle return mode) */
+  stoppedOnCachedSummary: boolean
+  /** Number of posts cached during lookback */
+  postsCached: number
+}
+
+/**
  * Perform background lookback fetch until reaching the lookback boundary
  * Fetches posts in batches, curates them, and caches them
  *
  * Uses lastPostTime tracking for accurate repost timestamps:
  * - Initial lastPostTime comes from oldest timestamp in feed cache (or provided externally)
  * - Each batch chains finalLastPostTime to the next
+ *
+ * Idle Return Mode (when options.isIdleReturn is true):
+ * - Stops when encountering a post that already has a cached summary
+ * - Uses progressTargetTimestamp for progress calculation instead of lookbackBoundary
+ * - Does NOT clear feed cache (caller should not clear it)
  *
  * @param agent - BskyAgent instance
  * @param myUsername - Current user's username
@@ -495,7 +523,8 @@ export async function extendFeedCache(
  * @param pageLength - Number of posts per batch
  * @param onProgress - Callback for progress updates (0-100)
  * @param initialLastPostTimeParam - Optional initial lastPostTime (e.g., from initial fetch)
- * @returns true if lookback completed successfully, false if interrupted
+ * @param options - Optional idle return mode options
+ * @returns LookbackFetchResult with completion status and details
  */
 export async function performLookbackFetch(
   agent: BskyAgent,
@@ -504,10 +533,20 @@ export async function performLookbackFetch(
   lookbackBoundary: Date,
   pageLength: number = DEFAULT_PAGE_LENGTH,
   onProgress?: (percent: number) => void,
-  initialLastPostTimeParam?: Date
-): Promise<boolean> {
+  initialLastPostTimeParam?: Date,
+  options?: IdleReturnLookbackOptions
+): Promise<LookbackFetchResult> {
+  const isIdleReturn = options?.isIdleReturn ?? false
+  const progressTargetTimestamp = options?.progressTargetTimestamp
+  let totalPostsCached = 0
+  let stoppedOnCachedSummary = false
+
   try {
-    console.log(`[Lookback] Starting background fetch until ${lookbackBoundary.toISOString()}`)
+    const modeLabel = isIdleReturn ? '[Idle Return Lookback]' : '[Lookback]'
+    console.log(`${modeLabel} Starting background fetch until ${lookbackBoundary.toISOString()}`)
+    if (isIdleReturn && progressTargetTimestamp) {
+      console.log(`${modeLabel} Progress target: ${new Date(progressTargetTimestamp).toISOString()}`)
+    }
 
     // Get interval settings for cache entries
     const settings = await getSettings()
@@ -519,8 +558,9 @@ export async function performLookbackFetch(
 
     // Initialize cursor state with staleness checking
     // Cursor state tracks: cursor value, when received, oldest post timestamp from that response
+    // For idle return mode, always start fresh (no cursor) to fetch from newest posts
     let cursorState: { cursor: string | undefined; receivedAt: number; oldestPostTimestamp: number } | null = null
-    if (metadata?.lastCursor && metadata.lastFetchTime) {
+    if (!isIdleReturn && metadata?.lastCursor && metadata.lastFetchTime) {
       const cursorAge = Date.now() - metadata.lastFetchTime
       if (cursorAge < CURSOR_STALENESS_MS) {
         cursorState = {
@@ -528,12 +568,12 @@ export async function performLookbackFetch(
           receivedAt: metadata.lastFetchTime,
           oldestPostTimestamp: metadata.oldestCachedPostTimestamp || Date.now()
         }
-        console.log(`[Lookback] Using existing cursor (age: ${Math.round(cursorAge / 1000)}s)`)
+        console.log(`${modeLabel} Using existing cursor (age: ${Math.round(cursorAge / 1000)}s)`)
       } else {
-        console.log(`[Lookback] Cursor is stale (age: ${Math.round(cursorAge / 1000)}s), starting fresh`)
+        console.log(`${modeLabel} Cursor is stale (age: ${Math.round(cursorAge / 1000)}s), starting fresh`)
       }
     } else {
-      console.log('[Lookback] No cursor available, starting fresh')
+      console.log(`${modeLabel} ${isIdleReturn ? 'Idle return mode - starting fresh' : 'No cursor available, starting fresh'}`)
     }
 
     // Initialize lastPostTime from parameter, oldest cached timestamp, or current time
@@ -544,7 +584,7 @@ export async function performLookbackFetch(
       const oldestTimestamp = await getOldestCachedPostTimestamp()
       lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
     }
-    console.log(`[Lookback] Initial lastPostTime: ${lastPostTime.toISOString()}`)
+    console.log(`${modeLabel} Initial lastPostTime: ${lastPostTime.toISOString()}`)
 
     // Loop continues until we hit a stopping condition (not dependent on having a cursor)
     while (iterations < maxIterations) {
@@ -556,12 +596,12 @@ export async function performLookbackFetch(
         cursor: cursorState?.cursor,  // undefined = fetch from newest
         limit: batchSize,
         onRateLimit: (info) => {
-          console.warn('[Lookback] Rate limit encountered:', info)
+          console.warn(`${modeLabel} Rate limit encountered:`, info)
         }
       })
 
       if (feed.length === 0) {
-        console.log('[Lookback] No more posts from server')
+        console.log(`${modeLabel} No more posts from server`)
         break
       }
 
@@ -570,13 +610,42 @@ export async function performLookbackFetch(
       const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
       lastPostTime = finalLastPostTime  // Chain for next batch
 
+      // In idle return mode, check if any post already has a cached summary BEFORE saving
+      // This allows us to stop early when we reach the gap boundary
+      if (isIdleReturn) {
+        for (const entry of entries) {
+          const summaryExists = await checkPostSummaryExists(entry.uniqueId)
+          if (summaryExists) {
+            console.log(`${modeLabel} Found cached summary for post ${entry.uniqueId}, gap filled!`)
+            stoppedOnCachedSummary = true
+            break
+          }
+        }
+        if (stoppedOnCachedSummary) {
+          // Still save the posts we fetched before hitting the cached one
+          const entriesToSave = []
+          for (const entry of entries) {
+            const summaryExists = await checkPostSummaryExists(entry.uniqueId)
+            if (summaryExists) break
+            entriesToSave.push(entry)
+          }
+          if (entriesToSave.length > 0) {
+            const { savedCount } = await savePostsWithCuration(entriesToSave, newCursor, agent, myUsername, myDid)
+            totalPostsCached += savedCount
+            console.log(`${modeLabel} Saved ${savedCount} posts before cached summary`)
+          }
+          break
+        }
+      }
+
       // Save to feed cache and curate (ensures both happen together for cache integrity)
       const { curatedFeed, savedCount } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
+      totalPostsCached += savedCount
 
       // Insert edition posts if needed (for display purposes)
       await insertEditionPosts(curatedFeed)
 
-      console.log(`[Lookback] Fetched ${feed.length} posts, saved ${savedCount} new (iteration ${iterations})`)
+      console.log(`${modeLabel} Fetched ${feed.length} posts, saved ${savedCount} new (iteration ${iterations})`)
 
       // Update cursor state for next iteration
       if (newCursor && entries.length > 0) {
@@ -590,8 +659,12 @@ export async function performLookbackFetch(
       }
 
       // Stop if we've reached already-cached posts (no new posts saved)
+      // Note: For idle return mode, this is a fallback - we primarily stop on cached summary
       if (savedCount === 0) {
-        console.log('[Lookback] Reached already-cached posts, stopping')
+        console.log(`${modeLabel} Reached already-cached posts, stopping`)
+        if (isIdleReturn) {
+          stoppedOnCachedSummary = true  // Treat as finding cached content
+        }
         break
       }
 
@@ -601,35 +674,53 @@ export async function performLookbackFetch(
       const oldestTimestamp = new Date(oldestEntry.postTimestamp)
 
       if (oldestTimestamp < lookbackBoundary) {
-        console.log(`[Lookback] Reached lookback boundary (oldest post: ${oldestTimestamp.toISOString()})`)
+        console.log(`${modeLabel} Reached lookback boundary (oldest post: ${oldestTimestamp.toISOString()})`)
         break
       }
 
       // Calculate and report progress
       if (onProgress) {
-        const progress = calculateLookbackProgress(oldestTimestamp, lookbackBoundary)
+        let progress: number
+        if (isIdleReturn && progressTargetTimestamp) {
+          // For idle return, progress is based on how close we are to the newest cached summary
+          const now = Date.now()
+          const totalSpan = now - progressTargetTimestamp
+          const covered = now - oldestEntry.postTimestamp
+          progress = Math.min(100, Math.round((covered / totalSpan) * 100))
+        } else {
+          // For initial lookback, use the standard boundary-based progress
+          progress = calculateLookbackProgress(oldestTimestamp, lookbackBoundary)
+        }
         onProgress(progress)
       }
 
       // If cursor became undefined, server has no more posts
       if (!cursorState?.cursor) {
-        console.log('[Lookback] Server cursor exhausted')
+        console.log(`${modeLabel} Server cursor exhausted`)
         break
       }
     }
 
     if (iterations >= maxIterations) {
-      console.warn('[Lookback] Reached max iterations limit')
+      console.warn(`${modeLabel} Reached max iterations limit`)
     }
 
     // Mark lookback as complete
     await markLookbackComplete()
-    console.log('[Lookback] Background fetch completed')
+    console.log(`${modeLabel} Background fetch completed (${totalPostsCached} posts cached)`)
 
-    return true
+    return {
+      completed: true,
+      stoppedOnCachedSummary,
+      postsCached: totalPostsCached
+    }
   } catch (error) {
     console.error('[Lookback] Failed during background fetch:', error)
-    return false
+    return {
+      completed: false,
+      stoppedOnCachedSummary,
+      postsCached: totalPostsCached
+    }
   }
 }
 
