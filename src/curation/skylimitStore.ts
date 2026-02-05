@@ -6,6 +6,9 @@
 import { SkylimitSettings } from './types'
 import { saveSettings, getSettings as getSettingsFromDB } from './skylimitCache'
 
+// Exported defaults for use in UI components
+export const FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT = 240 // minutes
+
 const DEFAULT_SETTINGS: SkylimitSettings = {
   viewsPerDay: 500,
   showTime: true, // Enable post numbering by default
@@ -17,7 +20,7 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   editionLayout: '',
   anonymizeUsernames: false,
   debugMode: false,
-  feedRedisplayIdleInterval: 5 * 60 * 1000, // 5 minutes in milliseconds
+  feedRedisplayIdleInterval: FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT * 60 * 1000, // in milliseconds
   feedPageLength: 25, // number of posts per page, default 25
   infiniteScrollingOption: false, // default to "Load More" button
   curationIntervalHours: 2, // curation interval in hours, must be factor of 24 (1, 2, 3, 4, 6, 8, 12)

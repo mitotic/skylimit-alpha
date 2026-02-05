@@ -6,7 +6,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
-import { getSettings, updateSettings } from '../curation/skylimitStore'
+import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
+import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
 import Button from '../components/Button'
 import SkylimitStatistics from '../components/SkylimitStatistics'
@@ -614,8 +615,8 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       min="1"
-                      max="60"
-                      value={settings.feedRedisplayIdleInterval ? settings.feedRedisplayIdleInterval / (60 * 1000) : 5}
+                      max="480"
+                      value={settings.feedRedisplayIdleInterval ? settings.feedRedisplayIdleInterval / (60 * 1000) : FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT}
                       onChange={(e) => {
                         const minutes = parseInt(e.target.value, 10)
                         if (!isNaN(minutes) && minutes > 0) {
@@ -687,7 +688,7 @@ export default function SettingsPage() {
                       min="1"
                       max="3"
                       step="0.1"
-                      value={settings.pagedUpdatesVarFactor ?? 1.5}
+                      value={settings.pagedUpdatesVarFactor ?? PAGED_UPDATES_DEFAULTS.varFactor}
                       onChange={(e) => {
                         const value = parseFloat(e.target.value)
                         if (!isNaN(value) && value >= 1 && value <= 3) {

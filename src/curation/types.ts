@@ -279,11 +279,11 @@ export interface SkylimitSettings {
   editionLayout: string
   anonymizeUsernames: boolean
   debugMode: boolean
-  feedRedisplayIdleInterval?: number // in milliseconds, default 5 minutes
+  feedRedisplayIdleInterval?: number // in milliseconds, default 240 minutes
   feedPageLength?: number // number of posts per page, default 25, range 10-100
   infiniteScrollingOption?: boolean // enable infinite scrolling, default false
   // Paged fresh updates settings
-  pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 1.5
+  pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 2
   pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 30
   // Lookback caching settings
   lookbackDays?: number // number of days to cache back from today, default 1
