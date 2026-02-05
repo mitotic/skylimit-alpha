@@ -54,6 +54,8 @@ interface SavedFeedState {
   newPostsCount: number // count of new posts available (for "New Posts" button)
   showNewPostsButton: boolean // whether to show the "New Posts" button
   sessionDid: string // DID of the user session when state was saved (to prevent restoring feed for different user)
+  curationSuspended?: boolean // whether curation was suspended when feed was saved
+  showAllPosts?: boolean // whether "show all posts" was enabled when feed was saved
 }
 
 // Helper function to find the timestamp of the lowest visible post
@@ -167,6 +169,8 @@ export default function HomePage() {
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [dbInitialized, setDbInitialized] = useState(false)
   const [skylimitStats, setSkylimitStats] = useState<GlobalStats | null>(null)
+  const [curationSuspended, setCurationSuspended] = useState(false)
+  const [showAllPosts, setShowAllPosts] = useState(false)
   const [newPostsCount, setNewPostsCount] = useState(0)
   const [showNewPostsButton, setShowNewPostsButton] = useState(false)
   const [isScrolledDown, setIsScrolledDown] = useState(false)
@@ -253,7 +257,9 @@ export default function HomePage() {
           lowestVisiblePostTimestamp,
           newPostsCount,
           showNewPostsButton,
-          sessionDid: session?.did || '' // Save session DID to ensure we only restore for the same user
+          sessionDid: session?.did || '', // Save session DID to ensure we only restore for the same user
+          curationSuspended,
+          showAllPosts
         }
 
         try {
@@ -265,7 +271,7 @@ export default function HomePage() {
     }
 
     previousPathnameRef.current = location.pathname
-  }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, newPostsCount, showNewPostsButton, session, activeTab])
+  }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, newPostsCount, showNewPostsButton, session, activeTab, curationSuspended, showAllPosts])
 
   // Disable browser scroll restoration
   useEffect(() => {
@@ -387,8 +393,9 @@ export default function HomePage() {
     if (isLoading) return
 
     // Debounce saves to avoid excessive writes
-    const timeoutId = setTimeout(() => {
+    const timeoutId = setTimeout(async () => {
       const lowestVisiblePostTimestamp = findLowestVisiblePostTimestamp(feed)
+      const settings = await getSettings()
 
       const feedState: SavedFeedState = {
         displayedFeed: feed,
@@ -401,7 +408,9 @@ export default function HomePage() {
         lowestVisiblePostTimestamp,
         newPostsCount,
         showNewPostsButton,
-        sessionDid: session?.did || '' // Save session DID to ensure we only restore for the same user
+        sessionDid: session?.did || '', // Save session DID to ensure we only restore for the same user
+        curationSuspended: settings?.curationSuspended || false,
+        showAllPosts: settings?.showAllPosts || false
       }
 
       try {
@@ -414,9 +423,13 @@ export default function HomePage() {
     return () => clearTimeout(timeoutId)
   }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, isLoading, newPostsCount, showNewPostsButton, session, activeTab])
 
-  // Load Skylimit statistics
+  // Load Skylimit statistics and curation settings state
   const loadSkylimitStats = useCallback(async () => {
     try {
+      const settings = await getSettings()
+      setCurationSuspended(settings?.curationSuspended || false)
+      setShowAllPosts(settings?.showAllPosts || false)
+
       const filterResult = await getFilter()
       if (filterResult) {
         const [globalStats] = filterResult
@@ -516,11 +529,15 @@ export default function HomePage() {
 
     // Filter based on curation status
     const settings = await getSettings()
-    const curationDisabled = !settings || settings?.disabled
-    const showAllStatus = settings?.showAllStatus || false
+    const curationSuspended = !settings || settings?.curationSuspended
+    const showAllPosts = settings?.showAllPosts || false
 
     const filteredPosts = postsWithStatus.filter(post => {
-      if (curationDisabled || showAllStatus) {
+      if (curationSuspended) {
+        // Show all except reply_drop (Bluesky default behavior)
+        return post.curation?.curation_status !== 'reply_drop'
+      }
+      if (showAllPosts) {
         return true
       }
       return isStatusShow(post.curation?.curation_status)
@@ -1254,14 +1271,38 @@ export default function HomePage() {
       const maxDisplayedFeedSize = settings?.maxDisplayedFeedSize || DEFAULT_MAX_DISPLAYED_FEED_SIZE
       const feedReceivedTime = new Date()
 
+      // Check if curation settings changed since feed was saved
+      // If so, we need to re-filter the feed
+      const currentCurationSuspended = settings?.curationSuspended || false
+      const currentShowAllPosts = settings?.showAllPosts || false
+      const savedCurationSuspended = savedState.curationSuspended ?? false
+      const savedShowAllPosts = savedState.showAllPosts ?? false
+      const settingsChanged = currentCurationSuspended !== savedCurationSuspended ||
+                              currentShowAllPosts !== savedShowAllPosts
+
+      // If we're switching to show MORE posts (suspending curation or enabling showAllPosts),
+      // we need to reload from cache because saved feed doesn't have dropped posts
+      const needsMorePosts = (currentCurationSuspended && !savedCurationSuspended) ||
+                             (currentShowAllPosts && !savedShowAllPosts)
+
+      if (needsMorePosts) {
+        console.log(`[Redisplay] Settings changed to show more posts (suspended: ${savedCurationSuspended}→${currentCurationSuspended}, showAll: ${savedShowAllPosts}→${currentShowAllPosts}), falling back to loadFeed`)
+        sessionStorage.removeItem(getFeedStateKey('curated'))
+        return loadFeed()
+      }
+
+      if (settingsChanged) {
+        console.log(`[Redisplay] Curation settings changed (suspended: ${savedCurationSuspended}→${currentCurationSuspended}, showAll: ${savedShowAllPosts}→${currentShowAllPosts}), will re-filter`)
+      }
+
       // Look up curation status for restored posts from summaries cache
       // This ensures posts have correct curation metadata for counter display
-      // skipFiltering=true: Posts already passed curation, don't filter again
+      // skipFiltering: Only skip if settings haven't changed
       let feedWithCuration = await lookupCurationAndFilter(
         savedState.displayedFeed as CurationFeedViewPost[],
         feedReceivedTime,
         undefined,  // no postTimestamps
-        true        // skipFiltering - don't re-filter restored posts
+        !settingsChanged  // skipFiltering - only skip if settings unchanged
       )
 
       // Use trimFeedIfNeeded for consistent truncation behavior
@@ -1465,68 +1506,18 @@ export default function HomePage() {
     }
   }, [loadFeed])
 
-  // Re-filter feed from cache when showAllStatus setting changes
-  // This re-reads from IndexedDB cache and re-applies curation filtering without clearing caches
-  const refilterFeedFromCache = useCallback(async () => {
-    console.log('[Refilter] refilterFeedFromCache: Starting...')
-
-    try {
-      // Get all posts from the feed cache (last 24 hours)
-      const cachedPosts = await getCachedFeed(500) // Get enough posts to cover the feed
-      console.log(`[Refilter] Got ${cachedPosts.length} posts from cache`)
-
-      if (cachedPosts.length === 0) {
-        console.log('[Refilter] No cached posts found')
-        return
-      }
-
-      // Re-apply curation filtering with current settings
-      const filteredPosts = await lookupCurationAndFilter(cachedPosts, new Date())
-      console.log(`[Refilter] After filtering: ${filteredPosts.length} posts`)
-
-      // Update timestamp boundaries
-      if (filteredPosts.length > 0) {
-        const newestTime = getFeedViewPostTimestamp(filteredPosts[0], new Date()).getTime()
-        const oldestTime = getFeedViewPostTimestamp(filteredPosts[filteredPosts.length - 1], new Date()).getTime()
-        setNewestDisplayedPostTimestamp(newestTime)
-        setOldestDisplayedPostTimestamp(oldestTime)
-      }
-
-      // Update the feed state
-      setFeed(filteredPosts)
-      setPreviousPageFeed([])  // Clear - refiltering may change order
-      console.log('[Refilter] refilterFeedFromCache: Complete!')
-
-    } catch (error) {
-      console.error('[Refilter] refilterFeedFromCache failed:', error)
-    }
-  }, [lookupCurationAndFilter])
-
   // Expose debug function globally
   useEffect(() => {
     (window as any).clearCacheAndReloadHomePage = clearCacheAndReloadHomePage
-    ;(window as any).refilterFeedFromCache = refilterFeedFromCache
     return () => {
       delete (window as any).clearCacheAndReloadHomePage
-      delete (window as any).refilterFeedFromCache
     }
-  }, [clearCacheAndReloadHomePage, refilterFeedFromCache])
+  }, [clearCacheAndReloadHomePage])
 
   useEffect(() => {
     // Only load/redisplay feed if we're on the home page
     if (location.pathname !== '/') {
       return
-    }
-
-    // Check if we need to refilter the feed (set by SkylimitSettingsPage when showAllStatus changes)
-    const needsRefilter = sessionStorage.getItem('skylimit_needs_refilter')
-    if (needsRefilter === 'true') {
-      console.log('[HomePage] Detected refilter flag, triggering refilterFeedFromCache')
-      sessionStorage.removeItem('skylimit_needs_refilter')
-      // Clear saved feed state so it doesn't interfere with refilter
-      sessionStorage.removeItem(getFeedStateKey('curated'))
-      refilterFeedFromCache()
-      return // Don't continue with shouldRedisplay - let refilter handle the feed
     }
 
     // Reset scroll restoration flag when navigating to home page
@@ -1607,7 +1598,7 @@ export default function HomePage() {
     }
 
     shouldRedisplay()
-  }, [loadFeed, redisplayFeed, refilterFeedFromCache, location.pathname, session, activeTab])
+  }, [loadFeed, redisplayFeed, location.pathname, session, activeTab])
 
   // Restore scroll position when feed state is restored
   // Note: Scroll restoration works regardless of infinite scrolling setting
@@ -2110,7 +2101,9 @@ export default function HomePage() {
             lowestVisiblePostTimestamp: null,
             newPostsCount: 0,
             showNewPostsButton: false,
-            sessionDid: session.did
+            sessionDid: session.did,
+            curationSuspended: settings?.curationSuspended || false,
+            showAllPosts: settings?.showAllPosts || false
           }
           sessionStorage.setItem(getFeedStateKey('curated'), JSON.stringify(stateToSave))
         }
@@ -2634,7 +2627,9 @@ export default function HomePage() {
         lowestVisiblePostTimestamp,
         newPostsCount,
         showNewPostsButton,
-        sessionDid: session?.did || ''
+        sessionDid: session?.did || '',
+        curationSuspended,
+        showAllPosts
       }
       try {
         sessionStorage.setItem(currentFeedStateKey, JSON.stringify(feedState))
@@ -2680,7 +2675,11 @@ export default function HomePage() {
             </div>
             <div className="text-gray-400 dark:text-gray-500">→</div>
             <div className="text-gray-600 dark:text-gray-400">
-              <span className="font-semibold">~{skylimitStats.shown_daily.toFixed(0)}</span> displayed
+              {curationSuspended ? (
+                <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>
+              ) : (
+                <><span className="font-semibold">~{skylimitStats.shown_daily.toFixed(0)}</span> displayed</>
+              )}
             </div>
           </div>
         </div>

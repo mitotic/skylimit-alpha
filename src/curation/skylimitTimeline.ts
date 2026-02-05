@@ -26,7 +26,7 @@ export async function curatePosts(
 ): Promise<CurationFeedViewPost[]> {
   const settings = await getSettings()
 
-  // Always compute statistics for display, even when curation is disabled
+  // Always compute statistics for display, even when curation is suspended
   const [currentStats, currentProbs] = await getFilter() || [null, null]
   const currentFollows = await getAllFollows()
   const followMap: Record<string, any> = {}
@@ -38,7 +38,6 @@ export async function curatePosts(
   const editionTimeStrs = await getEditionTimeStrs()
   const editionCount = editionTimeStrs.length
   const secretKey = settings?.secretKey || 'default'
-  const curationDisabled = !settings || settings.disabled
 
   const result: CurationFeedViewPost[] = []
   // Collect new summaries to save (not already in cache)
@@ -103,10 +102,7 @@ export async function curatePosts(
     // Create curated post (include ALL posts, even dropped ones)
     const curatedPost: CurationFeedViewPost = {
       ...post,
-      curation: curationDisabled ? {
-        // When disabled, only include statistics (curation_msg), not filtering info
-        curation_msg: curation.curation_msg || undefined
-      } : curation,
+      curation: curation,
     }
 
     // Add ALL posts to result (filtering happens during rendering based on summaries cache)

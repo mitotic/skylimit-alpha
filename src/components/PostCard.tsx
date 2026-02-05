@@ -56,7 +56,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [loading, setLoading] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [showTime, setShowTime] = useState(false)
-  const [curationDisabled, setCurationDisabled] = useState(false)
+  const [showAllPosts, setShowAllPosts] = useState(false)
+  const [curationSuspended, setCurationSuspended] = useState(false)
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
   // Popup data for curation info
@@ -98,16 +99,17 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       const checkSettings = async () => {
         try {
           const settings = await getSettings()
-          // Track curation disabled state for styling
-          setCurationDisabled(settings?.disabled || false)
+          // Track showAllPosts and curationSuspended for styling (grayed out posts)
+          setShowAllPosts(settings?.showAllPosts || false)
+          setCurationSuspended(settings?.curationSuspended || false)
           // Load click to Bluesky setting from localStorage
           setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
           // Get page length for page boundary indicator
           setFeedPageLength(settings?.feedPageLength || 25)
-          // Show counter unless curation is disabled
+          // Show counter unless curation is suspended
           // The counter (#number) should always show when curation is enabled
           // The time (hh:mm) display is controlled separately by showTime setting
-          if (settings && !settings.disabled) {
+          if (settings && !settings.curationSuspended) {
             // Check if this post has been curated (has curation data in summaries cache)
             // Posts without curation data (empty curation object) won't have counter numbers
             const hasCurationData = curation && Object.keys(curation).length > 0
@@ -313,7 +315,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       className={`${isPageBoundary ? 'border-b-4 border-blue-500 dark:border-blue-400' : 'border-b border-gray-200 dark:border-gray-700'} hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors`}
     >
       {repostedBy && (
-        <div className={`px-4 pt-4 pb-2 text-sm text-gray-500 dark:text-gray-400 flex items-center justify-between relative ${'curation' in post && !curationDisabled && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}>
+        <div className={`px-4 pt-4 pb-2 text-sm text-gray-500 dark:text-gray-400 flex items-center justify-between relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}>
           <span
             onClick={handleReposterClick}
             className="hover:underline cursor-pointer"
@@ -387,7 +389,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       )}
 
       <div
-        className={`flex gap-3 ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && !curationDisabled && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}
+        className={`flex gap-3 ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}
         onClick={handlePostClick}
         style={{ cursor: 'pointer' }}
       >

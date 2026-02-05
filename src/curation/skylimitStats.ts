@@ -408,6 +408,7 @@ function computeIntervalStats(
       repostCount: summary.repostCount,
       inReplyToUri: summary.inReplyToUri,
       engaged: summary.engaged ? 1 : 0,
+      curation_status: summary.curation_status,  // Needed for repost_drop check
     }
 
     // Track oldest and newest timestamps
@@ -493,6 +494,11 @@ async function accumulateStatusCounts(
     const motx = summaryInfo.tags.some((tag: string) => MOT_TAGS.includes(tag))
 
     if (summaryInfo.repostUri) {
+      // Repost - skip if dropped by repost interval
+      if (summaryInfo.curation_status === 'repost_drop') {
+        // Don't count repost_drop in statistics - skip entirely
+        continue
+      }
       // Repost - accumulate repost statistics
       accum.repost_total += 1
     } else {

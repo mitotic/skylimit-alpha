@@ -26,7 +26,7 @@ import {
   isSamePeriod,
   getFeedViewPostTimestamp
 } from './skylimitGeneral'
-import { saveFollow } from './skylimitCache'
+import { saveFollow, wasRepostOrOriginalDisplayedWithinInterval } from './skylimitCache'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
 
 const DIGEST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000  // 7 days - posts within this window are digestible
@@ -191,7 +191,32 @@ export async function curateSinglePost(
         }
       }
     }
-    
+
+    // Check repost display interval (before probability filtering)
+    // This handles both forward (new posts) and backward (lookback) time navigation
+    if (summary.repostUri) {
+      const { getSettings, REPOST_DISPLAY_INTERVAL_DEFAULT } = await import('./skylimitStore')
+      const settings = await getSettings()
+      const intervalHours = settings?.repostDisplayIntervalHours ?? REPOST_DISPLAY_INTERVAL_DEFAULT
+
+      if (intervalHours > 0) {
+        const intervalMs = intervalHours * 60 * 60 * 1000
+
+        const wasDisplayedWithinInterval = await wasRepostOrOriginalDisplayedWithinInterval(
+          summary.repostUri,
+          summary.postTimestamp,
+          summary.uniqueId,
+          intervalMs
+        )
+
+        if (wasDisplayedWithinInterval) {
+          modStatus.curation_status = 'repost_drop'
+          modStatus.curation_msg = handledStatus + `\n[Dropped: repost/original shown within ${intervalHours}h]`
+          return modStatus
+        }
+      }
+    }
+
     const priorityDrop = randomNum >= userEntry.priority_prob
     const regularDrop = randomNum >= userEntry.regular_prob
 

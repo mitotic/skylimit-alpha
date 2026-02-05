@@ -20,10 +20,7 @@ export async function computeStatsInBackground(
 ): Promise<void> {
   try {
     const settings = await getSettings()
-    if (settings.disabled) {
-      return
-    }
-    
+
     // Refresh follows first (only if forced or it's been more than an hour)
     // Wait for completion so cached follows are available for stats computation
     try {

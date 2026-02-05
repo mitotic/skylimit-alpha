@@ -13,6 +13,7 @@ export default function Navigation() {
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
@@ -157,7 +158,7 @@ export default function Navigation() {
           </button>
 
           <button
-            onClick={logout}
+            onClick={() => setShowLogoutModal(true)}
             className="flex items-center gap-3 px-4 py-3 text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
             <span className="text-xl">⎋</span>
@@ -173,6 +174,17 @@ export default function Navigation() {
           </button>
         </>
       )}
+
+      {/* Logout Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={logout}
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+      />
 
       {/* Reset All Confirmation Modal */}
       <ConfirmModal

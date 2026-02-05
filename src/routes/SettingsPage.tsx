@@ -72,6 +72,7 @@ export default function SettingsPage() {
   const [isClearingSettings, setIsClearingSettings] = useState(false)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
@@ -229,30 +230,10 @@ export default function SettingsPage() {
 
     setSaving(true)
     try {
-      // Get the currently stored settings to compare settings that affect filtering
-      const storedSettings = await getSettings()
-      const storedShowAllStatus = storedSettings?.showAllStatus ?? false
-      const newShowAllStatus = settings.showAllStatus ?? false
-      const storedDisabled = storedSettings?.disabled ?? false
-      const newDisabled = settings.disabled ?? false
-
       await updateSettings(settings)
 
       // Mark settings as saved (no longer dirty)
       setOriginalSettings(structuredClone(settings))
-
-      // Trigger feed refilter if showAllStatus OR disabled changed
-      // Both settings affect which posts are displayed
-      if (newShowAllStatus !== storedShowAllStatus || newDisabled !== storedDisabled) {
-        console.log(`[Settings] Filter settings changed (showAllStatus: ${storedShowAllStatus}→${newShowAllStatus}, disabled: ${storedDisabled}→${newDisabled}), triggering refilter`)
-        // Set flag for HomePage to trigger refilter when it mounts/becomes active
-        // (HomePage may not be mounted while on settings page)
-        sessionStorage.setItem('skylimit_needs_refilter', 'true')
-        // Also try to call directly if HomePage is mounted
-        if ((window as any).refilterFeedFromCache) {
-          (window as any).refilterFeedFromCache()
-        }
-      }
 
       alert('Settings saved!')
     } catch (error) {
@@ -366,7 +347,7 @@ export default function SettingsPage() {
             @{session?.handle}
           </div>
         </div>
-        <Button variant="danger" onClick={logout}>
+        <Button variant="danger" onClick={() => setShowLogoutModal(true)}>
           Logout
         </Button>
       </div>
@@ -470,11 +451,21 @@ export default function SettingsPage() {
               <label className="flex items-center space-x-3">
                 <input
                   type="checkbox"
-                  checked={settings.showAllStatus}
-                  onChange={(e) => updateSetting('showAllStatus', e.target.checked)}
+                  checked={settings.showAllPosts}
+                  onChange={(e) => updateSetting('showAllPosts', e.target.checked)}
                   className="w-5 h-5"
                 />
                 <span>Show dropped posts (as grayed out)</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={settings.curationSuspended}
+                  onChange={(e) => updateSetting('curationSuspended', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Suspend curation (temporarily turn off Skylimit)</span>
               </label>
 
               <label className="flex items-center space-x-3">
@@ -485,16 +476,6 @@ export default function SettingsPage() {
                   className="w-5 h-5"
                 />
                 <span>Enable "infinite" scroll down</span>
-              </label>
-
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={settings.disabled}
-                  onChange={(e) => updateSetting('disabled', e.target.checked)}
-                  className="w-5 h-5"
-                />
-                <span>Disable curation (temporarily turn off Skylimit)</span>
               </label>
 
               <div>
@@ -516,6 +497,28 @@ export default function SettingsPage() {
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Time to wait for a full page before showing partial page. Range: 5-120 minutes.
+                </p>
+              </div>
+
+              <div>
+                <label className="block mb-2 font-medium">
+                  Repost Display Interval (hours):
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="96"
+                  value={settings.repostDisplayIntervalHours ?? 24}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value, 10)
+                    if (!isNaN(value) && value >= 0 && value <= 96) {
+                      updateSetting('repostDisplayIntervalHours', value)
+                    }
+                  }}
+                  className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Hide reposts if the original or another repost was shown within this interval. Set to 0 to disable. Range: 0-96 hours (up to 4 days).
                 </p>
               </div>
 
@@ -1013,6 +1016,17 @@ This cannot be undone.`}
           </div>
         </div>
       )}
+
+      {/* Logout Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={logout}
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+      />
 
       </div>
   )

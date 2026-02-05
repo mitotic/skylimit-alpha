@@ -2,7 +2,7 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, FeedCacheEntry, CurationStatus, isStatusDrop } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, FeedCacheEntry, CurationStatus, isStatusDrop, isStatusShow } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 
 const DB_NAME = 'skylimit_db'
@@ -398,6 +398,72 @@ export async function getPostSummary(uniqueId: string): Promise<PostSummary | nu
 export async function checkPostSummaryExists(uniqueId: string): Promise<boolean> {
   const summary = await getPostSummary(uniqueId)
   return summary !== null
+}
+
+/**
+ * Check if the original post or another repost was displayed within the interval window.
+ * Handles bidirectional time navigation (forward for new posts, backward for lookback).
+ *
+ * @param repostUri - The URI of the original post being reposted
+ * @param currentRepostTimestamp - The timestamp of the repost being curated (ms)
+ * @param currentRepostUniqueId - The uniqueId of the repost being curated (to exclude self)
+ * @param intervalMs - The interval window in milliseconds
+ * @returns true if the original or another repost was displayed within the interval
+ */
+export async function wasRepostOrOriginalDisplayedWithinInterval(
+  repostUri: string,
+  currentRepostTimestamp: number,
+  currentRepostUniqueId: string,
+  intervalMs: number
+): Promise<boolean> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+    // Define the time window (bidirectional)
+    const windowStart = currentRepostTimestamp - intervalMs
+    const windowEnd = currentRepostTimestamp + intervalMs
+
+    // Check 1: Was the original post displayed within the interval window?
+    const originalPost = await new Promise<PostSummary | undefined>((resolve, reject) => {
+      const request = store.get(repostUri)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    if (originalPost &&
+        originalPost.postTimestamp >= windowStart &&
+        originalPost.postTimestamp <= windowEnd &&
+        isStatusShow(originalPost.curation_status)) {
+      return true
+    }
+
+    // Check 2: Was another repost of this URI displayed within the interval window?
+    const repostIndex = store.index('repostUri')
+    const reposts = await new Promise<PostSummary[]>((resolve, reject) => {
+      const request = repostIndex.getAll(repostUri)
+      request.onsuccess = () => resolve(request.result || [])
+      request.onerror = () => reject(request.error)
+    })
+
+    for (const repost of reposts) {
+      // Skip the current repost being curated
+      if (repost.uniqueId === currentRepostUniqueId) {
+        continue
+      }
+      if (repost.postTimestamp >= windowStart &&
+          repost.postTimestamp <= windowEnd &&
+          isStatusShow(repost.curation_status)) {
+        return true
+      }
+    }
+
+    return false
+  } catch (error) {
+    console.error('[Repost Check] Failed to check interval display:', error)
+    return false  // On error, allow the repost
+  }
 }
 
 /**

@@ -14,6 +14,7 @@ export default function BurgerMenu() {
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
@@ -73,6 +74,11 @@ export default function BurgerMenu() {
   }
 
   const handleLogout = () => {
+    setShowLogoutModal(true)
+  }
+
+  const handleLogoutConfirm = () => {
+    setShowLogoutModal(false)
     setIsOpen(false)
     logout()
   }
@@ -166,6 +172,17 @@ export default function BurgerMenu() {
           </div>
         </>
       )}
+
+      {/* Logout Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={handleLogoutConfirm}
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+      />
 
       {/* Reset All Confirmation Modal */}
       <ConfirmModal

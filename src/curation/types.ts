@@ -18,6 +18,7 @@ export type CurationStatus =
   | 'regular_show'     // Regular post passes probability filter
   | 'regular_drop'     // Regular post fails probability filter
   | 'reply_drop'       // Unfollowed reply dropped
+  | 'repost_drop'      // Repost/original shown within interval
   | 'edition_drop'     // Post saved for edition digest
   | 'untracked_show'   // User not tracked - shown by default
   | 'temp_show'        // Temporary show during initial lookback (before stats computed)
@@ -271,8 +272,8 @@ export interface EditionLayout {
 export interface SkylimitSettings {
   viewsPerDay: number
   showTime: boolean
-  showAllStatus: boolean
-  disabled: boolean
+  showAllPosts: boolean
+  curationSuspended: boolean
   daysOfData: number
   secretKey: string
   editionTimes: string
@@ -285,6 +286,8 @@ export interface SkylimitSettings {
   // Paged fresh updates settings
   pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 2
   pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 30
+  // Repost display interval settings
+  repostDisplayIntervalHours?: number // hide reposts if original/repost shown within this interval (hours), default 0 (disabled)
   // Lookback caching settings
   lookbackDays?: number // number of days to cache back from today, default 1
   // Feed display settings
