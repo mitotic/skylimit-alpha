@@ -66,8 +66,10 @@ export default function SettingsPage() {
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
-  const [showCleanResetModal, setShowCleanResetModal] = useState(false)
-  const [isResetting, setIsResetting] = useState(false)
+  const [showResetFeedModal, setShowResetFeedModal] = useState(false)
+  const [isResettingFeed, setIsResettingFeed] = useState(false)
+  const [showResetCurationModal, setShowResetCurationModal] = useState(false)
+  const [isResettingCuration, setIsResettingCuration] = useState(false)
   const [showClearSettingsModal, setShowClearSettingsModal] = useState(false)
   const [isClearingSettings, setIsClearingSettings] = useState(false)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
@@ -252,30 +254,49 @@ export default function SettingsPage() {
     setSettings({ ...settings, [key]: value })
   }
 
-  const handleCleanCacheReset = async () => {
-    setIsResetting(true)
+  const handleResetCuration = async () => {
+    setIsResettingCuration(true)
     try {
-      // Check if clearCacheAndReloadHomePage is available (set by HomePage)
       if (typeof (window as any).clearCacheAndReloadHomePage === 'function') {
         await (window as any).clearCacheAndReloadHomePage()
-        setShowCleanResetModal(false)
-        setIsResetting(false)
-        // Navigate to home page
+        setShowResetCurationModal(false)
+        setIsResettingCuration(false)
         navigate('/')
       } else {
-        // Fallback: navigate to home first, then try again
         navigate('/')
-        // Give the home page time to mount and set up the function
         setTimeout(async () => {
           if (typeof (window as any).clearCacheAndReloadHomePage === 'function') {
             await (window as any).clearCacheAndReloadHomePage()
           }
-          setIsResetting(false)
+          setIsResettingCuration(false)
         }, 500)
       }
     } catch (error) {
-      console.error('Failed to reset cache:', error)
-      setIsResetting(false)
+      console.error('Failed to reset curation:', error)
+      setIsResettingCuration(false)
+    }
+  }
+
+  const handleResetFeed = async () => {
+    setIsResettingFeed(true)
+    try {
+      if (typeof (window as any).resetFeedAndReloadHomePage === 'function') {
+        await (window as any).resetFeedAndReloadHomePage()
+        setShowResetFeedModal(false)
+        setIsResettingFeed(false)
+        navigate('/')
+      } else {
+        navigate('/')
+        setTimeout(async () => {
+          if (typeof (window as any).resetFeedAndReloadHomePage === 'function') {
+            await (window as any).resetFeedAndReloadHomePage()
+          }
+          setIsResettingFeed(false)
+        }, 500)
+      }
+    } catch (error) {
+      console.error('Failed to reset feed:', error)
+      setIsResettingFeed(false)
     }
   }
 
@@ -867,11 +888,20 @@ export default function SettingsPage() {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setShowCleanResetModal(true)}
-              disabled={isResetting}
+              onClick={() => setShowResetFeedModal(true)}
+              disabled={isResettingFeed}
+              className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+            >
+              Reset feed
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowResetCurationModal(true)}
+              disabled={isResettingCuration}
               className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
             >
-              Reset cache
+              Reset curation
             </Button>
             <Button
               type="button"
@@ -894,24 +924,45 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* Clean Cache Reset Confirmation Modal */}
+        {/* Reset Feed Confirmation Modal */}
         <ConfirmModal
-          isOpen={showCleanResetModal}
-          onClose={() => setShowCleanResetModal(false)}
-          onConfirm={handleCleanCacheReset}
-          title="Reset Cache"
-          message={`This will clear all cached data and reload the home feed:
+          isOpen={showResetFeedModal}
+          onClose={() => setShowResetFeedModal(false)}
+          onConfirm={handleResetFeed}
+          title="Reset Feed"
+          message={`This will clear the feed and reload posts using existing curation data:
+• Feed posts and pagination state
+• Session storage state
+
+Curation summaries will be preserved, so posts will be curated on-the-fly without a full lookback.
+
+Your Skylimit settings, follow list, and login session will be preserved.
+
+You will be redirected to the home page with a refreshed feed.`}
+          confirmText={isResettingFeed ? 'Resetting...' : 'Reset Feed'}
+          cancelText="Cancel"
+          isDangerous={false}
+          isLoading={isResettingFeed}
+        />
+
+        {/* Reset Curation Confirmation Modal */}
+        <ConfirmModal
+          isOpen={showResetCurationModal}
+          onClose={() => setShowResetCurationModal(false)}
+          onConfirm={handleResetCuration}
+          title="Reset Curation"
+          message={`This will clear all cached data including curation summaries and reload the home feed:
 • Feed posts and pagination state
 • Curation summaries cache
 • Session storage state
 
 Your Skylimit settings, follow list, and login session will be preserved.
 
-You will be redirected to the home page with a fresh feed.`}
-          confirmText={isResetting ? 'Resetting...' : 'Reset Cache'}
+You will be redirected to the home page with a fresh curation pass.`}
+          confirmText={isResettingCuration ? 'Resetting...' : 'Reset Curation'}
           cancelText="Cancel"
           isDangerous={false}
-          isLoading={isResetting}
+          isLoading={isResettingCuration}
         />
 
         {/* Reset Skylimit Settings Confirmation Modal */}

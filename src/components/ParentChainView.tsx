@@ -4,6 +4,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import { formatDistanceToNow } from 'date-fns'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
+import RichText from './RichText'
 
 interface ParentChainViewProps {
   parents: AppBskyFeedDefs.PostView[]
@@ -77,7 +78,7 @@ function ParentPost({
 
           {record?.text && (
             <div className="whitespace-pre-wrap break-words">
-              {record.text}
+              <RichText text={record.text} facets={record.facets} />
             </div>
           )}
         </div>

@@ -9,6 +9,7 @@ import { getPostUniqueId } from '../curation/skylimitGeneral'
 import Avatar from './Avatar'
 import PostMedia from './PostMedia'
 import Spinner from './Spinner'
+import RichText from './RichText'
 
 interface ParentPostProps {
   parentUri: string
@@ -131,7 +132,7 @@ export default function ParentPost({ parentUri, childPost, onClick }: ParentPost
 
           {record?.text && (
             <div className="text-sm mb-1 whitespace-pre-wrap break-words line-clamp-3">
-              {record.text}
+              <RichText text={record.text} facets={record.facets} />
             </div>
           )}
 

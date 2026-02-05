@@ -14,6 +14,7 @@ import { ampUp, ampDown } from '../curation/skylimitFollows'
 import { getFilter, getFollow } from '../curation/skylimitCache'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
 import CurationPopup from './CurationPopup'
+import RichText from './RichText'
 
 interface PostCardProps {
   post: AppBskyFeedDefs.FeedViewPost | CurationFeedViewPost
@@ -539,7 +540,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
           {record?.text && (
             <div className="mb-2 whitespace-pre-wrap break-words">
-              {record.text}
+              <RichText text={record.text} facets={record.facets} />
             </div>
           )}
 

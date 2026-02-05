@@ -8,6 +8,7 @@ import Avatar from './Avatar'
 import PostMedia from './PostMedia'
 import Spinner from './Spinner'
 import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
+import RichText from './RichText'
 
 // Request deduplication: track in-flight requests to avoid duplicate calls for the same post
 const inFlightRequests = new Map<string, Promise<AppBskyFeedDefs.PostView | null>>()
@@ -244,7 +245,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
         <>
           {postText ? (
             <div className="text-sm mb-2 whitespace-pre-wrap break-words">
-              {postText}
+              <RichText text={postText} facets={displayRecord?.facets} />
             </div>
           ) : (
             // Only show placeholder if we have neither text nor media

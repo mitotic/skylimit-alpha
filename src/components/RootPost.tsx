@@ -8,6 +8,7 @@ import { getCachedRootPost, saveCachedRootPost } from '../curation/parentPostCac
 import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
+import RichText from './RichText'
 
 interface RootPostProps {
   rootUri: string
@@ -159,7 +160,7 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
 
           {record?.text && (
             <div className="whitespace-pre-wrap break-words">
-              {record.text}
+              <RichText text={record.text} facets={record.facets} />
             </div>
           )}
         </div>
