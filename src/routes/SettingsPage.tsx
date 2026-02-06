@@ -314,15 +314,17 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div className="card space-y-4">
         <h2 className="text-lg font-semibold">Account</h2>
-        <div>
-          <div className="font-medium">Logged in as</div>
-          <div className="text-sm text-gray-500 dark:text-gray-400">
-            @{session?.handle}
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="font-medium">Logged in as </span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">
+              @{session?.handle}
+            </span>
           </div>
+          <Button variant="danger" onClick={() => setShowLogoutModal(true)}>
+            Logout
+          </Button>
         </div>
-        <Button variant="danger" onClick={() => setShowLogoutModal(true)}>
-          Logout
-        </Button>
       </div>
 
       <div className="card space-y-4">

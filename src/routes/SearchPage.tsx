@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
+import { useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { searchActors, searchPosts } from '../api/search'
@@ -12,9 +12,27 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 
 type SearchTab = 'people' | 'posts'
 
+// sessionStorage keys
+const SEARCH_STATE_KEY = 'websky_search_state'
+const SEARCH_SCROLL_KEY = 'websky_search_scroll_position'
+
+// Discard saved state if older than 5 minutes
+const SEARCH_IDLE_INTERVAL = 5 * 60 * 1000
+
+interface SavedSearchState {
+  query: string
+  activeTab: SearchTab
+  results: any[]
+  postResults: AppBskyFeedDefs.PostView[]
+  postCursor: string | undefined
+  savedAt: number
+}
+
 export default function SearchPage() {
   const { agent } = useSession()
   const navigate = useNavigate()
+  const location = useLocation()
+  const navigationType = useNavigationType()
   const [query, setQuery] = useState('')
   const [activeTab, setActiveTab] = useState<SearchTab>('people')
   const [results, setResults] = useState<any[]>([])
@@ -25,13 +43,189 @@ export default function SearchPage() {
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [isScrolledDown, setIsScrolledDown] = useState(false)
 
+  // Refs for state preservation
+  const scrollRestoredRef = useRef(false)
+  const isProgrammaticScrollRef = useRef(false)
+  const scrollSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isRestoringRef = useRef(false)
+
+  // Ref to capture latest state for saving on unmount
+  const stateRef = useRef({ query, activeTab, results, postResults, postCursor })
+
+  // Disable browser scroll restoration
+  useEffect(() => {
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual'
+    }
+  }, [])
+
+  // Restore search state on mount if returning via back navigation
+  useEffect(() => {
+    if (navigationType !== 'POP') {
+      // Fresh navigation — clear any stale saved state
+      try {
+        sessionStorage.removeItem(SEARCH_STATE_KEY)
+        sessionStorage.removeItem(SEARCH_SCROLL_KEY)
+      } catch {
+        // Ignore
+      }
+      return
+    }
+
+    try {
+      const savedStateJson = sessionStorage.getItem(SEARCH_STATE_KEY)
+      if (!savedStateJson) return
+
+      const savedState: SavedSearchState = JSON.parse(savedStateJson)
+
+      // Check idle interval
+      const timeSinceSave = Date.now() - savedState.savedAt
+      if (timeSinceSave > SEARCH_IDLE_INTERVAL) {
+        sessionStorage.removeItem(SEARCH_STATE_KEY)
+        sessionStorage.removeItem(SEARCH_SCROLL_KEY)
+        return
+      }
+
+      // Restore state
+      isRestoringRef.current = true
+      setQuery(savedState.query)
+      setActiveTab(savedState.activeTab)
+      setResults(savedState.results)
+      setPostResults(savedState.postResults)
+      setPostCursor(savedState.postCursor)
+
+      // Allow a tick for state to settle
+      setTimeout(() => {
+        isRestoringRef.current = false
+      }, 100)
+    } catch (error) {
+      console.warn('Failed to restore search state:', error)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Restore scroll position after search state is restored
+  useEffect(() => {
+    if (location.pathname !== '/search') return
+    if (scrollRestoredRef.current) return
+    if (navigationType !== 'POP') {
+      scrollRestoredRef.current = true
+      return
+    }
+
+    // Wait for results to be populated before restoring scroll
+    const hasResults = results.length > 0 || postResults.length > 0
+    if (!hasResults) return
+
+    const savedScrollY = sessionStorage.getItem(SEARCH_SCROLL_KEY)
+    if (!savedScrollY) {
+      scrollRestoredRef.current = true
+      return
+    }
+
+    const scrollY = parseInt(savedScrollY, 10)
+    if (isNaN(scrollY) || scrollY <= 0) {
+      scrollRestoredRef.current = true
+      return
+    }
+
+    scrollRestoredRef.current = true
+
+    // Retry loop: 3 attempts at increasing delays
+    const attemptRestore = (attempt: number = 1) => {
+      const maxAttempts = 3
+      const delay = attempt * 100
+
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          const scrollHeight = document.documentElement.scrollHeight
+          const clientHeight = window.innerHeight
+          const maxScroll = Math.max(scrollHeight - clientHeight, 0)
+          const targetScroll = Math.min(scrollY, maxScroll)
+
+          if (targetScroll > 0 && scrollHeight > clientHeight) {
+            isProgrammaticScrollRef.current = true
+            window.scrollTo(0, targetScroll)
+
+            setTimeout(() => {
+              isProgrammaticScrollRef.current = false
+            }, 300)
+          } else if (attempt < maxAttempts) {
+            attemptRestore(attempt + 1)
+          }
+        })
+      }, delay)
+    }
+
+    attemptRestore()
+  }, [location.pathname, navigationType, results, postResults])
+
+  // Keep stateRef in sync with current state values
+  useEffect(() => {
+    stateRef.current = { query, activeTab, results, postResults, postCursor }
+  }, [query, activeTab, results, postResults, postCursor])
+
+  // Save search state on unmount (when navigating away from search page)
+  // Note: scroll position is saved continuously by the scroll listener effect,
+  // so we don't save it here (window.scrollY may already be 0 during unmount)
+  useEffect(() => {
+    return () => {
+      const { query: q, activeTab: tab, results: r, postResults: pr, postCursor: pc } = stateRef.current
+
+      // Only save if there's a query with results
+      if (q.trim() && (r.length > 0 || pr.length > 0)) {
+        const searchState: SavedSearchState = {
+          query: q,
+          activeTab: tab,
+          results: r,
+          postResults: pr,
+          postCursor: pc,
+          savedAt: Date.now()
+        }
+
+        try {
+          sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(searchState))
+        } catch (error) {
+          console.warn('Failed to save search state:', error)
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Track scroll position for scroll-to-top button AND state preservation
   useEffect(() => {
     const handleScroll = () => {
       const scrollY = window.scrollY || document.documentElement.scrollTop
       setIsScrolledDown(scrollY > 300)
+
+      // Don't save during programmatic scrolls
+      if (isProgrammaticScrollRef.current) return
+
+      // Debounce scroll position save
+      if (scrollSaveTimeoutRef.current) {
+        clearTimeout(scrollSaveTimeoutRef.current)
+      }
+      scrollSaveTimeoutRef.current = setTimeout(() => {
+        try {
+          if (scrollY < 50) {
+            sessionStorage.removeItem(SEARCH_SCROLL_KEY)
+          } else {
+            sessionStorage.setItem(SEARCH_SCROLL_KEY, scrollY.toString())
+          }
+        } catch {
+          // Ignore
+        }
+      }, 200)
     }
+
     window.addEventListener('scroll', handleScroll, { passive: true })
-    return () => window.removeEventListener('scroll', handleScroll)
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      if (scrollSaveTimeoutRef.current) {
+        clearTimeout(scrollSaveTimeoutRef.current)
+      }
+    }
   }, [])
 
   const handleScrollToTop = () => {
