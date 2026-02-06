@@ -4,7 +4,7 @@
  * Handles fetching timelines, home feeds, and post threads
  */
 
-import { BskyAgent, AppBskyFeedGetTimeline, AppBskyFeedGetAuthorFeed, AppBskyFeedGetPostThread, AppBskyFeedGetLikes, AppBskyFeedGetRepostedBy, AppBskyFeedDefs } from '@atproto/api'
+import { BskyAgent, AppBskyFeedGetTimeline, AppBskyFeedGetAuthorFeed, AppBskyFeedGetPostThread, AppBskyFeedGetLikes, AppBskyFeedGetRepostedBy, AppBskyFeedDefs, AppBskyBookmarkDefs } from '@atproto/api'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 
 export interface FeedOptions {
@@ -328,3 +328,48 @@ export async function getRepostedBy(
   })
 }
 
+/**
+ * Fetches the user's bookmarked posts with rate limit handling
+ */
+export async function getBookmarks(
+  agent: BskyAgent,
+  options: { limit?: number; cursor?: string; onRateLimit?: (info: { retryAfter?: number; message?: string }) => void } = {}
+): Promise<{
+  bookmarks: AppBskyBookmarkDefs.BookmarkView[]
+  cursor?: string
+}> {
+  return retryWithBackoff(
+    async () => {
+      const response = await agent.app.bsky.bookmark.getBookmarks({
+        limit: options.limit || 25,
+        cursor: options.cursor,
+      })
+      return {
+        bookmarks: response.data.bookmarks,
+        cursor: response.data.cursor,
+      }
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to fetch bookmarks: ${error.message}`)
+    }
+    throw new Error('Failed to fetch bookmarks: Unknown error')
+  })
+}

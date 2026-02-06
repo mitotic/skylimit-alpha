@@ -9,11 +9,11 @@ import ConfirmModal from './ConfirmModal'
 export default function Navigation() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { session, logout, agent } = useSession()
+  const { session, agent } = useSession()
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
-  const [showLogoutModal, setShowLogoutModal] = useState(false)
+
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
@@ -82,6 +82,7 @@ export default function Navigation() {
   const navItems = [
     { path: '/', label: 'Home', icon: '🏠' },
     { path: '/search', label: 'Search', icon: '🔍' },
+    { path: '/saved', label: 'Saved', icon: '🏷️' },
     { path: '/settings?tab=basic', label: 'Settings', icon: '⚙️' },
   ]
 
@@ -158,33 +159,14 @@ export default function Navigation() {
           </button>
 
           <button
-            onClick={() => setShowLogoutModal(true)}
-            className="flex items-center gap-3 px-4 py-3 text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            <span className="text-xl">⎋</span>
-            <span className="hidden md:inline font-medium">Logout</span>
-          </button>
-
-          <button
             onClick={() => setShowResetAllModal(true)}
             className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
-            <span className="text-xl">⏻</span>
+            <span className="text-xl">⎋</span>
             <span className="hidden md:inline font-medium">Reset all</span>
           </button>
         </>
       )}
-
-      {/* Logout Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showLogoutModal}
-        onClose={() => setShowLogoutModal(false)}
-        onConfirm={logout}
-        title="Logout"
-        message="Are you sure you want to logout?"
-        confirmText="Logout"
-        cancelText="Cancel"
-      />
 
       {/* Reset All Confirmation Modal */}
       <ConfirmModal

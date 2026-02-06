@@ -3,7 +3,7 @@ import { useParams, useSearchParams, useNavigate, useLocation, useNavigationType
 import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread, fetchParentChain } from '../api/feed'
-import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost } from '../api/posts'
+import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
 import PostCard from '../components/PostCard'
 import ParentChainView from '../components/ParentChainView'
 import Compose from '../components/Compose'
@@ -374,6 +374,86 @@ export default function ThreadPage() {
     }
   }
 
+  const handleBookmark = async (uri: string, cid: string) => {
+    if (!agent || !thread) return
+
+    // Check if it's the anchor post or a reply
+    const isAnchorPost = thread.post.uri === uri
+    const wasBookmarked = isAnchorPost
+      ? !!thread.post.viewer?.bookmarked
+      : !!((thread.replies || []) as AppBskyFeedDefs.ThreadViewPost[])
+          .find(r => 'post' in r && r.post.uri === uri)
+          ?.post.viewer?.bookmarked
+
+    // Optimistic update
+    setThread(prev => {
+      if (!prev) return null
+      if (isAnchorPost) {
+        return {
+          ...prev,
+          post: {
+            ...prev.post,
+            viewer: { ...prev.post.viewer, bookmarked: !wasBookmarked },
+          },
+        }
+      }
+      // Update reply
+      return {
+        ...prev,
+        replies: (prev.replies || []).map((r: any) => {
+          if ('post' in r && r.post.uri === uri) {
+            return {
+              ...r,
+              post: {
+                ...r.post,
+                viewer: { ...r.post.viewer, bookmarked: !wasBookmarked },
+              },
+            }
+          }
+          return r
+        }),
+      }
+    })
+
+    try {
+      if (wasBookmarked) {
+        await unbookmarkPost(agent, uri)
+      } else {
+        await bookmarkPost(agent, uri, cid)
+      }
+    } catch (error) {
+      // Revert
+      setThread(prev => {
+        if (!prev) return null
+        if (isAnchorPost) {
+          return {
+            ...prev,
+            post: {
+              ...prev.post,
+              viewer: { ...prev.post.viewer, bookmarked: wasBookmarked },
+            },
+          }
+        }
+        return {
+          ...prev,
+          replies: (prev.replies || []).map((r: any) => {
+            if ('post' in r && r.post.uri === uri) {
+              return {
+                ...r,
+                post: {
+                  ...r.post,
+                  viewer: { ...r.post.viewer, bookmarked: wasBookmarked },
+                },
+              }
+            }
+            return r
+          }),
+        }
+      })
+      addToast(error instanceof Error ? error.message : 'Failed to update bookmark', 'error')
+    }
+  }
+
   const handleRepost = async (uri: string, cid: string) => {
     if (!agent || !thread) return
 
@@ -584,6 +664,7 @@ export default function ThreadPage() {
             onRepost={handleRepost}
             onQuotePost={handleQuotePost}
             onLike={handleLike}
+            onBookmark={handleBookmark}
             showRootPost={false}
             highlighted={isHighlighted || showAnchorHighlight}
             engagementStats={engagementStatsElement}
@@ -639,6 +720,7 @@ export default function ThreadPage() {
                         onRepost={handleRepost}
                         onQuotePost={handleQuotePost}
                         onLike={handleLike}
+                        onBookmark={handleBookmark}
                         showRootPost={false}
                         highlighted={isReplyHighlighted}
                       />

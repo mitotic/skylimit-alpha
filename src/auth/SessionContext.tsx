@@ -4,11 +4,12 @@
  * Manages authentication state and provides BskyAgent instance
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BskyAgent } from '@atproto/api'
+import type { AtpSessionEvent, AtpSessionData } from '@atproto/api'
 import { createAgentWithSession, login as loginAPI } from '../api/atproto-client'
-import { saveSession, loadSession, clearSession } from './session-storage'
+import { saveSession, loadSession, clearSession, updateSession } from './session-storage'
 import type { Session } from '../types'
 
 interface SessionContextType {
@@ -26,6 +27,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [agent, setAgent] = useState<BskyAgent | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const navigate = useNavigate()
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
+
+  // Callback for BskyAgent to persist refreshed tokens
+  const handlePersistSession = useCallback((evt: AtpSessionEvent, sess?: AtpSessionData) => {
+    if (evt === 'update' && sess) {
+      const updatedSession: Session = {
+        did: sess.did,
+        handle: sess.handle,
+        email: sess.email,
+        accessJwt: sess.accessJwt,
+        refreshJwt: sess.refreshJwt,
+      }
+      setSession(updatedSession)
+      updateSession(updatedSession)
+    } else if (evt === 'expired') {
+      console.warn('Session expired, logging out')
+      setSession(null)
+      setAgent(null)
+      clearSession()
+      navigateRef.current('/login')
+    }
+  }, [])
 
   // Attempt to restore session on mount
   useEffect(() => {
@@ -37,7 +61,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           return
         }
 
-        const restoredAgent = await createAgentWithSession(savedSession)
+        const restoredAgent = await createAgentWithSession(savedSession, handlePersistSession)
         setSession(savedSession)
         setAgent(restoredAgent)
       } catch (error) {
@@ -49,14 +73,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
 
     restoreSession()
-  }, [])
+  }, [handlePersistSession])
 
   const login = useCallback(async (identifier: string, password: string, rememberMe: boolean) => {
-    const { session: newSession, agent: newAgent } = await loginAPI(identifier, password)
+    const { session: newSession, agent: newAgent } = await loginAPI(identifier, password, handlePersistSession)
     setSession(newSession)
     setAgent(newAgent)
     saveSession(newSession, rememberMe)
-  }, [])
+  }, [handlePersistSession])
 
   const logout = useCallback(() => {
     setSession(null)

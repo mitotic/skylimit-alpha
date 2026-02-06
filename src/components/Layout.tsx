@@ -19,7 +19,7 @@ export default function Layout({ children }: LayoutProps) {
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
 
-  const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications'
+  const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications' && location.pathname !== '/saved'
 
   // Fetch user avatar
   useEffect(() => {

@@ -4,7 +4,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
 import { getHomeFeed } from '../api/feed'
-import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost } from '../api/posts'
+import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
 import PostCard from '../components/PostCard'
 import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
@@ -2796,6 +2796,52 @@ export default function HomePage() {
     }
   }
 
+  const handleBookmark = async (uri: string, cid: string) => {
+    if (!agent) return
+
+    const post = feed.find(p => p.post.uri === uri)
+    if (!post) return
+
+    const wasBookmarked = !!post.post.viewer?.bookmarked
+
+    // Optimistic update
+    setFeed(prev => prev.map(p => {
+      if (p.post.uri === uri) {
+        return {
+          ...p,
+          post: {
+            ...p.post,
+            viewer: { ...p.post.viewer, bookmarked: !wasBookmarked },
+          },
+        }
+      }
+      return p
+    }))
+
+    try {
+      if (wasBookmarked) {
+        await unbookmarkPost(agent, uri)
+      } else {
+        await bookmarkPost(agent, uri, cid)
+      }
+    } catch (error) {
+      // Revert optimistic update
+      setFeed(prev => prev.map(p => {
+        if (p.post.uri === uri) {
+          return {
+            ...p,
+            post: {
+              ...p.post,
+              viewer: { ...p.post.viewer, bookmarked: wasBookmarked },
+            },
+          }
+        }
+        return p
+      }))
+      addToast(error instanceof Error ? error.message : 'Failed to update bookmark', 'error')
+    }
+  }
+
   const handleRepost = async (uri: string, cid: string) => {
     if (!agent) return
 
@@ -3097,6 +3143,7 @@ export default function HomePage() {
                   onRepost={handleRepost}
                   onQuotePost={handleQuotePost}
                   onLike={handleLike}
+                  onBookmark={handleBookmark}
                   showCounter={true}
                   onAmpChange={handleAmpChange}
                 />

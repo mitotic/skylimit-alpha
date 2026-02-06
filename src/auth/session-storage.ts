@@ -44,6 +44,16 @@ export function loadSession(): Session | null {
 }
 
 /**
+ * Updates the session tokens in whichever storage is currently being used.
+ * Called by the persistSession callback when tokens are refreshed.
+ */
+export function updateSession(session: Session): void {
+  const rememberMe = localStorage.getItem(REMEMBER_ME_KEY) === 'true'
+  const storage = rememberMe ? localStorage : sessionStorage
+  storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
+}
+
+/**
  * Clears session from both storages
  */
 export function clearSession(): void {

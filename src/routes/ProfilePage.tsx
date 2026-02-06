@@ -5,7 +5,7 @@ import { useSession } from '../auth/SessionContext'
 import { getProfile } from '../api/profile'
 import { getAuthorFeed, getActorLikes } from '../api/feed'
 import { follow, unfollow } from '../api/social'
-import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost } from '../api/posts'
+import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
 import { getPostUniqueId } from '../curation/skylimitGeneral'
 import Avatar from '../components/Avatar'
 import Button from '../components/Button'
@@ -225,6 +225,52 @@ export default function ProfilePage() {
     }
   }
 
+  const handleBookmark = async (uri: string, cid: string) => {
+    if (!agent) return
+
+    const post = feed.find(p => p.post.uri === uri)
+    if (!post) return
+
+    const wasBookmarked = !!post.post.viewer?.bookmarked
+
+    // Optimistic update
+    setFeed(prev => prev.map(p => {
+      if (p.post.uri === uri) {
+        return {
+          ...p,
+          post: {
+            ...p.post,
+            viewer: { ...p.post.viewer, bookmarked: !wasBookmarked },
+          },
+        }
+      }
+      return p
+    }))
+
+    try {
+      if (wasBookmarked) {
+        await unbookmarkPost(agent, uri)
+      } else {
+        await bookmarkPost(agent, uri, cid)
+      }
+    } catch (error) {
+      // Revert optimistic update
+      setFeed(prev => prev.map(p => {
+        if (p.post.uri === uri) {
+          return {
+            ...p,
+            post: {
+              ...p.post,
+              viewer: { ...p.post.viewer, bookmarked: wasBookmarked },
+            },
+          }
+        }
+        return p
+      }))
+      addToast(error instanceof Error ? error.message : 'Failed to update bookmark', 'error')
+    }
+  }
+
   const handleRepost = async (uri: string, cid: string) => {
     if (!agent) return
 
@@ -413,6 +459,7 @@ export default function ProfilePage() {
                 onRepost={handleRepost}
                 onQuotePost={handleQuotePost}
                 onLike={handleLike}
+                onBookmark={handleBookmark}
                 showRootPost={false}
               />
             ))}

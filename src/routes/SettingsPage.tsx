@@ -191,14 +191,6 @@ export default function SettingsPage() {
     setTimeout(() => attemptRestore(30), 100)
   }, [activeTab])
 
-  const handleClearCache = () => {
-    if (window.confirm('This will clear all cached data and log you out. Continue?')) {
-      localStorage.clear()
-      sessionStorage.clear()
-      logout()
-    }
-  }
-
   const loadCacheStats = async () => {
     setLoadingStats(true)
     try {
@@ -321,6 +313,41 @@ export default function SettingsPage() {
   const renderBasicTab = () => (
     <div className="space-y-6">
       <div className="card space-y-4">
+        <h2 className="text-lg font-semibold">Account</h2>
+        <div>
+          <div className="font-medium">Logged in as</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">
+            @{session?.handle}
+          </div>
+        </div>
+        <Button variant="danger" onClick={() => setShowLogoutModal(true)}>
+          Logout
+        </Button>
+      </div>
+
+      <div className="card space-y-4">
+        <h2 className="text-lg font-semibold">Navigation</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-medium">Click to <span className="text-blue-500">Bluesky</span></div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Open posts, profiles, and notifications in Bluesky. Return to Skylimit by using back navigation repeatedly.
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const newValue = !clickToBlueSky
+              localStorage.setItem('websky_click_to_bluesky', newValue.toString())
+              setClickToBlueSky(newValue)
+            }}
+            className="btn bg-blue-500 hover:bg-blue-600 text-white"
+          >
+            {clickToBlueSky ? 'Disable' : 'Enable'}
+          </button>
+        </div>
+      </div>
+
+      <div className="card space-y-4">
         <h2 className="text-lg font-semibold">Appearance</h2>
         <div className="flex items-center justify-between">
           <div>
@@ -335,54 +362,6 @@ export default function SettingsPage() {
           >
             Switch to {theme === 'dark' ? 'Light' : 'Dark'}
           </button>
-        </div>
-      </div>
-
-      <div className="card space-y-4">
-        <h2 className="text-lg font-semibold">Navigation</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-medium">Click to Bluesky</div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              Open posts, profiles, and notifications in Bluesky. Return to Skylimit by using back navigation repeatedly.
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              const newValue = !clickToBlueSky
-              localStorage.setItem('websky_click_to_bluesky', newValue.toString())
-              setClickToBlueSky(newValue)
-            }}
-            className="btn btn-secondary"
-          >
-            {clickToBlueSky ? 'Disable' : 'Enable'}
-          </button>
-        </div>
-      </div>
-
-      <div className="card space-y-4">
-        <h2 className="text-lg font-semibold">Account</h2>
-        <div>
-          <div className="font-medium">Logged in as</div>
-          <div className="text-sm text-gray-500 dark:text-gray-400">
-            @{session?.handle}
-          </div>
-        </div>
-        <Button variant="danger" onClick={() => setShowLogoutModal(true)}>
-          Logout
-        </Button>
-      </div>
-
-      <div className="card space-y-4">
-        <h2 className="text-lg font-semibold">Data</h2>
-        <div>
-          <div className="font-medium mb-2">Clear Cached Data</div>
-          <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-            This will clear all stored data including your session and preferences.
-          </div>
-          <Button variant="danger" onClick={handleClearCache}>
-            Clear Cache
-          </Button>
         </div>
       </div>
 
@@ -1044,7 +1023,7 @@ This cannot be undone.`}
       </div>
 
       {/* Tab Content */}
-      <div className="p-4">
+      <div className={`p-4 ${hasUnsavedChanges && activeTab === 'curation' ? 'pb-20' : ''}`}>
         {activeTab === 'basic' && renderBasicTab()}
         {activeTab === 'curation' && renderCurationTab()}
         {activeTab === 'following' && renderFollowingTab()}

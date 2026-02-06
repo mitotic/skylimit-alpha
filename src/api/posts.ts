@@ -306,6 +306,84 @@ export async function removeRepost(
 /**
  * Creates a quote post (post with embedded record and optional images) with rate limit handling
  */
+/**
+ * Bookmarks a post with rate limit handling
+ */
+export async function bookmarkPost(
+  agent: BskyAgent,
+  uri: string,
+  cid: string,
+  options?: PostOptions
+): Promise<void> {
+  return retryWithBackoff(
+    async () => {
+      await agent.app.bsky.bookmark.createBookmark({ uri, cid })
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options?.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to bookmark post: ${error.message}`)
+    }
+    throw new Error('Failed to bookmark post: Unknown error')
+  })
+}
+
+/**
+ * Removes a bookmark from a post with rate limit handling
+ */
+export async function unbookmarkPost(
+  agent: BskyAgent,
+  uri: string,
+  options?: PostOptions
+): Promise<void> {
+  return retryWithBackoff(
+    async () => {
+      await agent.app.bsky.bookmark.deleteBookmark({ uri })
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options?.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to remove bookmark: ${error.message}`)
+    }
+    throw new Error('Failed to remove bookmark: Unknown error')
+  })
+}
+
+/**
+ * Creates a quote post (post with embedded record and optional images) with rate limit handling
+ */
 export async function createQuotePost(
   agent: BskyAgent,
   params: CreateQuotePostParams,

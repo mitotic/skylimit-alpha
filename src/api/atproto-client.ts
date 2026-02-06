@@ -6,6 +6,7 @@
  */
 
 import { BskyAgent } from '@atproto/api'
+import type { AtpSessionEvent, AtpSessionData } from '@atproto/api'
 import type { Session } from '../types'
 
 // BlueSky service URL - using the public instance
@@ -14,17 +15,23 @@ const BSKY_SERVICE = 'https://bsky.social'
 /**
  * Creates and configures a BskyAgent instance
  */
-export function createAgent(): BskyAgent {
+export function createAgent(
+  persistSession?: (evt: AtpSessionEvent, sess?: AtpSessionData) => void
+): BskyAgent {
   return new BskyAgent({
     service: BSKY_SERVICE,
+    persistSession,
   })
 }
 
 /**
  * Creates an agent and restores an existing session
  */
-export async function createAgentWithSession(session: Session): Promise<BskyAgent> {
-  const agent = createAgent()
+export async function createAgentWithSession(
+  session: Session,
+  persistSession?: (evt: AtpSessionEvent, sess?: AtpSessionData) => void
+): Promise<BskyAgent> {
+  const agent = createAgent(persistSession)
   
   try {
     const sessionData: any = {
@@ -56,9 +63,10 @@ export async function createAgentWithSession(session: Session): Promise<BskyAgen
  */
 export async function login(
   identifier: string,
-  password: string
+  password: string,
+  persistSession?: (evt: AtpSessionEvent, sess?: AtpSessionData) => void
 ): Promise<{ session: Session; agent: BskyAgent }> {
-  const agent = createAgent()
+  const agent = createAgent(persistSession)
   
   try {
     const response = await agent.login({
@@ -96,54 +104,5 @@ export async function login(
     throw new Error('Authentication failed: Unable to connect to BlueSky. Please check your internet connection and try again.')
   }
 }
-
-/**
- * Refreshes an expired session
- */
-export async function refreshSession(
-  agent: BskyAgent,
-  sessionData: Session
-): Promise<Session> {
-  try {
-    const sessionPayload: any = {
-      did: sessionData.did,
-      handle: sessionData.handle,
-      refreshJwt: sessionData.refreshJwt,
-      accessJwt: sessionData.accessJwt,
-      active: true,
-    }
-    if (sessionData.email) {
-      sessionPayload.email = sessionData.email
-    }
-    const response = await agent.resumeSession(sessionPayload)
-
-    if (!response.data) {
-      throw new Error('Session refresh failed: No data returned')
-    }
-
-    const data = response.data as {
-      did: string
-      handle: string
-      email?: string
-      accessJwt: string
-      refreshJwt: string
-    }
-
-    return {
-      did: data.did,
-      handle: data.handle,
-      email: data.email,
-      accessJwt: data.accessJwt,
-      refreshJwt: data.refreshJwt,
-    }
-  } catch (error) {
-    if (error instanceof Error) {
-      throw new Error(`Session refresh failed: ${error.message}`)
-    }
-    throw new Error('Session refresh failed: Unknown error')
-  }
-}
-
-
 
 

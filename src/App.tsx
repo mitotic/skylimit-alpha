@@ -10,6 +10,7 @@ import ProfilePage from './routes/ProfilePage'
 import SettingsPage from './routes/SettingsPage'
 import ThreadPage from './routes/ThreadPage'
 import NotificationsPage from './routes/NotificationsPage'
+import SavedPage from './routes/SavedPage'
 
 function App() {
   const { session } = useSession()
@@ -28,6 +29,7 @@ function App() {
                   <Route path="/" element={<HomePage />} />
                   <Route path="/notifications" element={<NotificationsPage />} />
                   <Route path="/search" element={<SearchPage />} />
+                  <Route path="/saved" element={<SavedPage />} />
                   <Route path="/profile/:actor" element={<ProfilePage />} />
                   <Route path="/post/:uri" element={<ThreadPage />} />
                   <Route path="/settings" element={<SettingsPage />} />

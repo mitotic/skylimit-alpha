@@ -10,11 +10,11 @@ export default function BurgerMenu() {
   const [isOpen, setIsOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
-  const { session, logout, agent } = useSession()
+  const { session, agent } = useSession()
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
-  const [showLogoutModal, setShowLogoutModal] = useState(false)
+
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
@@ -63,6 +63,7 @@ export default function BurgerMenu() {
     { path: '/', label: 'Home', icon: '🏠' },
     { path: '/notifications', label: 'Notifications', icon: '🔔', badge: unreadCount > 0 ? unreadCount : undefined },
     { path: '/search', label: 'Search', icon: '🔍' },
+    { path: '/saved', label: 'Saved', icon: '🏷️' },
     { path: '/settings?tab=basic', label: 'Settings', icon: '⚙️' },
   ]
 
@@ -71,16 +72,6 @@ export default function BurgerMenu() {
       navigate(`/profile/${session.handle}`)
       setIsOpen(false)
     }
-  }
-
-  const handleLogout = () => {
-    setShowLogoutModal(true)
-  }
-
-  const handleLogoutConfirm = () => {
-    setShowLogoutModal(false)
-    setIsOpen(false)
-    logout()
   }
 
   const handleResetAll = () => {
@@ -152,18 +143,10 @@ export default function BurgerMenu() {
                   </button>
 
                   <button
-                    onClick={handleLogout}
-                    className="flex items-center gap-3 px-4 py-3 text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  >
-                    <span className="text-xl">⎋</span>
-                    <span className="font-medium">Logout</span>
-                  </button>
-
-                  <button
                     onClick={() => setShowResetAllModal(true)}
                     className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                   >
-                    <span className="text-xl">⏻</span>
+                    <span className="text-xl">⎋</span>
                     <span className="font-medium">Reset all</span>
                   </button>
                 </>
@@ -172,17 +155,6 @@ export default function BurgerMenu() {
           </div>
         </>
       )}
-
-      {/* Logout Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showLogoutModal}
-        onClose={() => setShowLogoutModal(false)}
-        onConfirm={handleLogoutConfirm}
-        title="Logout"
-        message="Are you sure you want to logout?"
-        confirmText="Logout"
-        cancelText="Cancel"
-      />
 
       {/* Reset All Confirmation Modal */}
       <ConfirmModal

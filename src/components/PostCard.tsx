@@ -22,6 +22,7 @@ interface PostCardProps {
   onRepost?: (uri: string, cid: string) => void
   onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
   onLike?: (uri: string, cid: string) => void
+  onBookmark?: (uri: string, cid: string) => void
   /**
    * If true, show the daily post counter (only on home page)
    */
@@ -44,7 +45,7 @@ interface PostCardProps {
   engagementStats?: React.ReactNode
 }
 
-export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, showCounter = false, onAmpChange, showRootPost = true, engagementStats }: PostCardProps) {
+export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, showCounter = false, onAmpChange, showRootPost = true, engagementStats }: PostCardProps) {
   const navigate = useNavigate()
   const record = post.post.record as any
   const author = post.post.author
@@ -559,6 +560,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             onRepost={onRepost}
             onQuotePost={onQuotePost}
             onLike={onLike}
+            onBookmark={onBookmark}
           />
         </div>
       </div>
