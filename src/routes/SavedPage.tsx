@@ -44,7 +44,8 @@ export default function SavedPage() {
       } else {
         setFeed(posts)
       }
-      setCursor(response.cursor)
+      // Clear cursor if no posts returned (end of list)
+      setCursor(posts.length > 0 ? response.cursor : undefined)
     } catch (error) {
       addToast(error instanceof Error ? error.message : 'Failed to load bookmarks', 'error')
     } finally {
@@ -187,8 +188,8 @@ export default function SavedPage() {
             />
           ))}
 
-          {cursor && (
-            <div className="p-4 text-center">
+          <div className="p-4 text-center">
+            {cursor ? (
               <button
                 onClick={() => {
                   setIsLoadingMore(true)
@@ -199,8 +200,10 @@ export default function SavedPage() {
               >
                 {isLoadingMore ? 'Loading...' : 'Load More'}
               </button>
-            </div>
-          )}
+            ) : (
+              <span className="text-sm text-gray-400 dark:text-gray-500">No more saved posts</span>
+            )}
+          </div>
         </>
       )}
 
