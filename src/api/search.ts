@@ -2,7 +2,7 @@
  * Search API operations
  */
 
-import { BskyAgent, AppBskyActorSearchActors } from '@atproto/api'
+import { BskyAgent, AppBskyActorSearchActors, AppBskyFeedSearchPosts } from '@atproto/api'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 
 export interface SearchOptions {
@@ -52,20 +52,48 @@ export async function searchActors(
 }
 
 /**
- * Searches for posts
- * Note: AT Protocol doesn't have a direct post search endpoint
- * This is a placeholder for future implementation
+ * Searches for posts with rate limit handling
  */
 export async function searchPosts(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _agent: BskyAgent,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _query: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _limit?: number
-): Promise<any> {
-  // TODO: Implement post search if/when AT Protocol adds this endpoint
-  // For now, this is a placeholder
-  throw new Error('Post search is not yet available in the AT Protocol API')
+  agent: BskyAgent,
+  query: string,
+  limit: number = 25,
+  cursor?: string,
+  sort: 'top' | 'latest' = 'top',
+  options?: SearchOptions
+): Promise<AppBskyFeedSearchPosts.OutputSchema> {
+  return retryWithBackoff(
+    async () => {
+      const response = await agent.app.bsky.feed.searchPosts({
+        q: query,
+        sort,
+        limit,
+        cursor,
+      })
+      return response.data
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options?.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to search posts: ${error.message}`)
+    }
+    throw new Error('Failed to search posts: Unknown error')
+  })
 }
 
