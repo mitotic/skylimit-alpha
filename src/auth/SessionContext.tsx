@@ -75,8 +75,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             console.log(`[Skyspeed] Session restored — handshake complete:`)
             console.log(`  Server: ${getServiceUrl()}`)
             console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
-            console.log(`  Server start time: ${new Date(skyspeedConfig.skyspeedServerStartTime).toLocaleString()}`)
-            console.log(`  Server current time: ${new Date(skyspeedConfig.skyspeedServerCurrentTime).toLocaleString()}`)
+            console.log(`  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
           } else {
             resetClientClock()
             clearSkyspeedConfig()
@@ -119,8 +118,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         console.log(`[Skyspeed] Handshake complete:`)
         console.log(`  Server: ${getServiceUrl()}`)
         console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
-        console.log(`  Server start time: ${new Date(skyspeedConfig.skyspeedServerStartTime).toLocaleString()}`)
-        console.log(`  Server current time: ${new Date(skyspeedConfig.skyspeedServerCurrentTime).toLocaleString()}`)
+        console.log(`  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
       } else {
         // Not a Skyspeed server - ensure clock is normal
         resetClientClock()

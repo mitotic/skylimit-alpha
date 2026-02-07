@@ -20,11 +20,9 @@
 // --- Skyspeed config types ---
 
 export interface SkyspeedConfig {
-  skyspeedRandomSeed: number
+  skyspeedRandomSeed: string
   skyspeedClockFactor: number
-  skyspeedServerStartTime: string   // ISO 8601 - when server started (server time = actual time at this point)
-  skyspeedServerCurrentTime: string // ISO 8601 - current simulated time on server
-  skyspeedActualCurrentTime: string // ISO 8601 - current wall clock time on server
+  skyspeedSyncTime: string  // ISO 8601 - when simulated time === actual time
 }
 
 // --- Clock state ---
@@ -120,12 +118,11 @@ export function isClockAccelerated(): boolean {
 
 /**
  * Configure the client clock from a Skyspeed server config.
- * Computes sync parameters accounting for client-server clock skew.
+ * Since syncTime is the moment when simulated time === actual time,
+ * both epochs are simply syncTime.
  */
 export function configureClientClock(config: SkyspeedConfig): void {
-  const serverStartTime = Date.parse(config.skyspeedServerStartTime)
-  const serverCurrentTime = Date.parse(config.skyspeedServerCurrentTime)
-  const serverActualTime = Date.parse(config.skyspeedActualCurrentTime)
+  const syncTimeMs = Date.parse(config.skyspeedSyncTime)
   const factor = config.skyspeedClockFactor
 
   if (factor <= 0) {
@@ -133,23 +130,14 @@ export function configureClientClock(config: SkyspeedConfig): void {
     return
   }
 
-  // Compute offset between client's actual time and server's actual time
-  const clientActualTime = Date.now()
-  const actualTimeOffset = clientActualTime - serverActualTime
-
-  // The effective start real time from the client's perspective
-  // (when did the server start, in client's wall clock?)
-  const clientStartRealTime = clientActualTime - (serverCurrentTime - serverStartTime) / factor + actualTimeOffset
-
+  // At syncTime, simulated === actual, so both epochs are syncTime
   clockFactor = factor
-  realEpoch = clientStartRealTime
-  clientEpoch = serverStartTime
+  realEpoch = syncTimeMs
+  clientEpoch = syncTimeMs
 
   console.log('[ClientClock] Configured:')
   console.log(`  Clock factor: ${factor}x`)
-  console.log(`  Server start: ${config.skyspeedServerStartTime}`)
-  console.log(`  Server current: ${config.skyspeedServerCurrentTime}`)
-  console.log(`  Client-server offset: ${actualTimeOffset}ms`)
+  console.log(`  Sync time: ${config.skyspeedSyncTime}`)
   console.log(`  Client time now: ${new Date(clientNow()).toISOString()}`)
   notifyClockChange()
 }
@@ -215,7 +203,8 @@ export async function detectSkyspeed(
 
     const config: SkyspeedConfig = await response.json()
 
-    // Acknowledge the clock factor so the server knows we're clock-aware
+    // Only acknowledge when clockFactor > 1 (accelerated mode requires handshake;
+    // at clockFactor=1, standard Bluesky clients can connect without ack)
     if (config.skyspeedClockFactor > 1) {
       try {
         const ackResponse = await fetch(`${serviceUrl}/xrpc/dev.skyspeed.ackConfig`, {
@@ -283,7 +272,7 @@ export function hasSkyspeedConfigChanged(newConfig: SkyspeedConfig): boolean {
 
   return (
     stored.skyspeedClockFactor !== newConfig.skyspeedClockFactor ||
-    stored.skyspeedServerStartTime !== newConfig.skyspeedServerStartTime
+    stored.skyspeedSyncTime !== newConfig.skyspeedSyncTime
   )
 }
 
