@@ -9,8 +9,38 @@ import { BskyAgent } from '@atproto/api'
 import type { AtpSessionEvent, AtpSessionData } from '@atproto/api'
 import type { Session } from '../types'
 
-// BlueSky service URL - using the public instance
-const BSKY_SERVICE = 'https://bsky.social'
+// Default BlueSky service URL
+const DEFAULT_BSKY_SERVICE = 'https://bsky.social'
+
+// localStorage key for non-standard server (must match main.tsx)
+const SERVER_STORAGE_KEY = 'skylimit_server'
+
+/**
+ * Get the AT Protocol service URL.
+ * Returns the non-standard server URL from localStorage if configured,
+ * otherwise returns the default bsky.social URL.
+ * For localhost servers, uses http:// (no TLS). For all others, uses https://.
+ */
+export function getServiceUrl(): string {
+  const serverParam = localStorage.getItem(SERVER_STORAGE_KEY)
+  if (!serverParam) return DEFAULT_BSKY_SERVICE
+
+  // Parse hostname and optional port
+  const parts = serverParam.split(':')
+  const hostname = parts[0]
+  const port = parts[1]
+
+  // Use http:// for localhost (skip TLS), https:// for everything else
+  const protocol = hostname === 'localhost' ? 'http' : 'https'
+  return port ? `${protocol}://${hostname}:${port}` : `${protocol}://${hostname}`
+}
+
+/**
+ * Get the non-standard server display name, or null if using default.
+ */
+export function getNonStandardServerName(): string | null {
+  return localStorage.getItem(SERVER_STORAGE_KEY)
+}
 
 /**
  * Creates and configures a BskyAgent instance
@@ -19,7 +49,7 @@ export function createAgent(
   persistSession?: (evt: AtpSessionEvent, sess?: AtpSessionData) => void
 ): BskyAgent {
   return new BskyAgent({
-    service: BSKY_SERVICE,
+    service: getServiceUrl(),
     persistSession,
   })
 }

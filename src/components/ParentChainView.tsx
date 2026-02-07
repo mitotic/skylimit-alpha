@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistance } from 'date-fns'
+import { clientDate } from '../utils/clientClock'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
 import RichText from './RichText'
@@ -28,8 +29,8 @@ function ParentPost({
 
   const createdAt = record?.createdAt
     ? new Date(record.createdAt)
-    : new Date()
-  const timeAgo = formatDistanceToNow(createdAt, { addSuffix: true })
+    : clientDate()
+  const timeAgo = formatDistance(createdAt, clientDate(), { addSuffix: true })
 
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()

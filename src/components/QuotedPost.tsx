@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyEmbedRecord, AppBskyFeedDefs } from '@atproto/api'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistance } from 'date-fns'
+import { clientDate } from '../utils/clientClock'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread } from '../api/feed'
 import Avatar from './Avatar'
@@ -177,8 +178,8 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   }
 
   const createdAtValue = displayRecord?.createdAt
-  const createdAt = createdAtValue ? new Date(createdAtValue) : new Date()
-  const timeAgo = formatDistanceToNow(createdAt, { addSuffix: true })
+  const createdAt = createdAtValue ? new Date(createdAtValue) : clientDate()
+  const timeAgo = formatDistance(createdAt, clientDate(), { addSuffix: true })
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()

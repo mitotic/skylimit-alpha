@@ -6,6 +6,7 @@
 
 import { AppBskyFeedDefs } from '@atproto/api'
 import { getDB, STORE_PARENT_POSTS } from './skylimitCache'
+import { clientNow } from '../utils/clientClock'
 
 // Cache configuration
 const MAX_CACHE_SIZE = 500 // Maximum number of cached root posts
@@ -42,7 +43,7 @@ export async function getCachedRootPost(
         }
 
         // Check if cache entry is expired
-        const now = Date.now()
+        const now = clientNow()
         const age = now - entry.cachedAt
         if (age > CACHE_TTL) {
           // Entry expired, delete it
@@ -82,8 +83,8 @@ export async function saveCachedRootPost(
     const entry: RootPostCacheEntry = {
       rootUri,
       rootPost,
-      cachedAt: Date.now(),
-      lastAccessed: Date.now(),
+      cachedAt: clientNow(),
+      lastAccessed: clientNow(),
     }
 
     await store.put(entry)
@@ -194,7 +195,7 @@ export async function flushExpiredRootPosts(): Promise<number> {
     const store = transaction.objectStore(STORE_PARENT_POSTS)
     const cachedAtIndex = store.index('cachedAt')
 
-    const now = Date.now()
+    const now = clientNow()
     const expiredBefore = now - CACHE_TTL
 
     return new Promise((resolve, reject) => {

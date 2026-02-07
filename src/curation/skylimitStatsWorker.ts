@@ -8,6 +8,7 @@ import { getSettings } from './skylimitStore'
 import { refreshFollows } from './skylimitFollows'
 import { scheduleCleanup } from './skylimitCleanup'
 import { getIntervalHoursSync } from './types'
+import { clientInterval, clearClientInterval, clientTimeout, clearClientTimeout } from '../utils/clientClock'
 
 /**
  * Compute statistics in the background
@@ -70,13 +71,13 @@ export function scheduleStatsComputation(
     // This prevents excessive API calls when navigating back to home page
 
     // Schedule periodic runs
-    intervalId = setInterval(() => {
+    intervalId = clientInterval(() => {
       computeStatsInBackground(agent, myUsername, myDid, false)
     }, intervalMs)
 
     // Run once after a short delay to initialize (but don't force follow refresh)
     // This allows initial stats computation without hitting rate limits
-    initialTimeout = setTimeout(() => {
+    initialTimeout = clientTimeout(() => {
       computeStatsInBackground(agent, myUsername, myDid, false)
     }, 5000) // Wait 5 seconds after page load
   }).catch(err => {
@@ -86,8 +87,8 @@ export function scheduleStatsComputation(
   // Return cleanup function
   return () => {
     isCleanedUp = true
-    if (intervalId !== null) clearInterval(intervalId)
-    if (initialTimeout !== null) clearTimeout(initialTimeout)
+    if (intervalId !== null) clearClientInterval(intervalId)
+    if (initialTimeout !== null) clearClientTimeout(initialTimeout)
   }
 }
 

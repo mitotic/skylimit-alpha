@@ -6,7 +6,8 @@
  */
 
 import { useNavigate } from 'react-router-dom'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistance } from 'date-fns'
+import { clientDate } from '../utils/clientClock'
 import { AggregatedNotification, formatAggregatedText } from '../utils/notificationAggregation'
 import Avatar from './Avatar'
 import NotificationPostPreview from './NotificationPostPreview'
@@ -144,7 +145,7 @@ export default function AggregatedNotificationComponent({
   }
   
   const notificationText = formatAggregatedText(authors, normalizedReason, notification.count, notification.isRepost)
-  const timeAgo = formatDistanceToNow(new Date(mostRecent.indexedAt), { addSuffix: true })
+  const timeAgo = formatDistance(new Date(mostRecent.indexedAt), clientDate(), { addSuffix: true })
   
   // Show up to 4 avatars
   const displayAvatars = authors.slice(0, 4)

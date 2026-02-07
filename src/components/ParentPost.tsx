@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistance } from 'date-fns'
+import { clientDate } from '../utils/clientClock'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread } from '../api/feed'
 import { getCachedParentPost, saveCachedParentPost } from '../curation/parentPostCache'
@@ -79,8 +80,8 @@ export default function ParentPost({ parentUri, childPost, onClick }: ParentPost
 
   const createdAt = record?.createdAt
     ? new Date(record.createdAt)
-    : new Date()
-  const timeAgo = formatDistanceToNow(createdAt, { addSuffix: true })
+    : clientDate()
+  const timeAgo = formatDistance(createdAt, clientDate(), { addSuffix: true })
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()

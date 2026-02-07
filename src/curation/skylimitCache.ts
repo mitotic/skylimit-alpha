@@ -4,6 +4,7 @@
 
 import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, FeedCacheEntry, CurationStatus, isStatusDrop, isStatusShow } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
+import { clientNow } from '../utils/clientClock'
 
 const DB_NAME = 'skylimit_db'
 const DB_VERSION = 9 // Increment version: migrated summaries to post_summaries store keyed by uniqueId
@@ -575,7 +576,7 @@ export async function saveFilter(stats: GlobalStats, userFilter: UserFilter): Pr
   const database = await getDB()
   const transaction = database.transaction([STORE_FILTER], 'readwrite')
   const store = transaction.objectStore(STORE_FILTER)
-  await store.put({ id: 'current', stats, userFilter, timestamp: Date.now() })
+  await store.put({ id: 'current', stats, userFilter, timestamp: clientNow() })
 }
 
 /**
@@ -629,7 +630,7 @@ export async function saveEditionPost(uri: string, post: any, section: string): 
   const database = await getDB()
   const transaction = database.transaction([STORE_EDITIONS], 'readwrite')
   const store = transaction.objectStore(STORE_EDITIONS)
-  await store.put({ uri, post, section, timestamp: Date.now() })
+  await store.put({ uri, post, section, timestamp: clientNow() })
 }
 
 /**
@@ -739,7 +740,7 @@ export async function saveSettings(settings: any): Promise<void> {
   const database = await getDB()
   const transaction = database.transaction([STORE_SETTINGS], 'readwrite')
   const store = transaction.objectStore(STORE_SETTINGS)
-  await store.put({ id: 'current', ...settings, timestamp: Date.now() })
+  await store.put({ id: 'current', ...settings, timestamp: clientNow() })
 }
 
 /**
@@ -838,7 +839,7 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
         let oldestTimestamp: number | null = null
         let newestTimestamp: number | null = null
         let droppedCount = 0
-        const now = Date.now()
+        const now = clientNow()
         const recentCutoff = now - FEED_CACHE_RETENTION_MS
 
         for (const summary of summaries) {

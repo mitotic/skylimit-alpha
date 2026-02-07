@@ -5,6 +5,7 @@ import { getUnreadCount } from '../api/notifications'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { resetEverything } from '../curation/skylimitCache'
 import ConfirmModal from './ConfirmModal'
+import { clientInterval, clearClientInterval, clientTimeout } from '../utils/clientClock'
 
 export default function Navigation() {
   const location = useLocation()
@@ -50,15 +51,15 @@ export default function Navigation() {
     fetchUnreadCount()
 
     // Refresh count every 30 seconds, but back off when rate limited
-    const intervalRef = { current: setInterval(() => {
+    const intervalRef = { current: clientInterval(() => {
       if (isRateLimited()) {
         // If rate limited, check again after the rate limit clears
         const timeUntilClear = getTimeUntilClear()
-        clearInterval(intervalRef.current)
-        setTimeout(() => {
+        clearClientInterval(intervalRef.current)
+        clientTimeout(() => {
           fetchUnreadCount()
           // Restart interval with longer delay (60s) after rate limit
-          intervalRef.current = setInterval(fetchUnreadCount, 60000)
+          intervalRef.current = clientInterval(fetchUnreadCount, 60000)
         }, Math.max(timeUntilClear * 1000, 1000))
       } else {
         fetchUnreadCount()
@@ -71,7 +72,7 @@ export default function Navigation() {
       setUnreadCount(0)
     }
 
-    return () => clearInterval(intervalRef.current)
+    return () => clearClientInterval(intervalRef.current)
   }, [agent, session, location.pathname])
 
   // Load click to Bluesky setting from localStorage

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
+import { getNonStandardServerName } from '../api/atproto-client'
 import Button from '../components/Button'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
@@ -62,6 +63,11 @@ export default function LoginPage() {
             </a>
           </h1>
           <p className="text-gray-600 dark:text-gray-400">A curating <a href="https://bsky.app" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Bluesky</a> client (alpha version)</p>
+          {getNonStandardServerName() && (
+            <p className="text-orange-500 dark:text-orange-400 text-sm mt-1 font-medium">
+              Server: {getNonStandardServerName()}
+            </p>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="card space-y-4">

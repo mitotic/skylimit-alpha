@@ -38,6 +38,7 @@ export interface CurationPopupProps {
 
   // Actions
   onNavigateToSettings?: () => void    // Optional - show "Curation Settings" link if provided
+  onClose?: () => void                 // Called when backdrop is tapped (mobile dismiss)
 }
 
 const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
@@ -66,6 +67,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   topics,
   timezone,
   onNavigateToSettings,
+  onClose,
 }, ref) => {
   // Calculate fixed position styles if anchorRect is provided
   const getPositionStyle = (): React.CSSProperties => {
@@ -229,8 +231,20 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   )
 
   // Use portal for fixed positioning to escape overflow containers
+  // Include an invisible backdrop to catch taps on mobile (prevents tap-through to posts)
   if (useFixedPositioning) {
-    return createPortal(popupContent, document.body)
+    return createPortal(
+      <>
+        <div
+          className="fixed inset-0 z-40"
+          onClick={(e) => { e.stopPropagation(); onClose?.() }}
+          onTouchStart={(e) => { e.stopPropagation(); onClose?.() }}
+          aria-hidden="true"
+        />
+        {popupContent}
+      </>,
+      document.body
+    )
   }
 
   return popupContent

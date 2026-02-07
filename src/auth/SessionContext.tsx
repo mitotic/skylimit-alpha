@@ -8,8 +8,9 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useNavigate } from 'react-router-dom'
 import { BskyAgent } from '@atproto/api'
 import type { AtpSessionEvent, AtpSessionData } from '@atproto/api'
-import { createAgentWithSession, login as loginAPI } from '../api/atproto-client'
+import { createAgentWithSession, login as loginAPI, getServiceUrl } from '../api/atproto-client'
 import { saveSession, loadSession, clearSession, updateSession } from './session-storage'
+import { detectSkyspeed, configureClientClock, hasSkyspeedConfigChanged, saveSkyspeedConfig, clearSkyspeedConfig, resetClientClock } from '../utils/clientClock'
 import type { Session } from '../types'
 
 interface SessionContextType {
@@ -64,6 +65,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         const restoredAgent = await createAgentWithSession(savedSession, handlePersistSession)
         setSession(savedSession)
         setAgent(restoredAgent)
+
+        // Re-detect Skyspeed on session restore to reconfigure the client clock
+        try {
+          const skyspeedConfig = await detectSkyspeed(getServiceUrl(), savedSession.accessJwt)
+          if (skyspeedConfig) {
+            configureClientClock(skyspeedConfig)
+            saveSkyspeedConfig(skyspeedConfig)
+            console.log(`[Skyspeed] Session restored — handshake complete:`)
+            console.log(`  Server: ${getServiceUrl()}`)
+            console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
+            console.log(`  Server start time: ${new Date(skyspeedConfig.skyspeedServerStartTime).toLocaleString()}`)
+            console.log(`  Server current time: ${new Date(skyspeedConfig.skyspeedServerCurrentTime).toLocaleString()}`)
+          } else {
+            resetClientClock()
+            clearSkyspeedConfig()
+          }
+        } catch {
+          // Continue with normal clock on error
+        }
       } catch (error) {
         console.error('Failed to restore session:', error)
         clearSession()
@@ -80,6 +100,36 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setSession(newSession)
     setAgent(newAgent)
     saveSession(newSession, rememberMe)
+
+    // Skyspeed handshake: detect accelerated test server and configure client clock
+    try {
+      const skyspeedConfig = await detectSkyspeed(getServiceUrl(), newSession.accessJwt)
+      if (skyspeedConfig) {
+        console.log('[Skyspeed] Connected to Skyspeed test server')
+
+        // Check if server config has changed (server restarted/reconfigured)
+        if (hasSkyspeedConfigChanged(skyspeedConfig)) {
+          console.warn('[Skyspeed] Server config changed - reset may be needed')
+          // TODO: Show confirmation modal to user, trigger "Reset all" if confirmed
+          // For now, just log a warning and proceed with the new config
+        }
+
+        configureClientClock(skyspeedConfig)
+        saveSkyspeedConfig(skyspeedConfig)
+        console.log(`[Skyspeed] Handshake complete:`)
+        console.log(`  Server: ${getServiceUrl()}`)
+        console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
+        console.log(`  Server start time: ${new Date(skyspeedConfig.skyspeedServerStartTime).toLocaleString()}`)
+        console.log(`  Server current time: ${new Date(skyspeedConfig.skyspeedServerCurrentTime).toLocaleString()}`)
+      } else {
+        // Not a Skyspeed server - ensure clock is normal
+        resetClientClock()
+        clearSkyspeedConfig()
+      }
+    } catch (error) {
+      console.warn('[Skyspeed] Failed to detect Skyspeed server:', error)
+      // Continue with normal clock on error
+    }
   }, [handlePersistSession])
 
   const logout = useCallback(() => {

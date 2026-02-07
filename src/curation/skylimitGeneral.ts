@@ -4,6 +4,7 @@
 
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
 import { PostSummary, EditionLayout } from './types'
+import { clientNow, clientDate } from '../utils/clientClock'
 
 /**
  * Extract hashtags from Bluesky post text and facets
@@ -424,7 +425,7 @@ export function getPostTimestamp(post: AppBskyFeedDefs.PostView): Date {
     return new Date(post.indexedAt)
   }
   // Fallback to createdAt if indexedAt not available
-  return new Date(record?.createdAt || Date.now())
+  return new Date(record?.createdAt || clientNow())
 }
 
 /**
@@ -527,7 +528,7 @@ export function getFeedViewPostTimestamp(post: AppBskyFeedDefs.FeedViewPost, fee
     // so if we process them immediately, current time is close to repost time
     // However, this means all reposts processed at once get same timestamp
     // So we add a small random offset to ensure unique ordering
-    const now = new Date()
+    const now = clientDate()
     // Add a small offset based on post URI hash to ensure consistent ordering
     const uriHash = post.post.uri.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
     const offset = (uriHash % 1000) // 0-999ms offset
@@ -536,6 +537,6 @@ export function getFeedViewPostTimestamp(post: AppBskyFeedDefs.FeedViewPost, fee
   
   // Original post: use createdAt
   const record = post.post.record as any
-  return new Date(record?.createdAt || post.post.indexedAt || Date.now())
+  return new Date(record?.createdAt || post.post.indexedAt || clientNow())
 }
 

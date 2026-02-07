@@ -1,5 +1,6 @@
 import { AppBskyFeedDefs } from '@atproto/api'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistance } from 'date-fns'
+import { clientDate } from '../utils/clientClock'
 import Avatar from './Avatar'
 
 interface MiniPostCardProps {
@@ -14,8 +15,8 @@ export default function MiniPostCard({ post, onClick }: MiniPostCardProps) {
 
   const createdAt = record?.createdAt
     ? new Date(record.createdAt)
-    : new Date()
-  const timeAgo = formatDistanceToNow(createdAt, { addSuffix: true })
+    : clientDate()
+  const timeAgo = formatDistance(createdAt, clientDate(), { addSuffix: true })
 
   return (
     <div

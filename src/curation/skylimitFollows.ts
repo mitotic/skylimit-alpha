@@ -10,6 +10,7 @@ import { getProfiles } from '../api/profile'
 import { AppBskyActorDefs } from '@atproto/api'
 import { MOTD_TAG, MOTW_TAG, MOTM_TAG } from './types'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
+import { clientNow, clientDate } from '../utils/clientClock'
 
 /**
  * Get last follow refresh time from cache
@@ -31,7 +32,7 @@ async function saveLastFollowRefreshTime(): Promise<void> {
   try {
     const { getSettings, saveSettings } = await import('./skylimitCache')
     const settings = await getSettings() || {}
-    await saveSettings({ ...settings, lastFollowRefreshTime: Date.now() })
+    await saveSettings({ ...settings, lastFollowRefreshTime: clientNow() })
   } catch (err) {
     console.warn('Failed to save last follow refresh time:', err)
   }
@@ -48,7 +49,7 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
     if (!force) {
       const lastRefreshTime = await getLastFollowRefreshTime()
       const oneHour = 60 * 60 * 1000
-      if (Date.now() - lastRefreshTime < oneHour) {
+      if (clientNow() - lastRefreshTime < oneHour) {
         return
       }
     }
@@ -161,7 +162,7 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
       const followInfo: FollowInfo = {
         accountDid: follow.did,
         username,
-        followed_at: existing?.followed_at || new Date().toISOString(),
+        followed_at: existing?.followed_at || clientDate().toISOString(),
         amp_factor: existing?.amp_factor || 1.0,
         topics,
         timezone,

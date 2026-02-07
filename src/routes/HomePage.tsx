@@ -24,6 +24,9 @@ import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata,
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { assignIncrementalNumbers, getMaxNumbersForDay } from '../curation/skylimitNumbering'
+import { getNonStandardServerName } from '../api/atproto-client'
+import AcceleratedClock from '../components/AcceleratedClock'
+import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeout, clearClientInterval } from '../utils/clientClock'
 
 // Tab type for home page
 type HomeTab = 'curated' | 'editions'
@@ -94,7 +97,7 @@ function findLowestVisiblePostTimestamp(feed: AppBskyFeedDefs.FeedViewPost[]): n
         if (post) {
           // Get timestamp using getFeedViewPostTimestamp
           // Use current time as feedReceivedTime fallback (for reposts)
-          const timestamp = getFeedViewPostTimestamp(post, new Date())
+          const timestamp = getFeedViewPostTimestamp(post, clientDate())
           return timestamp.getTime()
         }
       }
@@ -307,7 +310,7 @@ export default function HomePage() {
           oldestDisplayedPostTimestamp,
           hasMorePosts,
           cursor,
-          savedAt: Date.now(),
+          savedAt: clientNow(),
           lowestVisiblePostTimestamp,
           newPostsCount,
           showNewPostsButton,
@@ -430,13 +433,13 @@ export default function HomePage() {
   useEffect(() => {
     if (!dbInitialized) return
     
-    const flushInterval = setInterval(() => {
+    const flushInterval = clientInterval(() => {
       flushExpiredParentPosts().catch(err => {
         console.warn('Failed to flush expired parent posts:', err)
       })
     }, 60 * 60 * 1000) // Every hour
-    
-    return () => clearInterval(flushInterval)
+
+    return () => clearClientInterval(flushInterval)
   }, [dbInitialized])
 
   // Save feed state whenever it changes (debounced) - only for curated tab
@@ -448,7 +451,7 @@ export default function HomePage() {
     if (isLoading) return
 
     // Debounce saves to avoid excessive writes
-    const timeoutId = setTimeout(async () => {
+    const timeoutId = clientTimeout(async () => {
       const lowestVisiblePostTimestamp = findLowestVisiblePostTimestamp(feed)
       const settings = await getSettings()
 
@@ -459,7 +462,7 @@ export default function HomePage() {
         oldestDisplayedPostTimestamp,
         hasMorePosts,
         cursor,
-        savedAt: Date.now(),
+        savedAt: clientNow(),
         lowestVisiblePostTimestamp,
         newPostsCount,
         showNewPostsButton,
@@ -475,7 +478,7 @@ export default function HomePage() {
       }
     }, 1000) // 1 second debounce
 
-    return () => clearTimeout(timeoutId)
+    return () => clearClientTimeout(timeoutId)
   }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, isLoading, newPostsCount, showNewPostsButton, session, activeTab])
 
   // Load Skylimit statistics and curation settings state
@@ -503,11 +506,11 @@ export default function HomePage() {
   }, [dbInitialized, feed.length, loadSkylimitStats])
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = Date.now().toString()
+    const id = clientNow().toString()
     setToasts(prev => [...prev, { id, message, type }])
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id))
-    }, 5000)
+    }, type === 'error' ? 10000 : 5000)
   }
 
   // Helper function to look up curation status and filter posts
@@ -749,7 +752,7 @@ export default function HomePage() {
           break
         }
 
-        filtered = await lookupCurationAndFilter(postsForNextPage, new Date(), timestampsForNextPage)
+        filtered = await lookupCurationAndFilter(postsForNextPage, clientDate(), timestampsForNextPage)
 
         // Accumulate filtered posts (deduplicate by uniqueId)
         const existingIds = new Set(accumulatedFiltered.map(p => getPostUniqueId(p)))
@@ -841,8 +844,8 @@ export default function HomePage() {
 
       setPreviousPageFeed(filtered)
       if (filtered.length > 0) {
-        const pfNewest = getFeedViewPostTimestamp(filtered[0], new Date()).getTime()
-        const pfOldest = getFeedViewPostTimestamp(filtered[filtered.length - 1], new Date()).getTime()
+        const pfNewest = getFeedViewPostTimestamp(filtered[0], clientDate()).getTime()
+        const pfOldest = getFeedViewPostTimestamp(filtered[filtered.length - 1], clientDate()).getTime()
         const pfFirst = filtered[0] as CurationFeedViewPost
         const pfLast = filtered[filtered.length - 1] as CurationFeedViewPost
         console.log(`[Prefetch] Pre-fetched ${filtered.length} posts for next page`)
@@ -877,7 +880,7 @@ export default function HomePage() {
       // Idle threshold check (uses feedRedisplayIdleInterval)
       const idleThreshold = settings?.feedRedisplayIdleInterval ?? 5 * 60 * 1000  // Default 5 min
       const metadata = await getLastFetchMetadata()
-      const timeSinceLastFetch = metadata?.lastFetchTime ? Date.now() - metadata.lastFetchTime : Infinity
+      const timeSinceLastFetch = metadata?.lastFetchTime ? clientNow() - metadata.lastFetchTime : Infinity
       const idleTimeExceeded = timeSinceLastFetch > idleThreshold
 
       // Determine load mode based on decision matrix:
@@ -921,7 +924,7 @@ export default function HomePage() {
           const lastCursor = cachedMetadata?.lastCursor
 
           // Look up curation status and filter
-          const feedReceivedTime = new Date()
+          const feedReceivedTime = clientDate()
           let filteredPosts = await lookupCurationAndFilter(cachedPosts, feedReceivedTime)
 
           // Align to page boundary if curation numbers are available
@@ -1015,7 +1018,7 @@ export default function HomePage() {
       const myDid = session.did
 
       // For initial fetch, use current time as initialLastPostTime
-      const initialLastPostTime = new Date()
+      const initialLastPostTime = clientDate()
       const fetchSettings = await getSettings()
       const fetchIntervalHours = getIntervalHoursSync(fetchSettings)
       const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime, fetchIntervalHours)
@@ -1153,7 +1156,7 @@ export default function HomePage() {
                 setLookbackProgress(100)
 
                 // Assign numbers to unnumbered summaries for today
-                const todayMidnight = getLocalMidnight(new Date()).getTime()
+                const todayMidnight = getLocalMidnight(clientDate()).getTime()
                 const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
                 const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
                 const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
@@ -1263,7 +1266,7 @@ export default function HomePage() {
                   // Non-initial lookback (e.g., Reset Feed) — assign numbers and redisplay
                   try {
                     console.log('[Lookback] Non-initial lookback complete, assigning numbers...')
-                    const todayMidnight = getLocalMidnight(new Date()).getTime()
+                    const todayMidnight = getLocalMidnight(clientDate()).getTime()
                     const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
                     const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
                     const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
@@ -1298,7 +1301,7 @@ export default function HomePage() {
 
             // Assign numbers to unnumbered summaries for today (if any new posts were curated)
             if (entriesToSave.length > 0) {
-              const todayMidnight = getLocalMidnight(new Date()).getTime()
+              const todayMidnight = getLocalMidnight(clientDate()).getTime()
               const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
               const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
               const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
@@ -1391,7 +1394,7 @@ export default function HomePage() {
       const settings = await getSettings()
       const pageLength = settings?.feedPageLength || 25
       const maxDisplayedFeedSize = settings?.maxDisplayedFeedSize || DEFAULT_MAX_DISPLAYED_FEED_SIZE
-      const feedReceivedTime = new Date()
+      const feedReceivedTime = clientDate()
 
       // Check if curation settings changed since feed was saved
       // If so, we need to re-filter the feed
@@ -1521,7 +1524,7 @@ export default function HomePage() {
         hasMorePosts: savedState.hasMorePosts,
         newPostsCount: savedState.newPostsCount,
         showNewPostsButton: savedState.showNewPostsButton,
-        age: Math.round((Date.now() - savedState.savedAt) / 1000) + 's'
+        age: Math.round((clientNow() - savedState.savedAt) / 1000) + 's'
       })
       
       // Still check for new posts in background to update count if cache has changed
@@ -1535,7 +1538,7 @@ export default function HomePage() {
             
             if (newPosts.length > 0) {
               // Filter by curation status to get accurate count of displayable posts
-              const feedReceivedTime = new Date()
+              const feedReceivedTime = clientDate()
               const filteredPosts = await lookupCurationAndFilter(newPosts, feedReceivedTime)
               const count = filteredPosts.length
               
@@ -1776,7 +1779,7 @@ export default function HomePage() {
         const settings = await getSettings()
         const idleInterval = settings?.feedRedisplayIdleInterval || 5 * 60 * 1000 // default 5 minutes
 
-        const timeSinceSave = Date.now() - savedState.savedAt
+        const timeSinceSave = clientNow() - savedState.savedAt
         const isWithinIdleInterval = timeSinceSave < idleInterval
 
         if (isWithinIdleInterval && savedState.displayedFeed && savedState.displayedFeed.length > 0) {
@@ -1992,9 +1995,9 @@ export default function HomePage() {
         const hasMultiplePages = probeResult.hasMultiplePages
 
         // Check cooldown - don't show buttons immediately after displaying posts
-        const inCooldown = Date.now() - lastDisplayTimeRef.current < DISPLAY_COOLDOWN_MS
+        const inCooldown = clientNow() - lastDisplayTimeRef.current < DISPLAY_COOLDOWN_MS
         if (inCooldown) {
-          console.log(`[Paged Updates] In cooldown (${Math.round((DISPLAY_COOLDOWN_MS - (Date.now() - lastDisplayTimeRef.current)) / 1000)}s remaining), skipping button updates`)
+          console.log(`[Paged Updates] In cooldown (${Math.round((DISPLAY_COOLDOWN_MS - (clientNow() - lastDisplayTimeRef.current)) / 1000)}s remaining), skipping button updates`)
           return
         }
 
@@ -2028,7 +2031,7 @@ export default function HomePage() {
     checkForNewPosts()
 
     // Check every 60 seconds
-    const interval = setInterval(checkForNewPosts, 60000)
+    const interval = clientInterval(checkForNewPosts, 60000)
 
     // Also check when page becomes visible (after being in background)
     // Browsers throttle setInterval when page is hidden, so we need this to
@@ -2042,7 +2045,7 @@ export default function HomePage() {
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
-      clearInterval(interval)
+      clearClientInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, agent, session])
@@ -2062,7 +2065,7 @@ export default function HomePage() {
       const fullPageWaitMs = pagedSettings.fullPageWaitMinutes * 60 * 1000
 
       // Calculate time since top post was displayed
-      const timeSinceTopPost = Date.now() - newestDisplayedPostTimestamp
+      const timeSinceTopPost = clientNow() - newestDisplayedPostTimestamp
 
       // Trigger "All new posts" button if idle time exceeded and any posts available
       // This is independent of nextPageReady - shows "All new posts" even when "New Page" is active
@@ -2076,9 +2079,9 @@ export default function HomePage() {
 
     // Check immediately and then every 30 seconds
     checkIdleTime()
-    const interval = setInterval(checkIdleTime, 30000)
+    const interval = clientInterval(checkIdleTime, 30000)
 
-    return () => clearInterval(interval)
+    return () => clearClientInterval(interval)
   }, [newestDisplayedPostTimestamp, isInitialLoad, partialPageCount])
 
   // Scroll event handler (for UI state and scroll position saving)
@@ -2233,7 +2236,7 @@ export default function HomePage() {
         if (result.postsMerged > 0) {
           // Use the day of the newest merged post, not current time
           // This handles the case where posts are from yesterday but user clicks after midnight
-          const newestPostDate = new Date(result.newestTimestamp || Date.now())
+          const newestPostDate = new Date(result.newestTimestamp || clientNow())
           const dayStart = getLocalMidnight(newestPostDate).getTime()
           const dayEnd = dayStart + 24 * 60 * 60 * 1000
           const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(dayStart, dayEnd)
@@ -2257,7 +2260,7 @@ export default function HomePage() {
         setPartialPageCount(0)
         setMultiPageCount(0)
         setIdleTimerTriggered(false)
-        lastDisplayTimeRef.current = Date.now()
+        lastDisplayTimeRef.current = clientNow()
 
         // Load one page of curated posts from cache, then combine with current feed for alignment
         const pagedSettings = await getPagedUpdatesSettings()
@@ -2265,7 +2268,7 @@ export default function HomePage() {
         const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
         const rawPostsNeeded = calculatePageRaw(pageLength, currentFilterFrac, pagedSettings.varFactor)
 
-        const feedReceivedTime = new Date()
+        const feedReceivedTime = clientDate()
         const cachedPosts = await getCachedFeed(rawPostsNeeded)
 
         if (cachedPosts.length > 0) {
@@ -2327,7 +2330,7 @@ export default function HomePage() {
             oldestDisplayedPostTimestamp: oldestTimestamp,
             hasMorePosts: true,
             cursor: undefined,
-            savedAt: Date.now(),
+            savedAt: clientNow(),
             lowestVisiblePostTimestamp: null,
             newPostsCount: 0,
             showNewPostsButton: false,
@@ -2388,7 +2391,7 @@ export default function HomePage() {
     // Check for extended idle - use feedRedisplayIdleInterval setting
     const settings = await getSettings()
     const idleThreshold = settings?.feedRedisplayIdleInterval ?? FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT * 60 * 1000
-    const timeSinceTopPost = newestDisplayedPostTimestamp ? Date.now() - newestDisplayedPostTimestamp : 0
+    const timeSinceTopPost = newestDisplayedPostTimestamp ? clientNow() - newestDisplayedPostTimestamp : 0
     const isExtendedIdle = newestDisplayedPostTimestamp !== null && timeSinceTopPost > idleThreshold
 
     // Treat as multi-page if 2+ pages detected OR extended idle (needs gap fill)
@@ -2406,7 +2409,7 @@ export default function HomePage() {
       setSyncInProgress(true)
 
       try {
-        const feedReceivedTime = new Date()
+        const feedReceivedTime = clientDate()
         const pageLength = settings?.feedPageLength || 25
 
         // Get filter fraction and calculate PageRaw for first page
@@ -2435,7 +2438,7 @@ export default function HomePage() {
         let newestCuratedTimestamp = 0
         let oldestCuratedTimestamp = Number.MAX_SAFE_INTEGER
         let displayedCount = 0
-        let lastPostTime = new Date()
+        let lastPostTime = clientDate()
         const allNewIntervalHours = getIntervalHoursSync(settings)
 
         for (const post of sortedPosts) {
@@ -2479,7 +2482,7 @@ export default function HomePage() {
         setPartialPageCount(0)
         setIdleTimerTriggered(false)
         setMultiPageCount(0)
-        lastDisplayTimeRef.current = Date.now() // Start cooldown
+        lastDisplayTimeRef.current = clientNow() // Start cooldown
 
         // Assign numbers to the processed posts
         if (postsToDisplay.length > 0) {
@@ -2603,7 +2606,7 @@ export default function HomePage() {
     console.log(`[Prev Page] INSTANT: Displaying ${previousPageFeed.length} pre-fetched posts`)
 
     // 1. INSTANT: Display previousPageFeed (from memory, no IndexedDB access)
-    const feedReceivedTime = new Date()
+    const feedReceivedTime = clientDate()
 
     // Calculate deduplication BEFORE setFeed to determine correct next prefetch timestamp
     const existingUris = new Set(feed.map(p => getPostUniqueId(p)))
@@ -2982,7 +2985,7 @@ export default function HomePage() {
         oldestDisplayedPostTimestamp,
         hasMorePosts,
         cursor,
-        savedAt: Date.now(),
+        savedAt: clientNow(),
         lowestVisiblePostTimestamp,
         newPostsCount,
         showNewPostsButton,
@@ -3029,6 +3032,12 @@ export default function HomePage() {
             >
               About Skylimit
             </a>
+            {getNonStandardServerName() && (
+              <span className="text-orange-500 dark:text-orange-400 font-medium">
+                {getNonStandardServerName()}
+              </span>
+            )}
+            <AcceleratedClock />
             <div className="text-gray-600 dark:text-gray-400">
               <span className="font-semibold">{skylimitStats.post_daily.toFixed(0)}</span> posts/day received
             </div>

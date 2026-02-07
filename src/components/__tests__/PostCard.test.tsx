@@ -6,7 +6,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 
 // Mock date-fns
 vi.mock('date-fns', () => ({
-  formatDistanceToNow: () => '2 hours ago',
+  formatDistance: () => '2 hours ago',
 }))
 
 // Mock react-router-dom navigate

@@ -5,6 +5,7 @@
 
 import { removePostSummariesBefore, removeOldEditionPosts } from './skylimitCache'
 import { getSettings } from './skylimitStore'
+import { clientNow } from '../utils/clientClock'
 
 // Cleanup constants (matching Mahoot's approach)
 const CURATION_DELAY = 5 * 60 * 1000 // 5 minutes debounce delay
@@ -24,13 +25,13 @@ export async function performCleanup(): Promise<void> {
 
     // Calculate cutoff timestamp based on daysOfData setting
     const retentionMs = daysOfData * 24 * 60 * 60 * 1000
-    const cutoffTimestamp = Date.now() - retentionMs
+    const cutoffTimestamp = clientNow() - retentionMs
 
     // Remove post summaries older than cutoff
     const deletedSummaries = await removePostSummariesBefore(cutoffTimestamp)
 
     // Remove edition posts older than 2 days
-    const editionCutoffTime = Date.now() - EDITION_POSTS_AGO
+    const editionCutoffTime = clientNow() - EDITION_POSTS_AGO
     const deletedEditions = await removeOldEditionPosts(editionCutoffTime)
 
     console.log(`Cleanup complete: removed ${deletedSummaries} post summaries and ${deletedEditions} edition posts`)

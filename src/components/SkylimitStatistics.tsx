@@ -222,9 +222,9 @@ export default function SkylimitStatistics() {
     }
   }, [session])
 
-  // Close popup when clicking outside
+  // Close popup when clicking/touching outside
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       if (popupRef.current && !popupRef.current.contains(event.target as Node)) {
         setShowPopup(null)
       }
@@ -232,7 +232,11 @@ export default function SkylimitStatistics() {
 
     if (showPopup) {
       document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
+      document.addEventListener('touchstart', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+        document.removeEventListener('touchstart', handleClickOutside)
+      }
     }
   }, [showPopup])
 
@@ -609,6 +613,7 @@ export default function SkylimitStatistics() {
                             setShowPopup(null)
                             navigate('/settings?tab=curation')
                           }}
+                          onClose={() => setShowPopup(null)}
                         />
                       )}
                     </td>

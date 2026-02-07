@@ -24,6 +24,7 @@ import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost, getInterv
 import { curatePosts, insertEditionPosts } from './skylimitTimeline'
 import { getHomeFeed } from '../api/feed'
 import { getSettings } from './skylimitStore'
+import { clientNow, clientDate } from '../utils/clientClock'
 
 /**
  * Validate feed cache integrity - ensure all feed entries have corresponding summaries
@@ -192,7 +193,7 @@ export function createFeedCacheEntries(
 } {
   let lastPostTime = initialLastPostTime
   const entries: FeedCacheEntryWithPost[] = []
-  const now = Date.now()
+  const now = clientNow()
 
   for (const post of posts) {
     let postTimestamp: Date
@@ -322,7 +323,7 @@ export async function savePostsToFeedCache(
       const metadata: FeedCacheMetadata = {
         id: 'last_fetch',
         lastCursor: cursor,
-        lastFetchTime: Date.now(),
+        lastFetchTime: clientNow(),
         newestCachedPostTimestamp: newestCachedPostTimestamp,
         oldestCachedPostTimestamp: oldestCachedPostTimestamp === Infinity ? newestCachedPostTimestamp : oldestCachedPostTimestamp,
       }
@@ -460,7 +461,7 @@ export async function extendFeedCache(
 
     // 3. Get oldest cached timestamp for Load More initialLastPostTime
     const oldestTimestamp = await getOldestCachedPostTimestamp()
-    const initialLastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
+    const initialLastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : clientDate()
 
     // 4. Create feed cache entries with calculated postTimestamps
     const settings = await getSettings()
@@ -561,12 +562,12 @@ export async function performLookbackFetch(
     // For idle return mode, always start fresh (no cursor) to fetch from newest posts
     let cursorState: { cursor: string | undefined; receivedAt: number; oldestPostTimestamp: number } | null = null
     if (!isIdleReturn && metadata?.lastCursor && metadata.lastFetchTime) {
-      const cursorAge = Date.now() - metadata.lastFetchTime
+      const cursorAge = clientNow() - metadata.lastFetchTime
       if (cursorAge < CURSOR_STALENESS_MS) {
         cursorState = {
           cursor: metadata.lastCursor,
           receivedAt: metadata.lastFetchTime,
-          oldestPostTimestamp: metadata.oldestCachedPostTimestamp || Date.now()
+          oldestPostTimestamp: metadata.oldestCachedPostTimestamp || clientNow()
         }
         console.log(`${modeLabel} Using existing cursor (age: ${Math.round(cursorAge / 1000)}s)`)
       } else {
@@ -582,7 +583,7 @@ export async function performLookbackFetch(
       lastPostTime = initialLastPostTimeParam
     } else {
       const oldestTimestamp = await getOldestCachedPostTimestamp()
-      lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
+      lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : clientDate()
     }
     console.log(`${modeLabel} Initial lastPostTime: ${lastPostTime.toISOString()}`)
 
@@ -651,7 +652,7 @@ export async function performLookbackFetch(
       if (newCursor && entries.length > 0) {
         cursorState = {
           cursor: newCursor,
-          receivedAt: Date.now(),
+          receivedAt: clientNow(),
           oldestPostTimestamp: entries[entries.length - 1].postTimestamp
         }
       } else {
@@ -683,7 +684,7 @@ export async function performLookbackFetch(
         let progress: number
         if (isIdleReturn && progressTargetTimestamp) {
           // For idle return, progress is based on how close we are to the newest cached summary
-          const now = Date.now()
+          const now = clientNow()
           const totalSpan = now - progressTargetTimestamp
           const covered = now - oldestEntry.postTimestamp
           progress = Math.min(100, Math.round((covered / totalSpan) * 100))
@@ -769,7 +770,7 @@ export async function performLookbackFetchToSecondary(
     let iterations = 0
     const maxIterations = 100
     let cursor: string | undefined = undefined
-    let lastPostTime = new Date()
+    let lastPostTime = clientDate()
     let secondaryNewest: number | null = null
     let secondaryOldest: number | null = null
 
@@ -924,7 +925,7 @@ async function updateSecondaryCacheMetadata(
 
     const updatedMetadata: FeedCacheMetadata = {
       id: 'last_fetch',
-      lastFetchTime: existingMetadata?.lastFetchTime || Date.now(),
+      lastFetchTime: existingMetadata?.lastFetchTime || clientNow(),
       newestCachedPostTimestamp: existingMetadata?.newestCachedPostTimestamp || 0,
       oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || 0,
       lastCursor: existingMetadata?.lastCursor,
@@ -961,7 +962,7 @@ export async function isSecondaryCacheActive(): Promise<boolean> {
 /**
  * Get local midnight for a given date (00:00:00 in user's timezone)
  */
-export function getLocalMidnight(date: Date = new Date()): Date {
+export function getLocalMidnight(date: Date = clientDate()): Date {
   const midnight = new Date(date)
   midnight.setHours(0, 0, 0, 0)
   return midnight
@@ -978,7 +979,7 @@ export function getLocalMidnight(date: Date = new Date()): Date {
 export function isCacheWithinLookback(timestamp: number | null, lookbackDays: number): boolean {
   if (timestamp === null) return false
 
-  const today = new Date()
+  const today = clientDate()
 
   // Get calendar day boundary: start of the lookback day
   const lookbackBoundary = new Date(today)
@@ -1052,7 +1053,7 @@ export async function limitedLookbackToMidnight(
         break
       }
 
-      const feedReceivedTime = new Date()
+      const feedReceivedTime = clientDate()
 
       // Check each post - stop if we hit a cached post
       let hitCachedPost = false
@@ -1087,7 +1088,7 @@ export async function limitedLookbackToMidnight(
       // Save new posts if any (with no-overwrite protection)
       if (newPosts.length > 0) {
         // Use current time as initialLastPostTime for entries
-        const initialLastPostTime = new Date()
+        const initialLastPostTime = clientDate()
         const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime, intervalHours)
 
         // Save to feed cache and curate
@@ -1220,7 +1221,7 @@ export async function fillGapToMidnight(
         break
       }
 
-      const feedReceivedTime = new Date()
+      const feedReceivedTime = clientDate()
 
       // Check each post - stop if we hit a cached post
       let hitCachedPost = false
@@ -1254,7 +1255,7 @@ export async function fillGapToMidnight(
 
       // Save new posts if any (with no-overwrite protection)
       if (newPosts.length > 0) {
-        const initialLastPostTime = new Date()
+        const initialLastPostTime = clientDate()
         const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime, intervalHours)
 
         await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
@@ -1334,7 +1335,7 @@ export async function fetchUntilCached(
 
   // Get oldest cached timestamp for initialLastPostTime calculation
   const oldestTimestamp = await getOldestCachedPostTimestamp()
-  let lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
+  let lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : clientDate()
 
   while (!hitCachedPost && iterations < maxIterations) {
     iterations++
@@ -1350,7 +1351,7 @@ export async function fetchUntilCached(
         break
       }
 
-      const feedReceivedTime = new Date()
+      const feedReceivedTime = clientDate()
       const newPosts: AppBskyFeedDefs.FeedViewPost[] = []
 
       for (const post of feed) {
@@ -1459,7 +1460,7 @@ export async function fetchPageFromTimestamp(
 
   // Get oldest cached timestamp for initialLastPostTime calculation
   const oldestTimestamp = await getOldestCachedPostTimestamp()
-  let lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : new Date()
+  let lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : clientDate()
 
   // If we have an existing cursor, use it directly
   if (existingCursor) {
@@ -1474,7 +1475,7 @@ export async function fetchPageFromTimestamp(
         return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
       }
 
-      const feedReceivedTime = new Date()
+      const feedReceivedTime = clientDate()
       const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
       lastPostTime = finalLastPostTime
 
@@ -1526,7 +1527,7 @@ export async function fetchPageFromTimestamp(
         return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
       }
 
-      const feedReceivedTime = new Date()
+      const feedReceivedTime = clientDate()
 
       for (const post of feed) {
         const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime)
@@ -1636,11 +1637,11 @@ export async function savePrevPageCursor(
     const updatedMetadata: FeedCacheMetadata = {
       ...existingMetadata,
       id: 'last_fetch',
-      lastFetchTime: existingMetadata?.lastFetchTime || Date.now(),
-      newestCachedPostTimestamp: existingMetadata?.newestCachedPostTimestamp || Date.now(),
-      oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || Date.now(),
+      lastFetchTime: existingMetadata?.lastFetchTime || clientNow(),
+      newestCachedPostTimestamp: existingMetadata?.newestCachedPostTimestamp || clientNow(),
+      oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || clientNow(),
       prevPageCursor: cursor,
-      prevPageCursorReceivedAt: Date.now(),
+      prevPageCursorReceivedAt: clientNow(),
       prevPageCursorOldestTimestamp: oldestPostTimestamp
     }
 
@@ -1670,14 +1671,14 @@ export async function getFreshPrevPageCursor(): Promise<{
       return null
     }
 
-    const cursorAge = Date.now() - metadata.prevPageCursorReceivedAt
+    const cursorAge = clientNow() - metadata.prevPageCursorReceivedAt
     if (cursorAge >= CURSOR_STALENESS_MS) {
       return null
     }
 
     return {
       cursor: metadata.prevPageCursor,
-      oldestPostTimestamp: metadata.prevPageCursorOldestTimestamp || Date.now()
+      oldestPostTimestamp: metadata.prevPageCursorOldestTimestamp || clientNow()
     }
   } catch (error) {
     console.warn('Failed to get fresh Prev Page cursor:', error)
@@ -1738,7 +1739,7 @@ export async function getPrevPageCursorStatus(): Promise<{
       }
     }
 
-    const cursorAge = Date.now() - metadata.prevPageCursorReceivedAt
+    const cursorAge = clientNow() - metadata.prevPageCursorReceivedAt
     const ageSeconds = Math.round(cursorAge / 1000)
 
     if (cursorAge >= CURSOR_STALENESS_MS) {
@@ -1770,7 +1771,7 @@ export async function getPrevPageCursorStatus(): Promise<{
  * @returns Date representing the lookback boundary
  */
 export function getLookbackBoundary(lookbackDays: number = 1): Date {
-  const boundary = new Date()
+  const boundary = clientDate()
   boundary.setHours(0, 0, 0, 0)  // Set to midnight today
   boundary.setDate(boundary.getDate() - lookbackDays)
   return boundary
@@ -1787,7 +1788,7 @@ export function calculateLookbackProgress(
   currentTimestamp: Date,
   lookbackBoundary: Date
 ): number {
-  const now = new Date()
+  const now = clientDate()
   const totalSpan = now.getTime() - lookbackBoundary.getTime()
   const covered = now.getTime() - currentTimestamp.getTime()
   return Math.min(100, Math.round((covered / totalSpan) * 100))
@@ -1839,7 +1840,7 @@ export async function markLookbackComplete(): Promise<void> {
       const updatedMetadata: FeedCacheMetadata = {
         ...existingMetadata,
         lookbackCompleted: true,
-        lookbackCompletedAt: Date.now()
+        lookbackCompletedAt: clientNow()
       }
 
       await new Promise<void>((resolve, reject) => {
@@ -2096,7 +2097,7 @@ export async function getCachedFeed(limit: number = 50): Promise<CurationFeedVie
       
       request.onsuccess = () => {
         const entries = request.result as FeedCacheEntry[]
-        const now = Date.now()
+        const now = clientNow()
         
         // Filter to only recent posts (based on postTimestamp, not cache time)
         for (const entry of entries) {
@@ -2400,7 +2401,7 @@ export async function clearOldFeedCache(olderThanHours: number = FEED_CACHE_RETE
     const store = transaction.objectStore(STORE_FEED_CACHE)
     const index = store.index('postTimestamp')
     
-    const cutoff = Date.now() - olderThanHours * 60 * 60 * 1000
+    const cutoff = clientNow() - olderThanHours * 60 * 60 * 1000
     const range = IDBKeyRange.upperBound(cutoff)
     
     return new Promise((resolve, reject) => {
@@ -2530,7 +2531,7 @@ export async function isPrimaryCacheStale(): Promise<boolean> {
     }
 
     const newest = new Date(metadata.newestCachedPostTimestamp)
-    const now = new Date()
+    const now = clientDate()
 
     // Calculate start of day-before-yesterday (2 calendar days ago at midnight)
     const twoDaysAgo = new Date(now)
@@ -2649,7 +2650,7 @@ async function updateFeedCacheNewestPostTimestamp(): Promise<void> {
       // Update metadata with new newest timestamp
       const updatedMetadata: FeedCacheMetadata = {
         id: 'last_fetch',
-        lastFetchTime: Date.now(),
+        lastFetchTime: clientNow(),
         newestCachedPostTimestamp: newestTimestamp,
         oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || newestTimestamp,
         lastCursor: existingMetadata?.lastCursor,

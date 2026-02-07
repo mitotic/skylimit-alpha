@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistance } from 'date-fns'
+import { clientDate } from '../utils/clientClock'
 import { useEffect, useState, useRef } from 'react'
 import Avatar from './Avatar'
 import PostActions from './PostActions'
@@ -89,7 +90,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   // Note: feedReceivedTime is not available in PostCard, so we'll use the function's fallback
   const postedAt = getFeedViewPostTimestamp(post)
   const isReposted = isRepost(post)
-  const timeAgo = formatDistanceToNow(postedAt, { addSuffix: true })
+  const timeAgo = formatDistance(postedAt, clientDate(), { addSuffix: true })
   
   // Extract curation metadata (must be defined before useEffect that uses it)
   const actualPost = post.post
@@ -156,9 +157,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     }
   }, [showCounter, post.post.uri, postedAt, isReposted, repostedBy, curation])
 
-  // Close popup when clicking outside
+  // Close popup when clicking/touching outside
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       if (popupRef.current && !popupRef.current.contains(event.target as Node)) {
         setShowPopup(false)
       }
@@ -166,7 +167,11 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
     if (showPopup) {
       document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
+      document.addEventListener('touchstart', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+        document.removeEventListener('touchstart', handleClickOutside)
+      }
     }
   }, [showPopup])
 
@@ -378,6 +383,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     setShowPopup(false)
                     navigate('/settings?tab=curation')
                   }}
+                  onClose={() => setShowPopup(false)}
                 />
               )}
             </>

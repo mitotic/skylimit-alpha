@@ -50,7 +50,7 @@ export async function getHomeFeed(
     if (isRateLimitError(error)) {
       const info = getRateLimitInfo(error)
       throw new Error(
-        info.message || 
+        info.message ||
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }

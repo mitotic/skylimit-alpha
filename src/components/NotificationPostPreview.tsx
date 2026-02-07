@@ -6,7 +6,8 @@
  */
 
 import { AppBskyFeedDefs } from '@atproto/api'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistance } from 'date-fns'
+import { clientDate } from '../utils/clientClock'
 import { useNavigate } from 'react-router-dom'
 import Avatar from './Avatar'
 
@@ -35,7 +36,7 @@ export default function NotificationPostPreview({ post, onClick }: NotificationP
   }
   
   const postedAt = new Date(record?.createdAt || post.indexedAt)
-  const timeAgo = formatDistanceToNow(postedAt, { addSuffix: true })
+  const timeAgo = formatDistance(postedAt, clientDate(), { addSuffix: true })
   
   // Truncate text to max 3 lines (approximately 200 characters)
   const text = record?.text || ''
