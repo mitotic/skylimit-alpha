@@ -19,11 +19,14 @@ const HAND_LENGTH = 7
 export default function AcceleratedClock() {
   const [accelerated, setAccelerated] = useState(isClockAccelerated())
   const [hourAngle, setHourAngle] = useState(0)
+  const [ampm, setAmpm] = useState('')
+  const [clockVersion, setClockVersion] = useState(0)
 
   // Listen for clock configuration changes (fired by configureClientClock/resetClientClock)
   useEffect(() => {
     function handleClockChange() {
       setAccelerated(isClockAccelerated())
+      setClockVersion(v => v + 1)
     }
     window.addEventListener('clientClockChange', handleClockChange)
     return () => window.removeEventListener('clientClockChange', handleClockChange)
@@ -35,9 +38,11 @@ export default function AcceleratedClock() {
 
     function updateAngle() {
       const now = clientDate()
-      const hours = now.getHours() % 12
+      const hours24 = now.getHours()
+      const hours = hours24 % 12
       const minutes = now.getMinutes()
       setHourAngle((hours + minutes / 60) * 30)
+      setAmpm(hours24 >= 12 ? 'pm' : 'am')
     }
 
     updateAngle()
@@ -45,7 +50,7 @@ export default function AcceleratedClock() {
     // Update every accelerated hour (at 60x, this is every real minute)
     const interval = clientInterval(updateAngle, 60 * 60 * 1000)
     return () => clearClientInterval(interval)
-  }, [accelerated])
+  }, [accelerated, clockVersion])
 
   if (!accelerated) return null
 
@@ -69,6 +74,7 @@ export default function AcceleratedClock() {
 
   return (
     <span className="inline-flex items-center gap-1">
+      <span className="text-orange-500 dark:text-orange-400 text-xs font-bold">{factor}x</span>
       <svg
         width={CLOCK_SIZE}
         height={CLOCK_SIZE}
@@ -121,7 +127,7 @@ export default function AcceleratedClock() {
           className="text-orange-500 dark:text-orange-400"
         />
       </svg>
-      <span className="text-orange-500 dark:text-orange-400 text-xs font-bold">{factor}x</span>
+      <span className="text-orange-500 dark:text-orange-400 text-xs font-bold">{ampm}</span>
     </span>
   )
 }

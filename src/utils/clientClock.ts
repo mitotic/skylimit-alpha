@@ -23,6 +23,7 @@ export interface SkyspeedConfig {
   skyspeedRandomSeed: string
   skyspeedClockFactor: number
   skyspeedSyncTime: string  // ISO 8601 - when simulated time === actual time
+  skyspeedTimeShiftOffsetMs?: number  // cumulative time shift offset from server
 }
 
 // --- Clock state ---
@@ -49,7 +50,7 @@ function notifyClockChange(): void {
  * Replaces Date.now() for logical timestamps (cache metadata, idle detection, etc.)
  */
 export function clientNow(): number {
-  if (clockFactor === 1) return Date.now()
+  if (clockFactor === 1 && clientEpoch === 0) return Date.now()
   return clientEpoch + (Date.now() - realEpoch) * clockFactor
 }
 
@@ -62,7 +63,7 @@ export function clientDate(): Date
 export function clientDate(timestamp: number | string): Date
 export function clientDate(timestamp?: number | string): Date {
   if (timestamp !== undefined) return new Date(timestamp)
-  if (clockFactor === 1) return new Date()
+  if (clockFactor === 1 && clientEpoch === 0) return new Date()
   return new Date(clientNow())
 }
 
@@ -72,7 +73,7 @@ export function clientDate(timestamp?: number | string): Date {
  * Keep native setTimeout for UI timers (toast dismiss, scroll debounce, etc.)
  */
 export function clientTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
-  if (clockFactor === 1) return setTimeout(fn, ms)
+  if (clockFactor === 1) return setTimeout(fn, ms)  // No adjustment needed at 1x (time offset doesn't affect intervals)
   return setTimeout(fn, ms / clockFactor)
 }
 
@@ -110,10 +111,10 @@ export function getClockFactor(): number {
 }
 
 /**
- * Returns true if the clock is running faster than normal.
+ * Returns true if the clock is configured for Skyspeed (accelerated or time-shifted).
  */
 export function isClockAccelerated(): boolean {
-  return clockFactor > 1
+  return clockFactor > 1 || clientEpoch !== 0
 }
 
 /**
@@ -131,13 +132,17 @@ export function configureClientClock(config: SkyspeedConfig): void {
   }
 
   // At syncTime, simulated === actual, so both epochs are syncTime
+  // Apply any cumulative time shift offset from the server
   clockFactor = factor
   realEpoch = syncTimeMs
-  clientEpoch = syncTimeMs
+  clientEpoch = syncTimeMs + (config.skyspeedTimeShiftOffsetMs ?? 0)
 
   console.log('[ClientClock] Configured:')
   console.log(`  Clock factor: ${factor}x`)
   console.log(`  Sync time: ${config.skyspeedSyncTime}`)
+  if (config.skyspeedTimeShiftOffsetMs) {
+    console.log(`  Time offset: +${(config.skyspeedTimeShiftOffsetMs / 60000).toFixed(0)} minutes`)
+  }
   console.log(`  Client time now: ${new Date(clientNow()).toISOString()}`)
   notifyClockChange()
 }
@@ -174,6 +179,23 @@ export function resetClientClock(): void {
   notifyClockChange()
 }
 
+/**
+ * Apply a time shift: jump the client clock forward by the given amount.
+ * Called when the server communicates a shift via the X-Skyspeed-TimeShift header.
+ */
+export function applyTimeShift(shiftMs: number): void {
+  clientEpoch += shiftMs
+  // Update saved config so reconnect sees the current total offset
+  const saved = loadSkyspeedConfig()
+  if (saved) {
+    saved.skyspeedTimeShiftOffsetMs = (saved.skyspeedTimeShiftOffsetMs ?? 0) + shiftMs
+    saveSkyspeedConfig(saved)
+  }
+  console.log(`[ClientClock] Time shift applied: +${(shiftMs / 60000).toFixed(0)} minutes`)
+  console.log(`  Client time now: ${new Date(clientNow()).toISOString()}`)
+  notifyClockChange()
+}
+
 // --- Skyspeed detection ---
 
 /**
@@ -203,9 +225,14 @@ export async function detectSkyspeed(
 
     const config: SkyspeedConfig = await response.json()
 
-    // Only acknowledge when clockFactor > 1 (accelerated mode requires handshake;
-    // at clockFactor=1, standard Bluesky clients can connect without ack)
-    if (config.skyspeedClockFactor > 1) {
+    const hasTimeOffset = (config.skyspeedTimeShiftOffsetMs ?? 0) > 0
+    if (hasTimeOffset) {
+      console.log(`[Skyspeed] Server time offset: +${((config.skyspeedTimeShiftOffsetMs!) / 60000).toFixed(0)} minutes`)
+    }
+
+    // Acknowledge when clockFactor > 1 or time offset is non-zero
+    // (at clockFactor=1 with no offset, standard Bluesky clients can connect without ack)
+    if (config.skyspeedClockFactor > 1 || hasTimeOffset) {
       try {
         const ackResponse = await fetch(`${serviceUrl}/xrpc/dev.skyspeed.ackConfig`, {
           method: 'POST',
@@ -213,7 +240,10 @@ export async function detectSkyspeed(
             'Authorization': `Bearer ${accessJwt}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ clockFactor: config.skyspeedClockFactor }),
+          body: JSON.stringify({
+            clockFactor: config.skyspeedClockFactor,
+            timeShiftOffsetMs: config.skyspeedTimeShiftOffsetMs ?? 0,
+          }),
         })
         if (ackResponse.ok) {
           console.log(`[Skyspeed] Clock factor ${config.skyspeedClockFactor}x acknowledged by server`)
@@ -272,7 +302,9 @@ export function hasSkyspeedConfigChanged(newConfig: SkyspeedConfig): boolean {
 
   return (
     stored.skyspeedClockFactor !== newConfig.skyspeedClockFactor ||
-    stored.skyspeedSyncTime !== newConfig.skyspeedSyncTime
+    stored.skyspeedSyncTime !== newConfig.skyspeedSyncTime ||
+    stored.skyspeedRandomSeed !== newConfig.skyspeedRandomSeed ||
+    (stored.skyspeedTimeShiftOffsetMs ?? 0) !== (newConfig.skyspeedTimeShiftOffsetMs ?? 0)
   )
 }
 

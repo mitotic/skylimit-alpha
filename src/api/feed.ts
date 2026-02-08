@@ -6,6 +6,7 @@
 
 import { BskyAgent, AppBskyFeedGetTimeline, AppBskyFeedGetAuthorFeed, AppBskyFeedGetPostThread, AppBskyFeedGetLikes, AppBskyFeedGetRepostedBy, AppBskyFeedDefs, AppBskyBookmarkDefs } from '@atproto/api'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
+import { applyTimeShift, isClockAccelerated } from '../utils/clientClock'
 
 export interface FeedOptions {
   limit?: number
@@ -30,6 +31,17 @@ export async function getHomeFeed(
         limit: options.limit || 50,
         cursor: options.cursor,
       })
+
+      // Check for time shift header from Skyspeed server
+      if (isClockAccelerated()) {
+        const timeShiftHeader = response.headers?.['x-skyspeed-timeshift']
+        if (timeShiftHeader) {
+          const timeShiftMs = parseInt(timeShiftHeader, 10)
+          if (!isNaN(timeShiftMs) && timeShiftMs > 0) {
+            applyTimeShift(timeShiftMs)
+          }
+        }
+      }
 
       return {
         feed: response.data.feed,
