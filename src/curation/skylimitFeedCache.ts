@@ -990,9 +990,18 @@ export function isCacheWithinLookback(timestamp: number | null, lookbackDays: nu
 }
 
 /**
- * Perform a limited lookback to fill gaps back to local midnight
+ * Result of a gap fill lookback operation
+ */
+export interface GapFillResult {
+  totalNewPosts: number
+  stoppedOnCachedPost: boolean
+  cachedPostHasNumber: boolean  // true if the cached post that stopped us has a postNumber
+}
+
+/**
+ * Perform a limited lookback to fill gaps back to a boundary
  * Used when loading new posts to ensure consistent counter numbering
- * Stops when hitting cached posts OR reaching local midnight
+ * Stops when hitting cached posts OR reaching the lookback boundary
  *
  * @param oldestFetchedTimestamp - Timestamp of the oldest post from the initial fetch
  * @param initialCursor - Cursor from the initial fetch for pagination
@@ -1000,45 +1009,47 @@ export function isCacheWithinLookback(timestamp: number | null, lookbackDays: nu
  * @param myUsername - User's username
  * @param myDid - User's DID
  * @param pageLength - Number of posts per page (default 25)
- * @param prevMidnight - Optional midnight boundary to use instead of computing from current time
- * @returns Number of new posts cached during lookback
+ * @param lookbackBoundary - Optional boundary timestamp to use instead of computing from current time
+ * @returns GapFillResult with post count and stop condition info
  */
-export async function limitedLookbackToMidnight(
+export async function limitedLookbackToCachedPosts(
   oldestFetchedTimestamp: number,
   initialCursor: string | undefined,
   agent: BskyAgent,
   myUsername: string,
   myDid: string,
   pageLength: number = DEFAULT_PAGE_LENGTH,
-  prevMidnight?: number
-): Promise<number> {
-  // Use supplied midnight boundary if provided, otherwise compute from current time
-  const localMidnight = prevMidnight ?? getLocalMidnight().getTime()
+  lookbackBoundary?: number
+): Promise<GapFillResult> {
+  // Use supplied boundary if provided, otherwise compute from current time
+  const boundary = lookbackBoundary ?? getLocalMidnight().getTime()
 
-  // If oldest fetched is already at or before midnight, no lookback needed
-  if (oldestFetchedTimestamp <= localMidnight) {
-    console.log('[Limited Lookback] Already at or past midnight boundary, skipping')
-    return 0
+  // If oldest fetched is already at or before boundary, no lookback needed
+  if (oldestFetchedTimestamp <= boundary) {
+    console.log('[Gap Fill Lookback] Already at or past boundary, skipping')
+    return { totalNewPosts: 0, stoppedOnCachedPost: false, cachedPostHasNumber: false }
   }
 
   // Get interval settings for cache entries
   const settings = await getSettings()
   const intervalHours = getIntervalHoursSync(settings)
 
-  console.log(`[Limited Lookback] Starting from ${new Date(oldestFetchedTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}${prevMidnight ? ' (supplied)' : ' (computed)'}`)
+  console.log(`[Gap Fill Lookback] Starting from ${new Date(oldestFetchedTimestamp).toLocaleTimeString()} to boundary ${new Date(boundary).toLocaleString()}${lookbackBoundary ? ' (supplied)' : ' (computed)'}`)
 
   let currentOldestTimestamp = oldestFetchedTimestamp
   let cursor = initialCursor
   let totalNewPosts = 0
   let iterations = 0
+  let stoppedOnCachedPost = false
+  let cachedPostHasNumber = false
   const maxIterations = MAX_FETCH_ITERATIONS
 
-  // Keep fetching backward until we hit midnight OR cached posts
-  while (currentOldestTimestamp > localMidnight && iterations < maxIterations) {
+  // Keep fetching backward until we hit boundary OR cached posts
+  while (currentOldestTimestamp > boundary && iterations < maxIterations) {
     iterations++
 
     if (!cursor) {
-      console.log('[Limited Lookback] No cursor available, stopping')
+      console.log('[Gap Fill Lookback] No cursor available, stopping')
       break
     }
 
@@ -1049,7 +1060,7 @@ export async function limitedLookbackToMidnight(
       })
 
       if (feed.length === 0) {
-        console.log('[Limited Lookback] No more posts from server, stopping')
+        console.log('[Gap Fill Lookback] No more posts from server, stopping')
         break
       }
 
@@ -1063,17 +1074,19 @@ export async function limitedLookbackToMidnight(
         const uniqueId = getPostUniqueId(post)
         const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime).getTime()
 
-        // Check if already cached - if so, stop lookback
-        const existsInCache = await checkFeedCacheExists(uniqueId)
+        // Check if already cached (using summaries cache) - if so, stop lookback
+        const existsInCache = await checkPostSummaryExists(uniqueId)
         if (existsInCache) {
-          console.log(`[Limited Lookback] Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          const cachedSummary = await getPostSummary(uniqueId)
+          cachedPostHasNumber = cachedSummary?.postNumber != null && cachedSummary.postNumber > 0
+          console.log(`[Gap Fill Lookback] Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()} (hasNumber: ${cachedPostHasNumber}), stopping`)
           hitCachedPost = true
           break
         }
 
-        // Stop if post is before midnight
-        if (postTimestamp < localMidnight) {
-          console.log(`[Limited Lookback] Reached midnight boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+        // Stop if post is before boundary
+        if (postTimestamp < boundary) {
+          console.log(`[Gap Fill Lookback] Reached boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
           break
         }
 
@@ -1095,30 +1108,37 @@ export async function limitedLookbackToMidnight(
         await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
         totalNewPosts += newPosts.length
 
-        console.log(`[Limited Lookback] Cached ${newPosts.length} new posts (total: ${totalNewPosts})`)
+        console.log(`[Gap Fill Lookback] Cached ${newPosts.length} new posts (total: ${totalNewPosts})`)
       }
 
       if (hitCachedPost) {
+        stoppedOnCachedPost = true
+        break
+      }
+
+      // If no new posts were collected (all were before boundary), stop
+      if (newPosts.length === 0) {
+        console.log('[Gap Fill Lookback] All posts in batch before boundary, stopping')
         break
       }
 
       cursor = newCursor
       if (!cursor) {
-        console.log('[Limited Lookback] No more cursor, stopping')
+        console.log('[Gap Fill Lookback] No more cursor, stopping')
         break
       }
     } catch (error) {
-      console.warn('[Limited Lookback] Error during fetch:', error)
+      console.warn('[Gap Fill Lookback] Error during fetch:', error)
       break
     }
   }
 
   if (iterations >= maxIterations) {
-    console.warn('[Limited Lookback] Hit max iterations limit')
+    console.warn('[Gap Fill Lookback] Hit max iterations limit')
   }
 
-  console.log(`[Limited Lookback] Completed - cached ${totalNewPosts} new posts`)
-  return totalNewPosts
+  console.log(`[Gap Fill Lookback] Completed - cached ${totalNewPosts} new posts (stoppedOnCached: ${stoppedOnCachedPost}, cachedHasNumber: ${cachedPostHasNumber})`)
+  return { totalNewPosts, stoppedOnCachedPost, cachedPostHasNumber }
 }
 
 /**
@@ -2511,6 +2531,39 @@ export async function getFeedCacheStats(): Promise<FeedCacheStats> {
       oldestTimestamp: null,
       newestTimestamp: null,
     }
+  }
+}
+
+/**
+ * Get all postTimestamp values from feed cache, sorted ascending.
+ * Uses the postTimestamp index key cursor to avoid loading full post objects.
+ */
+export async function getFeedCacheTimestamps(): Promise<number[]> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE], 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE)
+    const index = store.index('postTimestamp')
+
+    return new Promise((resolve, reject) => {
+      const timestamps: number[] = []
+      const request = index.openKeyCursor(null, 'next')
+
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursor>).result
+        if (cursor) {
+          timestamps.push(cursor.key as number)
+          cursor.continue()
+        } else {
+          resolve(timestamps)
+        }
+      }
+
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('Failed to get feed cache timestamps:', error)
+    return []
   }
 }
 

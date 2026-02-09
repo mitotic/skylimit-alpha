@@ -199,8 +199,10 @@ export function applyTimeShift(shiftMs: number): void {
 // --- Skyspeed detection ---
 
 /**
- * After a successful login, check if the server is a Skyspeed test server.
- * Fetches the dev.skyspeed.getConfig XRPC endpoint and checks for the X-Skyspeed header.
+ * Detect if the server is a Skyspeed test server (phase 1: read-only).
+ * Calls getConfig to read server configuration. Does NOT call ackConfig,
+ * so the server's sync time is not committed. Safe to call speculatively
+ * (e.g., before showing a config change dialog).
  *
  * @param serviceUrl - The base URL of the AT Protocol service
  * @param accessJwt - The access JWT from login
@@ -230,35 +232,49 @@ export async function detectSkyspeed(
       console.log(`[Skyspeed] Server time offset: +${((config.skyspeedTimeShiftOffsetMs!) / 60000).toFixed(0)} minutes`)
     }
 
-    // Acknowledge when clockFactor > 1 or time offset is non-zero
-    // (at clockFactor=1 with no offset, standard Bluesky clients can connect without ack)
-    if (config.skyspeedClockFactor > 1 || hasTimeOffset) {
-      try {
-        const ackResponse = await fetch(`${serviceUrl}/xrpc/dev.skyspeed.ackConfig`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessJwt}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            clockFactor: config.skyspeedClockFactor,
-            timeShiftOffsetMs: config.skyspeedTimeShiftOffsetMs ?? 0,
-          }),
-        })
-        if (ackResponse.ok) {
-          console.log(`[Skyspeed] Clock factor ${config.skyspeedClockFactor}x acknowledged by server`)
-        } else {
-          console.warn('[Skyspeed] Failed to acknowledge clock factor:', await ackResponse.text())
-        }
-      } catch (ackError) {
-        console.warn('[Skyspeed] Failed to send clock ack:', ackError)
-      }
-    }
-
     return config
   } catch {
     // Not a Skyspeed server, or network error
     return null
+  }
+}
+
+/**
+ * Acknowledge Skyspeed clock configuration (phase 2: commits sync).
+ * Calls ackConfig to lock in the sync time on the server. Only call this
+ * when the client is ready to proceed with this server configuration
+ * (i.e., after any config change dialog has been resolved).
+ *
+ * At clockFactor=1 with no time offset, no acknowledgment is needed
+ * (standard Bluesky clients can connect without ack).
+ */
+export async function acknowledgeSkyspeed(
+  serviceUrl: string,
+  accessJwt: string,
+  config: SkyspeedConfig,
+): Promise<void> {
+  const hasTimeOffset = (config.skyspeedTimeShiftOffsetMs ?? 0) > 0
+  if (config.skyspeedClockFactor <= 1 && !hasTimeOffset) return  // No ack needed
+
+  try {
+    const ackResponse = await fetch(`${serviceUrl}/xrpc/dev.skyspeed.ackConfig`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        clockFactor: config.skyspeedClockFactor,
+        timeShiftOffsetMs: config.skyspeedTimeShiftOffsetMs ?? 0,
+      }),
+    })
+    if (ackResponse.ok) {
+      console.log(`[Skyspeed] Clock factor ${config.skyspeedClockFactor}x acknowledged by server`)
+    } else {
+      console.warn('[Skyspeed] Failed to acknowledge clock factor:', await ackResponse.text())
+    }
+  } catch (ackError) {
+    console.warn('[Skyspeed] Failed to send clock ack:', ackError)
   }
 }
 

@@ -225,3 +225,29 @@ export async function assignIncrementalNumbers(
   console.log(`[Numbering] Incremental: assigned numbers to ${newSummaries.length} posts (postNumber ${existingMaxPostNumber + 1}-${postNumber}, curationNumber up to ${curationNumber})`)
 }
 
+/**
+ * Number all unnumbered post summaries within a day range.
+ * Consolidates the repeated pattern of finding unnumbered posts and assigning numbers.
+ *
+ * @param dayStart - Start of day (midnight timestamp in ms)
+ * @param dayEnd - End of day (next midnight timestamp in ms)
+ * @param label - Log label for debugging (e.g., "[Idle Return Lookback]")
+ * @returns Number of posts that were assigned numbers
+ */
+export async function numberUnnumberedPostsForDay(
+  dayStart: number,
+  dayEnd: number,
+  label: string
+): Promise<number> {
+  const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(dayStart, dayEnd)
+  const allSummaries = await getPostSummariesInRange(dayStart, dayEnd)
+  const unnumbered = allSummaries.filter(
+    s => s.postNumber === null || s.postNumber === undefined
+  )
+  if (unnumbered.length > 0) {
+    await assignIncrementalNumbers(unnumbered, maxPostNumber, maxCurationNumber)
+    console.log(`${label} Assigned numbers to ${unnumbered.length} posts`)
+  }
+  return unnumbered.length
+}
+

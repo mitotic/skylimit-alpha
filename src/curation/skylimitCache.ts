@@ -880,6 +880,39 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
 }
 
 /**
+ * Get all postTimestamp values from post summaries cache, sorted ascending.
+ * Uses the postTimestamp index key cursor to avoid loading full summary objects.
+ */
+export async function getPostSummaryTimestamps(): Promise<number[]> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
+    const index = store.index('postTimestamp')
+
+    return new Promise((resolve, reject) => {
+      const timestamps: number[] = []
+      const request = index.openKeyCursor(null, 'next')
+
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursor>).result
+        if (cursor) {
+          timestamps.push(cursor.key as number)
+          cursor.continue()
+        } else {
+          resolve(timestamps)
+        }
+      }
+
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('Failed to get post summary timestamps:', error)
+    return []
+  }
+}
+
+/**
  * Clear Skylimit settings - resets to defaults
  */
 export async function clearSkylimitSettings(): Promise<void> {

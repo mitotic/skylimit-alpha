@@ -11,14 +11,54 @@ import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
 import Button from '../components/Button'
 import SkylimitStatistics from '../components/SkylimitStatistics'
-import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything } from '../curation/skylimitCache'
+import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
-import { getFeedCacheStats, FeedCacheStats } from '../curation/skylimitFeedCache'
+import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
 
 type Tab = 'basic' | 'curation' | 'following'
 
 const SCROLL_STATE_KEY = 'websky_skylimit_settings_scroll'
 const TAB_STATE_KEY = 'websky_settings_active_tab'
+
+interface CacheTimeRange {
+  startTime: number
+  endTime: number
+  postCount: number
+}
+
+interface SummaryCacheTimeRange extends CacheTimeRange {
+  postNumberRange: string   // e.g. "42-87" or "42" or "—"
+  curationNumberRange: string
+}
+
+const DEFAULT_GAP_THRESHOLD_MS = 30 * 60 * 1000 // 30 minutes
+
+function computeTimeRanges(
+  sortedTimestamps: number[],
+  gapThresholdMs: number = DEFAULT_GAP_THRESHOLD_MS
+): CacheTimeRange[] {
+  if (sortedTimestamps.length === 0) return []
+
+  const ranges: CacheTimeRange[] = []
+  let rangeStart = sortedTimestamps[0]
+  let rangePrev = sortedTimestamps[0]
+  let count = 1
+
+  for (let i = 1; i < sortedTimestamps.length; i++) {
+    const current = sortedTimestamps[i]
+    if (current - rangePrev > gapThresholdMs) {
+      ranges.push({ startTime: rangeStart, endTime: rangePrev, postCount: count })
+      rangeStart = current
+      count = 1
+    } else {
+      count++
+    }
+    rangePrev = current
+  }
+
+  ranges.push({ startTime: rangeStart, endTime: rangePrev, postCount: count })
+  return ranges.reverse()
+}
 
 export default function SettingsPage() {
   const { session, logout } = useSession()
@@ -66,6 +106,10 @@ export default function SettingsPage() {
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
+  const [showCacheGaps, setShowCacheGaps] = useState(false)
+  const [loadingCacheGaps, setLoadingCacheGaps] = useState(false)
+  const [feedCacheRanges, setFeedCacheRanges] = useState<CacheTimeRange[]>([])
+  const [summariesCacheRanges, setSummariesCacheRanges] = useState<SummaryCacheTimeRange[]>([])
   const [showResetFeedModal, setShowResetFeedModal] = useState(false)
   const [isResettingFeed, setIsResettingFeed] = useState(false)
   const [showResetCurationModal, setShowResetCurationModal] = useState(false)
@@ -204,6 +248,63 @@ export default function SettingsPage() {
       console.error('Failed to load cache stats:', error)
     } finally {
       setLoadingStats(false)
+    }
+  }
+
+  const loadCacheGaps = async () => {
+    if (showCacheGaps) {
+      setShowCacheGaps(false)
+      return
+    }
+
+    setLoadingCacheGaps(true)
+    try {
+      const [feedTimestamps, summaryTimestamps] = await Promise.all([
+        getFeedCacheTimestamps(),
+        getPostSummaryTimestamps(),
+      ])
+
+      setFeedCacheRanges(computeTimeRanges(feedTimestamps))
+
+      // Compute summary ranges and enrich with postNumber/curationNumber from boundary posts
+      const baseRanges = computeTimeRanges(summaryTimestamps)
+      const enrichedRanges: SummaryCacheTimeRange[] = await Promise.all(
+        baseRanges.map(async (range) => {
+          const formatRange = (startVal: number | null, endVal: number | null): string => {
+            if (startVal === null && endVal === null) return '—'
+            const s = startVal != null ? String(startVal) : '?'
+            const e = endVal != null ? String(endVal) : '?'
+            return s === e ? s : `${s}–${e}`
+          }
+
+          // Look up summaries at the start and end boundary timestamps
+          const [startSummaries, endSummaries] = await Promise.all([
+            getPostSummariesInRange(range.startTime, range.startTime),
+            range.startTime === range.endTime
+              ? Promise.resolve([])
+              : getPostSummariesInRange(range.endTime, range.endTime),
+          ])
+
+          const startSummary = startSummaries[0] ?? null
+          const endSummary = range.startTime === range.endTime
+            ? startSummary
+            : (endSummaries[0] ?? null)
+
+          console.log(`[Cache Gaps] Range ${new Date(range.startTime).toLocaleString()} – ${new Date(range.endTime).toLocaleString()}: startSummaries=${startSummaries.length}, endSummaries=${endSummaries.length}, startPostNum=${startSummary?.postNumber}, endPostNum=${endSummary?.postNumber}`)
+
+          return {
+            ...range,
+            postNumberRange: formatRange(startSummary?.postNumber ?? null, endSummary?.postNumber ?? null),
+            curationNumberRange: formatRange(startSummary?.curationNumber ?? null, endSummary?.curationNumber ?? null),
+          }
+        })
+      )
+      setSummariesCacheRanges(enrichedRanges)
+      setShowCacheGaps(true)
+    } catch (error) {
+      console.error('Failed to load cache gaps:', error)
+    } finally {
+      setLoadingCacheGaps(false)
     }
   }
 
@@ -864,6 +965,89 @@ export default function SettingsPage() {
               )}
             </div>
           )}
+
+          {/* Cache Gaps Analysis */}
+          <div className="mb-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={loadCacheGaps}
+              disabled={loadingCacheGaps}
+              className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full"
+            >
+              {loadingCacheGaps ? 'Loading...' : showCacheGaps ? 'Hide Cache Gaps' : 'Show Cache Gaps'}
+            </Button>
+
+            {showCacheGaps && (
+              <div className="mt-4 space-y-4">
+                {/* Feed Cache Ranges */}
+                <div>
+                  <h4 className="font-medium mb-2">
+                    Feed Cache Ranges ({feedCacheRanges.length} contiguous {feedCacheRanges.length === 1 ? 'range' : 'ranges'})
+                  </h4>
+                  {feedCacheRanges.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400 ml-4">No cached posts</div>
+                  ) : (
+                    <div className="overflow-x-auto ml-4">
+                      <table className="text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-gray-600 dark:text-gray-400">
+                            <th className="pr-4 pb-1 font-medium">Start</th>
+                            <th className="pr-4 pb-1 font-medium">End</th>
+                            <th className="pb-1 font-medium text-right">Posts</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {feedCacheRanges.map((range, i) => (
+                            <tr key={i} className="text-gray-800 dark:text-gray-200">
+                              <td className="pr-4 py-0.5 whitespace-nowrap">{new Date(range.startTime).toLocaleString()}</td>
+                              <td className="pr-4 py-0.5 whitespace-nowrap">{new Date(range.endTime).toLocaleString()}</td>
+                              <td className="py-0.5 text-right">{range.postCount}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Summaries Cache Ranges */}
+                <div>
+                  <h4 className="font-medium mb-2">
+                    Post Summaries Ranges ({summariesCacheRanges.length} contiguous {summariesCacheRanges.length === 1 ? 'range' : 'ranges'})
+                  </h4>
+                  {summariesCacheRanges.length === 0 ? (
+                    <div className="text-sm text-gray-500 dark:text-gray-400 ml-4">No cached summaries</div>
+                  ) : (
+                    <div className="overflow-x-auto ml-4">
+                      <table className="text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-gray-600 dark:text-gray-400">
+                            <th className="pr-4 pb-1 font-medium">Start</th>
+                            <th className="pr-4 pb-1 font-medium">End</th>
+                            <th className="pr-4 pb-1 font-medium text-right">Posts</th>
+                            <th className="pr-4 pb-1 font-medium text-right">Post #</th>
+                            <th className="pb-1 font-medium text-right">Curation #</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summariesCacheRanges.map((range, i) => (
+                            <tr key={i} className="text-gray-800 dark:text-gray-200">
+                              <td className="pr-4 py-0.5 whitespace-nowrap">{new Date(range.startTime).toLocaleString()}</td>
+                              <td className="pr-4 py-0.5 whitespace-nowrap">{new Date(range.endTime).toLocaleString()}</td>
+                              <td className="pr-4 py-0.5 text-right">{range.postCount}</td>
+                              <td className="pr-4 py-0.5 text-right whitespace-nowrap">{range.postNumberRange}</td>
+                              <td className="py-0.5 text-right whitespace-nowrap">{range.curationNumberRange}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="flex flex-wrap gap-3">
             <Button

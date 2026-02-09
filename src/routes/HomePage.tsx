@@ -12,7 +12,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, getPostSummariesInRange, getNewestSummaryTimestamp, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
+import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, getNewestSummaryTimestamp, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
 import { getSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
@@ -20,10 +20,10 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToMidnight, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToCachedPosts, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
-import { assignIncrementalNumbers, getMaxNumbersForDay } from '../curation/skylimitNumbering'
+import { numberUnnumberedPostsForDay, assignNumbersForDay, getMaxNumbersForDay } from '../curation/skylimitNumbering'
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeout, clearClientInterval } from '../utils/clientClock'
@@ -261,6 +261,7 @@ export default function HomePage() {
   const intersectionObserverRef = useRef<IntersectionObserver | null>(null)  // Observer instance
   const previousPageFeedRef = useRef<CurationFeedViewPost[]>([])  // Ref for observer callback (avoids stale closure)
   const isPrefetchingRef = useRef(false)  // Ref for observer callback (avoids stale closure)
+  const prevPageHadUnnumberedRef = useRef(false)  // Tracks if previous Prev Page had unnumbered posts
 
   // Scroll state refs (for UI state and restoration)
   const isProgrammaticScrollRef = useRef(false)
@@ -669,6 +670,21 @@ export default function HomePage() {
         return
       }
 
+      // Step 0: If previous Prev Page had unnumbered posts, check if this day has numbered posts
+      // to trigger incremental numbering before lookupCurationAndFilter runs
+      if (prevPageHadUnnumberedRef.current) {
+        const fetchDayStart = getLocalMidnight(new Date(afterTimestamp)).getTime()
+        const fetchDayEnd = fetchDayStart + 24 * 60 * 60 * 1000
+        const { maxPostNumber: dayMaxPost } = await getMaxNumbersForDay(fetchDayStart, fetchDayEnd)
+        if (dayMaxPost > 0) {
+          const preNumbered = await numberUnnumberedPostsForDay(fetchDayStart, fetchDayEnd, '[Prefetch]')
+          if (preNumbered > 0) {
+            console.log(`[Prefetch] Numbered ${preNumbered} unnumbered posts (previous page had unnumbered)`)
+          }
+          prevPageHadUnnumberedRef.current = false
+        }
+      }
+
       // Step 1: Try to fetch from cache first (no midnight boundary)
       console.log(`[Prefetch DEBUG] Fetching posts before ${new Date(afterTimestamp).toLocaleTimeString()} (${afterTimestamp}), effectivePageLength=${effectivePageLength}`)
       let { posts: postsForNextPage, postTimestamps: timestampsForNextPage } =
@@ -823,6 +839,28 @@ export default function HomePage() {
       // Use accumulated results, capped at effectivePageLength (extra posts stay in cache for next Prev Page)
       filtered = accumulatedFiltered.slice(0, effectivePageLength)
 
+      // Step 2b: Check for mid-day unnumbered→numbered transition within this prefetch
+      // Posts sorted newest-first; if newer posts are unnumbered and older posts are numbered,
+      // trigger incremental numbering for the day
+      if (filtered.length > 1) {
+        for (let i = 0; i < filtered.length - 1; i++) {
+          const currentNum = (filtered[i] as CurationFeedViewPost).curation?.postNumber
+          const nextNum = (filtered[i + 1] as CurationFeedViewPost).curation?.postNumber
+          if ((currentNum == null) && nextNum != null && nextNum > 0) {
+            const nextId = getPostUniqueId(filtered[i + 1])
+            const nextTs = accumulatedTimestamps.get(nextId) ?? accumulatedTimestamps.get(filtered[i + 1].post.uri)
+            if (nextTs) {
+              const dayStart = getLocalMidnight(new Date(nextTs)).getTime()
+              const dayEnd = dayStart + 24 * 60 * 60 * 1000
+              console.log(`[Prefetch] Mid-day numbering trigger at post #${nextNum}`)
+              await numberUnnumberedPostsForDay(dayStart, dayEnd, '[Prefetch]')
+              filtered = await lookupCurationAndFilter(filtered, clientDate(), accumulatedTimestamps, true)
+            }
+            break
+          }
+        }
+      }
+
       // Step 3: Apply midnight boundary filter after curation
       // If posts span multiple calendar days, keep only the older day's posts
       if (filtered.length > 0) {
@@ -839,10 +877,31 @@ export default function HomePage() {
           // Keep OLDER day's posts (lastDate) since we're navigating backwards in time
           filtered = filtered.filter(p => getLocalDateString(p) === lastDate)
           console.log(`[Prefetch] Midnight filter: kept ${filtered.length}/${originalCount} posts from ${lastDate} (older day)`)
+
+          // Number the newer day we're leaving behind (if unnumbered)
+          const newerDayPost = accumulatedFiltered.find(p => getLocalDateString(p) === firstDate)
+          if (newerDayPost) {
+            const nTs = accumulatedTimestamps.get(getPostUniqueId(newerDayPost)) ?? accumulatedTimestamps.get(newerDayPost.post.uri)
+            if (nTs && (newerDayPost as CurationFeedViewPost).curation?.postNumber == null) {
+              const newerDayStart = getLocalMidnight(new Date(nTs)).getTime()
+              const newerDayEnd = newerDayStart + 24 * 60 * 60 * 1000
+              console.log(`[Prefetch] Midnight trigger: numbering newer day ${firstDate}`)
+              await assignNumbersForDay(newerDayStart, newerDayEnd)
+            }
+          }
+
+          // Re-read numbers for the kept older-day posts
+          filtered = await lookupCurationAndFilter(filtered, clientDate(), accumulatedTimestamps, true)
         }
       }
 
       setPreviousPageFeed(filtered)
+
+      // Track if this page has unnumbered posts for cross-prefetch detection
+      prevPageHadUnnumberedRef.current = filtered.some(
+        p => (p as CurationFeedViewPost).curation?.postNumber == null
+      )
+
       if (filtered.length > 0) {
         const pfNewest = getFeedViewPostTimestamp(filtered[0], clientDate()).getTime()
         const pfOldest = getFeedViewPostTimestamp(filtered[filtered.length - 1], clientDate()).getTime()
@@ -1155,17 +1214,12 @@ export default function HomePage() {
                 setLookingBack(false)
                 setLookbackProgress(100)
 
-                // Assign numbers to unnumbered summaries for today
+                // Assign numbers to unnumbered summaries for yesterday and today
                 const todayMidnight = getLocalMidnight(clientDate()).getTime()
                 const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
-                const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
-                const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
-                const unnumbered = allSummaries.filter(s => s.postNumber === null || s.postNumber === undefined)
-
-                if (unnumbered.length > 0) {
-                  await assignIncrementalNumbers(unnumbered, maxPostNumber, maxCurationNumber)
-                  console.log(`[Idle Return Lookback] Assigned numbers to ${unnumbered.length} posts`)
-                }
+                const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
+                await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return Lookback] (yesterday)')
+                await numberUnnumberedPostsForDay(todayMidnight, todayEnd, '[Idle Return Lookback]')
 
                 // Clear sessionStorage to force fresh load from feed cache with updated numbers
                 sessionStorage.removeItem(getFeedStateKey('curated'))
@@ -1268,14 +1322,9 @@ export default function HomePage() {
                     console.log('[Lookback] Non-initial lookback complete, assigning numbers...')
                     const todayMidnight = getLocalMidnight(clientDate()).getTime()
                     const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
-                    const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
-                    const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
-                    const unnumbered = allSummaries.filter(s => s.postNumber === null || s.postNumber === undefined)
-
-                    if (unnumbered.length > 0) {
-                      await assignIncrementalNumbers(unnumbered, maxPostNumber, maxCurationNumber)
-                      console.log(`[Lookback] Assigned numbers to ${unnumbered.length} posts`)
-                    }
+                    const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
+                    await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Lookback] (yesterday)')
+                    await numberUnnumberedPostsForDay(todayMidnight, todayEnd, '[Lookback]')
 
                     // Clear sessionStorage and redisplay with numbered posts
                     sessionStorage.removeItem(getFeedStateKey('curated'))
@@ -1299,18 +1348,15 @@ export default function HomePage() {
             // Idle return with gap already filled - just assign numbers to any new posts and prefetch
             console.log('[Idle Return] Gap already filled by first page - skipping background lookback')
 
-            // Assign numbers to unnumbered summaries for today (if any new posts were curated)
+            // Assign numbers to unnumbered summaries for yesterday and today (if any new posts were curated)
             if (entriesToSave.length > 0) {
               const todayMidnight = getLocalMidnight(clientDate()).getTime()
               const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
-              const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(todayMidnight, todayEnd)
-              const allSummaries = await getPostSummariesInRange(todayMidnight, todayEnd)
-              const unnumbered = allSummaries.filter(s => s.postNumber === null || s.postNumber === undefined)
+              const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
+              const numberedYesterday = await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return] (yesterday)')
+              const numberedToday = await numberUnnumberedPostsForDay(todayMidnight, todayEnd, '[Idle Return]')
 
-              if (unnumbered.length > 0) {
-                await assignIncrementalNumbers(unnumbered, maxPostNumber, maxCurationNumber)
-                console.log(`[Idle Return] Assigned numbers to ${unnumbered.length} posts`)
-
+              if (numberedYesterday + numberedToday > 0) {
                 // Clear sessionStorage to force fresh load with updated numbers
                 sessionStorage.removeItem(getFeedStateKey('curated'))
 
@@ -2239,18 +2285,7 @@ export default function HomePage() {
           const newestPostDate = new Date(result.newestTimestamp || clientNow())
           const dayStart = getLocalMidnight(newestPostDate).getTime()
           const dayEnd = dayStart + 24 * 60 * 60 * 1000
-          const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(dayStart, dayEnd)
-
-          // Get summaries for the day of the posts (not necessarily today)
-          const allSummaries = await getPostSummariesInRange(dayStart, dayEnd)
-          const unnumberedSummaries = allSummaries.filter(s =>
-            s.postNumber === null || s.postNumber === undefined
-          )
-
-          if (unnumberedSummaries.length > 0) {
-            await assignIncrementalNumbers(unnumberedSummaries, maxPostNumber, maxCurationNumber)
-            console.log(`[New Posts] SINGLE PAGE: Assigned numbers to ${unnumberedSummaries.length} posts for ${newestPostDate.toLocaleDateString()} (max postNumber: ${maxPostNumber}, max curationNumber: ${maxCurationNumber})`)
-          }
+          await numberUnnumberedPostsForDay(dayStart, dayEnd, '[New Posts] SINGLE PAGE')
         }
 
         // Clear UI state
@@ -2441,8 +2476,10 @@ export default function HomePage() {
         let lastPostTime = clientDate()
         const allNewIntervalHours = getIntervalHoursSync(settings)
 
+        let loopIndex = 0
         for (const post of sortedPosts) {
           if (displayedCount >= pageLength) break
+          loopIndex++
 
           const { entries: [entry], finalLastPostTime } = createFeedCacheEntries([post], lastPostTime, allNewIntervalHours)
           lastPostTime = finalLastPostTime
@@ -2460,6 +2497,29 @@ export default function HomePage() {
           if (isStatusShow(curatedPost.curation?.curation_status)) {
             postsToDisplay.push(curatedPost)
             displayedCount++
+          }
+        }
+
+        // Cache remaining unprocessed posts from the initial server fetch.
+        // The loop above processes posts one-by-one and stops after pageLength
+        // pass curation. Unlike loadFeed (which saves ALL fetched posts),
+        // remaining posts are unsaved, creating a gap between processed posts
+        // and the cursor position used by limitedLookbackToCachedPosts.
+        if (loopIndex < sortedPosts.length) {
+          const remainingPosts = sortedPosts.slice(loopIndex)
+          const { entries: remainingEntries } = createFeedCacheEntries(
+            remainingPosts, lastPostTime, allNewIntervalHours
+          )
+          await savePostsWithCuration(
+            remainingEntries, fetchCursor, agent, session.handle, session.did
+          )
+          console.log(`[New Posts] MULTI-PAGE: Cached ${remainingPosts.length} remaining posts from initial fetch`)
+
+          // Update oldestCuratedTimestamp to include remaining posts
+          for (const entry of remainingEntries) {
+            if (entry.postTimestamp < oldestCuratedTimestamp) {
+              oldestCuratedTimestamp = entry.postTimestamp
+            }
           }
         }
 
@@ -2484,45 +2544,32 @@ export default function HomePage() {
         setMultiPageCount(0)
         lastDisplayTimeRef.current = clientNow() // Start cooldown
 
-        // Assign numbers to the processed posts
-        if (postsToDisplay.length > 0) {
-          // Use the day of the newest curated post, not current time
-          const newestPostDate = new Date(newestCuratedTimestamp)
-          const dayStart = getLocalMidnight(newestPostDate).getTime()
-          const dayEnd = dayStart + 24 * 60 * 60 * 1000
-          const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(dayStart, dayEnd)
+        // Don't number yet — wait for gap fill to determine day boundary
+        // Posts display as "#" until numbered after gap fill completes
 
-          const allSummaries = await getPostSummariesInRange(dayStart, dayEnd)
-          const unnumberedSummaries = allSummaries.filter(s =>
-            s.postNumber === null || s.postNumber === undefined
-          )
-
-          if (unnumberedSummaries.length > 0) {
-            await assignIncrementalNumbers(unnumberedSummaries, maxPostNumber, maxCurationNumber)
-            console.log(`[New Posts] MULTI-PAGE: Assigned numbers to ${unnumberedSummaries.length} posts for ${newestPostDate.toLocaleDateString()}`)
-          }
-        }
-
-        // Re-lookup curation numbers after assignment for page boundary alignment
+        // Re-lookup curation data for page boundary alignment (numbers may be null)
         let postsWithNumbers = await lookupCurationAndFilter(
           postsToDisplay, feedReceivedTime, undefined, true  // skipFiltering
         )
 
-        // Combine with current feed AND previousPageFeed for page boundary alignment
-        const seenUris = new Set(postsWithNumbers.map(p => p.post.uri))
-        for (const existingPost of [...feed, ...previousPageFeed]) {
-          if (!seenUris.has(existingPost.post.uri)) {
-            seenUris.add(existingPost.post.uri)
-            postsWithNumbers.push(existingPost as CurationFeedViewPost)
+        // Combine with current feed for page boundary alignment
+        // Skip for extended idle - old feed is too stale to mix with new posts
+        if (!isExtendedIdle) {
+          const seenUris = new Set(postsWithNumbers.map(p => p.post.uri))
+          for (const existingPost of [...feed, ...previousPageFeed]) {
+            if (!seenUris.has(existingPost.post.uri)) {
+              seenUris.add(existingPost.post.uri)
+              postsWithNumbers.push(existingPost as CurationFeedViewPost)
+            }
           }
-        }
-        postsWithNumbers.sort((a, b) => {
-          const aTime = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-          const bTime = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-          return bTime - aTime
-        })
-        if (postsWithNumbers.length > 2 * pageLength) {
-          postsWithNumbers.splice(2 * pageLength)
+          postsWithNumbers.sort((a, b) => {
+            const aTime = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
+            const bTime = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
+            return bTime - aTime
+          })
+          if (postsWithNumbers.length > 2 * pageLength) {
+            postsWithNumbers.splice(2 * pageLength)
+          }
         }
         const alignedPosts = alignFeedToPageBoundary(postsWithNumbers, pageLength)
 
@@ -2546,13 +2593,36 @@ export default function HomePage() {
 
         // Start background gap fill
         if (fetchCursor && oldestCuratedTimestamp < Number.MAX_SAFE_INTEGER) {
-          // Use the day of the newest curated post, not current time
-          const newestPostDate = new Date(newestCuratedTimestamp)
-          const prevMidnight = getLocalMidnight(newestPostDate).getTime()
-          console.log(`[New Posts] MULTI-PAGE: Gap fill from ${new Date(oldestCuratedTimestamp).toLocaleTimeString()} to midnight of ${newestPostDate.toLocaleDateString()}`)
+          const lookbackDays = settings?.lookbackDays || 1
+          const lookbackBoundaryTime = getLookbackBoundary(lookbackDays).getTime()
+          console.log(`[New Posts] MULTI-PAGE: Gap fill from ${new Date(oldestCuratedTimestamp).toLocaleTimeString()} to ${new Date(lookbackBoundaryTime).toLocaleString()}`)
           try {
-            await limitedLookbackToMidnight(oldestCuratedTimestamp, fetchCursor, agent, session.handle, session.did, pageLength, prevMidnight)
-            console.log('[New Posts] MULTI-PAGE: Gap fill complete')
+            const gapFillResult = await limitedLookbackToCachedPosts(oldestCuratedTimestamp, fetchCursor, agent, session.handle, session.did, pageLength, lookbackBoundaryTime)
+            console.log(`[New Posts] MULTI-PAGE: Gap fill complete (${gapFillResult.totalNewPosts} posts, stoppedOnCached: ${gapFillResult.stoppedOnCachedPost}, cachedHasNumber: ${gapFillResult.cachedPostHasNumber})`)
+
+            // Number posts based on gap fill stop condition
+            const todayStart = getLocalMidnight(new Date(newestCuratedTimestamp)).getTime()
+            const todayEnd = todayStart + 24 * 60 * 60 * 1000
+            const yesterdayStart = todayStart - 24 * 60 * 60 * 1000
+
+            if (gapFillResult.stoppedOnCachedPost && gapFillResult.cachedPostHasNumber) {
+              // Cached post has numbers — yesterday: incremental from cached max
+              // Today: full re-number (all today's posts are new, no pre-existing numbers)
+              await numberUnnumberedPostsForDay(yesterdayStart, todayStart, '[New Posts] MULTI-PAGE (yesterday)')
+              await assignNumbersForDay(todayStart, todayEnd)
+            } else if (!gapFillResult.stoppedOnCachedPost) {
+              // Reached midnight boundary — full day available for today
+              await assignNumbersForDay(todayStart, todayEnd)
+              await numberUnnumberedPostsForDay(yesterdayStart, todayStart, '[New Posts] MULTI-PAGE (yesterday)')
+            }
+            // else: stopped on cached post without numbers — don't number
+
+            // Prefetch for scroll-back after gap fill
+            const oldestDisplayed = getFeedViewPostTimestamp(
+              alignedPosts[alignedPosts.length - 1], clientDate()
+            ).getTime()
+            await prefetchPrevPage(oldestDisplayed)
+            console.log('[New Posts] MULTI-PAGE: Post-gap-fill prefetch complete')
           } catch (gapError) {
             console.warn('[New Posts] MULTI-PAGE: Gap fill error:', gapError)
           }
