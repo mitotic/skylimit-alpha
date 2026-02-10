@@ -500,6 +500,8 @@ export interface LookbackFetchResult {
   completed: boolean
   /** Whether lookback stopped because it found a cached summary (idle return mode) */
   stoppedOnCachedSummary: boolean
+  /** Whether the cached summary that stopped lookback has a postNumber (idle return mode) */
+  cachedPostHasNumber: boolean
   /** Number of posts cached during lookback */
   postsCached: number
 }
@@ -541,6 +543,7 @@ export async function performLookbackFetch(
   const progressTargetTimestamp = options?.progressTargetTimestamp
   let totalPostsCached = 0
   let stoppedOnCachedSummary = false
+  let cachedPostHasNumber = false
 
   try {
     const modeLabel = isIdleReturn ? '[Idle Return Lookback]' : '[Lookback]'
@@ -617,7 +620,9 @@ export async function performLookbackFetch(
         for (const entry of entries) {
           const summaryExists = await checkPostSummaryExists(entry.uniqueId)
           if (summaryExists) {
-            console.log(`${modeLabel} Found cached summary for post ${entry.uniqueId}, gap filled!`)
+            const cachedSummary = await getPostSummary(entry.uniqueId)
+            cachedPostHasNumber = cachedSummary?.postNumber != null && cachedSummary.postNumber > 0
+            console.log(`${modeLabel} Found cached summary for post ${entry.uniqueId}, gap filled! (hasNumber: ${cachedPostHasNumber})`)
             stoppedOnCachedSummary = true
             break
           }
@@ -665,6 +670,12 @@ export async function performLookbackFetch(
         console.log(`${modeLabel} Reached already-cached posts, stopping`)
         if (isIdleReturn) {
           stoppedOnCachedSummary = true  // Treat as finding cached content
+          // Check if the first cached entry has a post number
+          if (entries.length > 0) {
+            const cachedSummary = await getPostSummary(entries[0].uniqueId)
+            cachedPostHasNumber = cachedSummary?.postNumber != null && cachedSummary.postNumber > 0
+            console.log(`${modeLabel} Cached post hasNumber: ${cachedPostHasNumber}`)
+          }
         }
         break
       }
@@ -713,6 +724,7 @@ export async function performLookbackFetch(
     return {
       completed: true,
       stoppedOnCachedSummary,
+      cachedPostHasNumber,
       postsCached: totalPostsCached
     }
   } catch (error) {
@@ -720,6 +732,7 @@ export async function performLookbackFetch(
     return {
       completed: false,
       stoppedOnCachedSummary,
+      cachedPostHasNumber,
       postsCached: totalPostsCached
     }
   }

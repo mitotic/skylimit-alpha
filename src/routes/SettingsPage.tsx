@@ -28,7 +28,6 @@ interface CacheTimeRange {
 
 interface SummaryCacheTimeRange extends CacheTimeRange {
   postNumberRange: string   // e.g. "42-87" or "42" or "—"
-  curationNumberRange: string
 }
 
 const DEFAULT_GAP_THRESHOLD_MS = 30 * 60 * 1000 // 30 minutes
@@ -274,7 +273,7 @@ export default function SettingsPage() {
             if (startVal === null && endVal === null) return '—'
             const s = startVal != null ? String(startVal) : '?'
             const e = endVal != null ? String(endVal) : '?'
-            return s === e ? s : `${s}–${e}`
+            return s === e ? s : `${s}, ${e}`
           }
 
           // Look up summaries at the start and end boundary timestamps
@@ -295,7 +294,6 @@ export default function SettingsPage() {
           return {
             ...range,
             postNumberRange: formatRange(startSummary?.postNumber ?? null, endSummary?.postNumber ?? null),
-            curationNumberRange: formatRange(startSummary?.curationNumber ?? null, endSummary?.curationNumber ?? null),
           }
         })
       )
@@ -1026,8 +1024,7 @@ export default function SettingsPage() {
                             <th className="pr-4 pb-1 font-medium">Start</th>
                             <th className="pr-4 pb-1 font-medium">End</th>
                             <th className="pr-4 pb-1 font-medium text-right">Posts</th>
-                            <th className="pr-4 pb-1 font-medium text-right">Post #</th>
-                            <th className="pb-1 font-medium text-right">Curation #</th>
+                            <th className="pb-1 font-medium text-right">Post #</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1036,8 +1033,7 @@ export default function SettingsPage() {
                               <td className="pr-4 py-0.5 whitespace-nowrap">{new Date(range.startTime).toLocaleString()}</td>
                               <td className="pr-4 py-0.5 whitespace-nowrap">{new Date(range.endTime).toLocaleString()}</td>
                               <td className="pr-4 py-0.5 text-right">{range.postCount}</td>
-                              <td className="pr-4 py-0.5 text-right whitespace-nowrap">{range.postNumberRange}</td>
-                              <td className="py-0.5 text-right whitespace-nowrap">{range.curationNumberRange}</td>
+                              <td className="py-0.5 text-right whitespace-nowrap">{range.postNumberRange}</td>
                             </tr>
                           ))}
                         </tbody>

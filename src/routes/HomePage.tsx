@@ -23,7 +23,7 @@ import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow }
 import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToCachedPosts, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
-import { numberUnnumberedPostsForDay, assignNumbersForDay, getMaxNumbersForDay } from '../curation/skylimitNumbering'
+import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/skylimitNumbering'
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeout, clearClientInterval } from '../utils/clientClock'
@@ -670,21 +670,6 @@ export default function HomePage() {
         return
       }
 
-      // Step 0: If previous Prev Page had unnumbered posts, check if this day has numbered posts
-      // to trigger incremental numbering before lookupCurationAndFilter runs
-      if (prevPageHadUnnumberedRef.current) {
-        const fetchDayStart = getLocalMidnight(new Date(afterTimestamp)).getTime()
-        const fetchDayEnd = fetchDayStart + 24 * 60 * 60 * 1000
-        const { maxPostNumber: dayMaxPost } = await getMaxNumbersForDay(fetchDayStart, fetchDayEnd)
-        if (dayMaxPost > 0) {
-          const preNumbered = await numberUnnumberedPostsForDay(fetchDayStart, fetchDayEnd, '[Prefetch]')
-          if (preNumbered > 0) {
-            console.log(`[Prefetch] Numbered ${preNumbered} unnumbered posts (previous page had unnumbered)`)
-          }
-          prevPageHadUnnumberedRef.current = false
-        }
-      }
-
       // Step 1: Try to fetch from cache first (no midnight boundary)
       console.log(`[Prefetch DEBUG] Fetching posts before ${new Date(afterTimestamp).toLocaleTimeString()} (${afterTimestamp}), effectivePageLength=${effectivePageLength}`)
       let { posts: postsForNextPage, postTimestamps: timestampsForNextPage } =
@@ -696,6 +681,23 @@ export default function HomePage() {
         console.log(`[Prefetch DEBUG] Cache returned ${postsForNextPage.length} posts: newest=${new Date(newestTs).toLocaleTimeString()}, oldest=${new Date(oldestTs).toLocaleTimeString()}`)
       } else {
         console.log(`[Prefetch DEBUG] Cache returned 0 posts`)
+      }
+
+      // Step 1b: If previous Prev Page had unnumbered posts, check if the newest fetched post
+      // is numbered to trigger incremental numbering before lookupCurationAndFilter runs
+      if (prevPageHadUnnumberedRef.current && postsForNextPage.length > 0) {
+        const newestFetched = postsForNextPage[0]
+        const newestId = getPostUniqueId(newestFetched)
+        const newestSummary = await getPostSummary(newestId)
+        if (newestSummary?.postNumber != null && newestSummary.postNumber > 0) {
+          const fetchDayStart = getLocalMidnight(new Date(afterTimestamp)).getTime()
+          const fetchDayEnd = fetchDayStart + 24 * 60 * 60 * 1000
+          const preNumbered = await numberUnnumberedPostsForDay(fetchDayStart, fetchDayEnd, '[Prefetch]')
+          if (preNumbered > 0) {
+            console.log(`[Prefetch] Numbered ${preNumbered} unnumbered posts (previous page had unnumbered)`)
+          }
+          prevPageHadUnnumberedRef.current = false
+        }
       }
 
       // Step 2: If cache doesn't have enough posts, fetch from server
@@ -1210,16 +1212,25 @@ export default function HomePage() {
                   progressTargetTimestamp: newestSummaryTs ?? undefined
                 }
               ).then(async (result) => {
-                console.log(`[Idle Return Lookback] Completed: ${result.postsCached} posts cached, stoppedOnCachedSummary: ${result.stoppedOnCachedSummary}`)
+                console.log(`[Idle Return Lookback] Completed: ${result.postsCached} posts cached, stoppedOnCachedSummary: ${result.stoppedOnCachedSummary}, cachedPostHasNumber: ${result.cachedPostHasNumber}`)
                 setLookingBack(false)
                 setLookbackProgress(100)
 
-                // Assign numbers to unnumbered summaries for yesterday and today
+                // Number posts based on stop condition (same logic as multi-page)
                 const todayMidnight = getLocalMidnight(clientDate()).getTime()
                 const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
                 const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
-                await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return Lookback] (yesterday)')
-                await numberUnnumberedPostsForDay(todayMidnight, todayEnd, '[Idle Return Lookback]')
+
+                if (result.stoppedOnCachedSummary && result.cachedPostHasNumber) {
+                  // Cached post has numbers — yesterday: incremental, today: full re-number
+                  await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return Lookback] (yesterday)')
+                  await assignNumbersForDay(todayMidnight, todayEnd)
+                } else if (!result.stoppedOnCachedSummary) {
+                  // Reached midnight boundary — full day available
+                  await assignNumbersForDay(todayMidnight, todayEnd)
+                  await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return Lookback] (yesterday)')
+                }
+                // else: stopped on cached summary without numbers — don't number
 
                 // Clear sessionStorage to force fresh load from feed cache with updated numbers
                 sessionStorage.removeItem(getFeedStateKey('curated'))
