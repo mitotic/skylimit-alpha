@@ -9,7 +9,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 export default function LoginPage() {
   const navigate = useNavigate()
   const { login } = useSession()
-  const [identifier, setIdentifier] = useState('')
+  const [identifier, setIdentifier] = useState(getNonStandardServerName() ? 'testuser' : '')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
@@ -28,8 +28,8 @@ export default function LoginPage() {
     e.preventDefault()
     setError(null)
 
-    if (!identifier.trim() || !password.trim()) {
-      setError('Please enter both username and password')
+    if (!identifier.trim()) {
+      setError('Please enter a username')
       return
     }
 
@@ -105,7 +105,6 @@ export default function LoginPage() {
               placeholder="Enter your app password"
               className="input"
               disabled={isLoading}
-              required
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Use an app password from your Bluesky settings, not your account password.

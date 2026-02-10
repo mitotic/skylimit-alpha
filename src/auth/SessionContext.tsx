@@ -134,9 +134,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const { session: newSession, agent: newAgent } = await loginAPI(identifier, password, handlePersistSession)
     saveSession(newSession, rememberMe)
 
-    // Skyspeed detection (phase 1: read-only getConfig, no ackConfig).
-    // If the server config changed, hold back the session AND the handshake
-    // acknowledgment so that neither feed fetching nor script CONNECT is triggered.
+    // Skyspeed detection + handshake.
+    // On fresh login, always accept the new server config (no stale cached posts to protect).
     let skyspeedConfig: SkyspeedConfig | null = null
     let configChanged = false
     try {
@@ -150,16 +149,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // Continue with normal clock on error
     }
 
-    if (skyspeedConfig && configChanged) {
-      // Config changed — hold everything pending user decision.
-      // Do NOT ack, configure clock, or expose session to children.
-      console.warn('[Skyspeed] Server config changed — holding session pending user decision')
-      pendingSessionRef.current = newSession
-      pendingAgentRef.current = newAgent
-      pendingSkyspeedConfigRef.current = skyspeedConfig
-      setShowConfigChangedModal(true)
-    } else if (skyspeedConfig) {
-      // Config matches (or no previous config) — complete handshake and activate
+    if (skyspeedConfig) {
+      // On fresh login, always accept the new config — there are no stale cached
+      // posts to worry about (unlike session restore). If the server was restarted,
+      // just save the new config and proceed.
+      if (configChanged) {
+        console.log('[Skyspeed] Server config changed since last session — accepting new config')
+      }
       await acknowledgeSkyspeed(getServiceUrl(), newSession.accessJwt, skyspeedConfig)
       configureClientClock(skyspeedConfig)
       saveSkyspeedConfig(skyspeedConfig)
