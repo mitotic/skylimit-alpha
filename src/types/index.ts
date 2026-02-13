@@ -127,6 +127,13 @@ export interface Profile {
   }
 }
 
+export interface AutoLoginParams {
+  username?: string
+  password?: string
+  viewsPerDay?: number
+  debugMode?: boolean
+}
+
 export interface SearchActor {
   did: string
   handle: string

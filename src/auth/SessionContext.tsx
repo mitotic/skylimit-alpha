@@ -13,8 +13,10 @@ import { saveSession, loadSession, clearSession, updateSession } from './session
 import { detectSkyspeed, acknowledgeSkyspeed, configureClientClock, hasSkyspeedConfigChanged, saveSkyspeedConfig, clearSkyspeedConfig, resetClientClock } from '../utils/clientClock'
 import type { SkyspeedConfig } from '../utils/clientClock'
 import { resetEverything } from '../curation/skylimitCache'
+import { updateSettings } from '../curation/skylimitStore'
 import ConfirmModal from '../components/ConfirmModal'
-import type { Session } from '../types'
+import type { Session, AutoLoginParams } from '../types'
+
 
 interface SessionContextType {
   session: Session | null
@@ -35,6 +37,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const navigateRef = useRef(navigate)
   navigateRef.current = navigate
+
+  // Read auto-login params from window global (set by main.tsx before React mounts).
+  // Window global survives React StrictMode double-mounting and Vite HMR re-mounts.
+  const autoLoginParamsRef = useRef<AutoLoginParams | null>(
+    (window as any).__SKYLIMIT_AUTO_LOGIN__ || null
+  );
 
   // Pending session/agent/config held back when Skyspeed config change detected.
   // Session is not exposed to children until the user resolves the config change dialog,
@@ -67,12 +75,85 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Attempt to restore session on mount
+  // Apply viewsPerDay and debugMode settings from auto-login params
+  async function applyAutoSettings(params: AutoLoginParams): Promise<void> {
+    const updates: Partial<{ viewsPerDay: number; debugMode: boolean }> = {}
+    if (params.viewsPerDay !== undefined) {
+      updates.viewsPerDay = params.viewsPerDay
+      console.log(`[AutoLogin] Setting viewsPerDay=${params.viewsPerDay}`)
+    }
+    if (params.debugMode !== undefined) {
+      updates.debugMode = params.debugMode
+      console.log(`[AutoLogin] Setting debugMode=${params.debugMode}`)
+    }
+    if (Object.keys(updates).length > 0) {
+      await updateSettings(updates)
+    }
+  }
+
+  // Perform Skyspeed handshake for a fresh login (used by both manual login and auto-login)
+  async function freshLoginSkyspeedHandshake(accessJwt: string): Promise<void> {
+    let skyspeedConfig: SkyspeedConfig | null = null
+    try {
+      skyspeedConfig = await detectSkyspeed(getServiceUrl(), accessJwt)
+      if (skyspeedConfig) {
+        console.log('[Skyspeed] Connected to Skyspeed test server')
+        if (hasSkyspeedConfigChanged(skyspeedConfig)) {
+          console.log('[Skyspeed] Server config changed since last session — accepting new config')
+        }
+      }
+    } catch (error) {
+      console.warn('[Skyspeed] Failed to detect Skyspeed server:', error)
+      return
+    }
+
+    if (skyspeedConfig) {
+      await acknowledgeSkyspeed(getServiceUrl(), accessJwt, skyspeedConfig)
+      configureClientClock(skyspeedConfig)
+      saveSkyspeedConfig(skyspeedConfig)
+      console.log(`[Skyspeed] Handshake complete:`)
+      console.log(`  Server: ${getServiceUrl()}`)
+      console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
+      console.log(`  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
+    } else {
+      resetClientClock()
+      clearSkyspeedConfig()
+    }
+  }
+
+  // Attempt to restore session on mount (or auto-login if params are present)
   useEffect(() => {
     async function restoreSession() {
       try {
+        // Consume the auto-login params (clear window global now that we're using them)
+        delete (window as any).__SKYLIMIT_AUTO_LOGIN__
+        const autoLogin = autoLoginParamsRef.current
+        if (autoLogin?.username !== undefined && autoLogin?.password !== undefined) {
+          console.log(`[AutoLogin] Auto-login initiated for ${autoLogin.username}`)
+          try {
+            const { session: newSession, agent: newAgent } = await loginAPI(
+              autoLogin.username, autoLogin.password, handlePersistSession
+            )
+            saveSession(newSession, true)
+
+            await freshLoginSkyspeedHandshake(newSession.accessJwt)
+            await applyAutoSettings(autoLogin)
+
+            setSession(newSession)
+            setAgent(newAgent)
+            console.log('[AutoLogin] Auto-login complete')
+          } catch (error) {
+            console.error('[AutoLogin] Auto-login failed:', error)
+            // Fall through to show login page
+          }
+          setIsLoading(false)
+          return
+        }
+
+        // Normal session restore (with optional settings-only auto-config)
         const savedSession = loadSession()
         if (!savedSession) {
+          if (autoLogin) await applyAutoSettings(autoLogin)
           setIsLoading(false)
           return
         }
@@ -119,6 +200,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           setSession(savedSession)
           setAgent(restoredAgent)
         }
+
+        if (autoLogin) await applyAutoSettings(autoLogin)
       } catch (error) {
         console.error('Failed to restore session:', error)
         clearSession()
@@ -134,44 +217,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const { session: newSession, agent: newAgent } = await loginAPI(identifier, password, handlePersistSession)
     saveSession(newSession, rememberMe)
 
-    // Skyspeed detection + handshake.
-    // On fresh login, always accept the new server config (no stale cached posts to protect).
-    let skyspeedConfig: SkyspeedConfig | null = null
-    let configChanged = false
-    try {
-      skyspeedConfig = await detectSkyspeed(getServiceUrl(), newSession.accessJwt)
-      if (skyspeedConfig) {
-        console.log('[Skyspeed] Connected to Skyspeed test server')
-        configChanged = hasSkyspeedConfigChanged(skyspeedConfig)
-      }
-    } catch (error) {
-      console.warn('[Skyspeed] Failed to detect Skyspeed server:', error)
-      // Continue with normal clock on error
-    }
+    await freshLoginSkyspeedHandshake(newSession.accessJwt)
 
-    if (skyspeedConfig) {
-      // On fresh login, always accept the new config — there are no stale cached
-      // posts to worry about (unlike session restore). If the server was restarted,
-      // just save the new config and proceed.
-      if (configChanged) {
-        console.log('[Skyspeed] Server config changed since last session — accepting new config')
-      }
-      await acknowledgeSkyspeed(getServiceUrl(), newSession.accessJwt, skyspeedConfig)
-      configureClientClock(skyspeedConfig)
-      saveSkyspeedConfig(skyspeedConfig)
-      console.log(`[Skyspeed] Handshake complete:`)
-      console.log(`  Server: ${getServiceUrl()}`)
-      console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
-      console.log(`  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
-      setSession(newSession)
-      setAgent(newAgent)
-    } else {
-      // Not a Skyspeed server - ensure clock is normal
-      resetClientClock()
-      clearSkyspeedConfig()
-      setSession(newSession)
-      setAgent(newAgent)
-    }
+    setSession(newSession)
+    setAgent(newAgent)
   }, [handlePersistSession])
 
   const logout = useCallback(() => {
