@@ -1163,8 +1163,10 @@ export default function HomePage() {
           // IMPORTANT: Update oldestCachedPostTimestamp in metadata to the oldest postTimestamp from ALL fetched posts (not just filtered)
           // This ensures we don't query for posts that were already in the initial fetch batch
           // Use the last post from feedWithEditions (which are sorted newest first) as the boundary
-          if (feedWithEditions.length > 0) {
-            const oldestFetchedTimestamp = getFeedViewPostTimestamp(feedWithEditions[feedWithEditions.length - 1], feedReceivedTime).getTime()
+          const oldestFetchedTimestamp = feedWithEditions.length > 0
+            ? getFeedViewPostTimestamp(feedWithEditions[feedWithEditions.length - 1], feedReceivedTime).getTime()
+            : undefined
+          if (oldestFetchedTimestamp !== undefined) {
             await updateFeedCacheOldestPostTimestamp(oldestFetchedTimestamp)
             console.log(`[Feed] Updated oldestCachedPostTimestamp in metadata to oldest fetched post: ${new Date(oldestFetchedTimestamp).toISOString()} (from ${feedWithEditions.length} fetched posts, ${filteredPosts.length} displayed)`)
           }
@@ -1206,10 +1208,11 @@ export default function HomePage() {
                 (progress) => {
                   setLookbackProgress(progress)
                 },
-                undefined,  // initialLastPostTimeParam
+                oldestFetchedTimestamp ? new Date(oldestFetchedTimestamp) : undefined,
                 {
                   isIdleReturn: true,
-                  progressTargetTimestamp: newestSummaryTs ?? undefined
+                  progressTargetTimestamp: newestSummaryTs ?? undefined,
+                  initialCursor: newCursor
                 }
               ).then(async (result) => {
                 console.log(`[Idle Return Lookback] Completed: ${result.postsCached} posts cached, stoppedOnCachedSummary: ${result.stoppedOnCachedSummary}, cachedPostHasNumber: ${result.cachedPostHasNumber}`)

@@ -15,6 +15,9 @@ const AUTO_LOGIN_STORAGE_KEY = 'skylimit_auto_login'
  * Optionally preserves specific localStorage keys (e.g., new server info).
  */
 function performFullReset(preserveKeys: Record<string, string> = {}): never {
+  // Strip query params immediately to prevent reset loop on reload
+  window.history.replaceState({}, '', '/')
+
   sessionStorage.clear()
 
   // Save keys to preserve, clear localStorage, then restore them
@@ -33,9 +36,18 @@ function performFullReset(preserveKeys: Record<string, string> = {}): never {
     window.location.href = '/'
   }
   request.onerror = () => {
-    console.error('[Reset] Database deletion failed')
+    console.error('[Reset] Database deletion failed, redirecting anyway')
     window.location.href = '/'
   }
+  request.onblocked = () => {
+    console.warn('[Reset] Database deletion blocked by open connection, redirecting anyway')
+    window.location.href = '/'
+  }
+  // Fallback: if no callback fires within 3 seconds, force redirect
+  setTimeout(() => {
+    console.warn('[Reset] Database deletion timed out, forcing redirect')
+    window.location.href = '/'
+  }, 3000)
   // Don't render React - wait for redirect
   throw new Error('Reset in progress - halting React render')
 }

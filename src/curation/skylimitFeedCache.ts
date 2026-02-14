@@ -490,6 +490,8 @@ export interface IdleReturnLookbackOptions {
   isIdleReturn?: boolean
   /** Newest cached summary timestamp for progress calculation */
   progressTargetTimestamp?: number
+  /** Cursor from initial fetch — allows lookback to continue from where the initial fetch left off */
+  initialCursor?: string
 }
 
 /**
@@ -562,9 +564,17 @@ export async function performLookbackFetch(
 
     // Initialize cursor state with staleness checking
     // Cursor state tracks: cursor value, when received, oldest post timestamp from that response
-    // For idle return mode, always start fresh (no cursor) to fetch from newest posts
+    // For idle return mode with initialCursor, continue from where the initial fetch left off
+    // For idle return mode without initialCursor, start fresh (fetch from newest posts)
     let cursorState: { cursor: string | undefined; receivedAt: number; oldestPostTimestamp: number } | null = null
-    if (!isIdleReturn && metadata?.lastCursor && metadata.lastFetchTime) {
+    if (isIdleReturn && options?.initialCursor) {
+      cursorState = {
+        cursor: options.initialCursor,
+        receivedAt: Date.now(),
+        oldestPostTimestamp: clientNow()
+      }
+      console.log(`${modeLabel} Idle return mode - using cursor from initial fetch`)
+    } else if (!isIdleReturn && metadata?.lastCursor && metadata.lastFetchTime) {
       const cursorAge = clientNow() - metadata.lastFetchTime
       if (cursorAge < CURSOR_STALENESS_MS) {
         cursorState = {
