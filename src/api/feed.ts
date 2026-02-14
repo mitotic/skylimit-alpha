@@ -8,6 +8,60 @@ import { BskyAgent, AppBskyFeedGetTimeline, AppBskyFeedGetAuthorFeed, AppBskyFee
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 import { applyTimeShift, isClockAccelerated } from '../utils/clientClock'
 
+// --- Skyspeed Command Event System ---
+
+export type SkyspeedCommand =
+  | { type: 'CLICK'; buttonName: 'NextPage' | 'AllNewPosts' | 'PrevPage' }
+  | { type: 'SCROLL'; direction: 'TOP' | 'BOTTOM' }
+  | { type: 'FIND'; target: string }
+
+type SkyspeedCommandListener = (command: SkyspeedCommand) => void
+const skyspeedCommandListeners = new Set<SkyspeedCommandListener>()
+
+/** Subscribe to Skyspeed commands received from the server. */
+export function onSkyspeedCommand(listener: SkyspeedCommandListener): void {
+  skyspeedCommandListeners.add(listener)
+}
+
+/** Unsubscribe from Skyspeed commands. */
+export function offSkyspeedCommand(listener: SkyspeedCommandListener): void {
+  skyspeedCommandListeners.delete(listener)
+}
+
+function notifySkyspeedCommand(command: SkyspeedCommand): void {
+  for (const listener of skyspeedCommandListeners) {
+    try {
+      listener(command)
+    } catch (e) {
+      console.warn('[Skyspeed Command] Listener error:', e)
+    }
+  }
+}
+
+function parseSkyspeedCommandHeader(headerValue: string): SkyspeedCommand | null {
+  // CLICK NextPage|AllNewPosts|PrevPage
+  const clickMatch = headerValue.match(/^CLICK\s+(NextPage|AllNewPosts|PrevPage)$/)
+  if (clickMatch) {
+    return { type: 'CLICK', buttonName: clickMatch[1] as 'NextPage' | 'AllNewPosts' | 'PrevPage' }
+  }
+
+  // FIND <target>
+  const findMatch = headerValue.match(/^FIND\s+(.+)$/)
+  if (findMatch) {
+    return { type: 'FIND', target: findMatch[1].trim() }
+  }
+
+  // SCROLL TOP|BOTTOM
+  const scrollMatch = headerValue.match(/^SCROLL\s+(TOP|BOTTOM)$/)
+  if (scrollMatch) {
+    return { type: 'SCROLL', direction: scrollMatch[1] as 'TOP' | 'BOTTOM' }
+  }
+
+  return null
+}
+
+// --- Feed API ---
+
 export interface FeedOptions {
   limit?: number
   cursor?: string
@@ -40,6 +94,18 @@ export async function getHomeFeed(
           if (!isNaN(timeShiftMs) && timeShiftMs > 0) {
             applyTimeShift(timeShiftMs)
           }
+        }
+      }
+
+      // Check for Skyspeed command header
+      const commandHeader = response.headers?.['x-skyspeed-command']
+      if (commandHeader && skyspeedCommandListeners.size > 0) {
+        const command = parseSkyspeedCommandHeader(commandHeader)
+        if (command) {
+          console.log('[Skyspeed Command] Received:', commandHeader)
+          notifySkyspeedCommand(command)
+        } else {
+          console.warn('[Skyspeed Command] Unrecognized command:', commandHeader)
         }
       }
 

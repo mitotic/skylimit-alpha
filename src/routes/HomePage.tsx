@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
-import { getHomeFeed } from '../api/feed'
+import { getHomeFeed, onSkyspeedCommand, offSkyspeedCommand, type SkyspeedCommand } from '../api/feed'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
 import PostCard from '../components/PostCard'
 import Compose from '../components/Compose'
@@ -2009,7 +2009,20 @@ export default function HomePage() {
       return
     }
 
+    const probeInProgressRef = { current: null as number | null }
+    const PROBE_STALE_MS = 5 * 60 * 1000  // 5 minutes real time
+
     const checkForNewPosts = async () => {
+      // Guard against overlapping invocations (e.g., interval fires while retryWithBackoff is sleeping)
+      if (probeInProgressRef.current !== null) {
+        const elapsed = Date.now() - probeInProgressRef.current
+        if (elapsed < PROBE_STALE_MS) {
+          console.log('[Paged Updates] Skipping probe — previous probe still in progress')
+          return
+        }
+        console.log(`[Paged Updates] Previous probe stale (${Math.round(elapsed / 1000)}s), starting new probe`)
+      }
+
       // Capture current timestamp to avoid stale closure
       const currentTimestamp = newestDisplayedPostTimestamp
       if (!currentTimestamp) return
@@ -2017,6 +2030,7 @@ export default function HomePage() {
       // Paged updates: probe server without caching
       if (!agent || !session) return
 
+      probeInProgressRef.current = Date.now()
       try {
         // Get current filter fraction and settings
         const [, currentProbs] = await getFilter() || [null, null]
@@ -2067,7 +2081,7 @@ export default function HomePage() {
         }
 
         // Simplified button logic:
-        // - "New Page" button: active when hasFullPage, grayed otherwise (always visible)
+        // - "Next Page" button: active when hasFullPage, grayed otherwise (always visible)
         // - "All new posts" button: controlled by idle timer (see separate useEffect)
         setNextPageReady(hasFullPage)
         setNewPostsCount(probeResult.filteredPostCount)
@@ -2081,6 +2095,8 @@ export default function HomePage() {
         }
       } catch (error) {
         console.warn('[Paged Updates] Probe error:', error)
+      } finally {
+        probeInProgressRef.current = null
       }
     }
 
@@ -2125,7 +2141,7 @@ export default function HomePage() {
       const timeSinceTopPost = clientNow() - newestDisplayedPostTimestamp
 
       // Trigger "All new posts" button if idle time exceeded and any posts available
-      // This is independent of nextPageReady - shows "All new posts" even when "New Page" is active
+      // This is independent of nextPageReady - shows "All new posts" even when "Next Page" is active
       if (timeSinceTopPost >= fullPageWaitMs && partialPageCount > 0) {
         setIdleTimerTriggered(true)
         console.log(`[Idle Timer] Triggered: ${Math.round(timeSinceTopPost / 60000)} min elapsed, ${partialPageCount} posts available`)
@@ -2352,7 +2368,7 @@ export default function HomePage() {
           }
           filteredPosts = alignFeedToPageBoundary(combinedForAlignment, pageLength)
 
-          console.log(`[New Page] Displaying ${filteredPosts.length} curated posts (from ${cachedPosts.length} raw, filterFrac=${currentFilterFrac.toFixed(2)})`)
+          console.log(`[Next Page] Displaying ${filteredPosts.length} curated posts (from ${cachedPosts.length} raw, filterFrac=${currentFilterFrac.toFixed(2)})`)
 
           // Update feed state
           setFeed(filteredPosts)
@@ -2366,7 +2382,7 @@ export default function HomePage() {
           // DEBUG: Log displayed post range with curation numbers
           const firstPost = filteredPosts[0] as CurationFeedViewPost
           const lastPost = filteredPosts[filteredPosts.length - 1] as CurationFeedViewPost
-          console.log(`[New Page DEBUG] Displayed range: newest=${new Date(newestTimestamp).toLocaleTimeString()} (#${firstPost.curation?.curationNumber ?? '?'}), oldest=${new Date(oldestTimestamp).toLocaleTimeString()} (#${lastPost.curation?.curationNumber ?? '?'}), oldestTimestamp=${oldestTimestamp} (will be used for prefetch)`)
+          console.log(`[Next Page DEBUG] Displayed range: newest=${new Date(newestTimestamp).toLocaleTimeString()} (#${firstPost.curation?.curationNumber ?? '?'}), oldest=${new Date(oldestTimestamp).toLocaleTimeString()} (#${lastPost.curation?.curationNumber ?? '?'}), oldestTimestamp=${oldestTimestamp} (will be used for prefetch)`)
 
           // Save state to session storage
           const stateToSave: SavedFeedState = {
@@ -2389,7 +2405,7 @@ export default function HomePage() {
           // Clear stale previousPageFeed and prefetch for the new page's oldest post
           setPreviousPageFeed([])
           setInitialPrefetchDone(false)
-          console.log(`[New Page] Cleared stale previousPageFeed, starting prefetch from ${new Date(oldestTimestamp).toLocaleTimeString()}`)
+          console.log(`[Next Page] Cleared stale previousPageFeed, starting prefetch from ${new Date(oldestTimestamp).toLocaleTimeString()}`)
           // Prefetch in background (no spinner, non-blocking)
           const prefetchTimestamp = oldestTimestamp
           setTimeout(async () => {
@@ -2816,6 +2832,92 @@ export default function HomePage() {
     }
   }, [infiniteScrollingEnabled, handlePrevPage])
 
+  // Subscribe to Skyspeed server commands (CLICK, SCROLL, SCROLL TO)
+  useEffect(() => {
+    const handleCommand = (command: SkyspeedCommand) => {
+      if (command.type === 'CLICK') {
+        console.log(`[Skyspeed Command] Executing: CLICK ${command.buttonName}`)
+        switch (command.buttonName) {
+          case 'NextPage':
+            handleLoadNewPosts()
+            break
+          case 'AllNewPosts':
+            handleLoadAllNewPosts()
+            break
+          case 'PrevPage':
+            handlePrevPage()
+            break
+        }
+      } else if (command.type === 'SCROLL') {
+        console.log(`[Skyspeed Command] Executing: SCROLL ${command.direction}`)
+        switch (command.direction) {
+          case 'TOP':
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+            break
+          case 'BOTTOM':
+            window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })
+            break
+        }
+      } else if (command.type === 'FIND') {
+        console.log(`[Skyspeed Command] Executing: FIND ${command.target}`)
+        const target = command.target
+
+        // Search displayed posts for the target
+        let matchUri: string | null = null
+
+        if (target.startsWith('@')) {
+          // Match by author handle
+          const handle = target.slice(1)
+          const match = feed.find(p => p.post.author.handle === handle)
+          if (match) matchUri = match.post.uri
+        } else if (/^\d{1,3}:\d{2}$/.test(target)) {
+          // Match by timestamp (HH:MM)
+          const [h, m] = target.split(':').map(Number)
+          const targetMinutes = h * 60 + m
+          const match = feed.find(p => {
+            const ts = getFeedViewPostTimestamp(p)
+            const d = new Date(ts)
+            const postMinutes = d.getHours() * 60 + d.getMinutes()
+            return postMinutes === targetMinutes
+          })
+          if (match) matchUri = match.post.uri
+        } else if (target.startsWith('#')) {
+          // Match by curation counter number
+          const num = parseInt(target.slice(1), 10)
+          if (!isNaN(num)) {
+            const match = feed.find(p => {
+              const curation = 'curation' in p ? (p as CurationFeedViewPost).curation : undefined
+              return curation?.curationNumber === num || curation?.postNumber === num
+            })
+            if (match) matchUri = match.post.uri
+          }
+        } else {
+          // Free text search (case-insensitive)
+          const lowerTarget = target.toLowerCase()
+          const match = feed.find(p => {
+            const record = p.post.record as { text?: string }
+            return record?.text?.toLowerCase().includes(lowerTarget)
+          })
+          if (match) matchUri = match.post.uri
+        }
+
+        if (matchUri) {
+          const el = document.querySelector(`[data-post-uri="${matchUri}"]`)
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          } else {
+            console.warn(`[Skyspeed Command] FIND: DOM element not found for URI ${matchUri}`)
+          }
+        } else {
+          console.warn(`[Skyspeed Command] FIND: No matching post found for "${target}"`)
+        }
+      }
+    }
+
+    onSkyspeedCommand(handleCommand)
+    return () => offSkyspeedCommand(handleCommand)
+  }, [feed, handleLoadNewPosts, handleLoadAllNewPosts, handlePrevPage])
+
   const handleLike = async (uri: string, cid: string) => {
     if (!agent) return
 
@@ -3160,15 +3262,15 @@ export default function HomePage() {
           </div>
         ) : (
           <>
-            {/* New Page / All New Posts buttons - two-button layout */}
+            {/* Next Page / All New Posts buttons - two-button layout */}
             <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
               <div className="flex gap-2">
-                {/* "New Page" button - always visible, grayed out when inactive or during lookback */}
+                {/* "Next Page" button - always visible, grayed out when inactive or during lookback */}
                 <button
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    console.log('[New Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady, lookingBack })
+                    console.log('[Next Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady, lookingBack })
                     handleLoadNewPosts()
                   }}
                   disabled={isLoadingMore || !nextPageReady || lookingBack}
@@ -3187,7 +3289,7 @@ export default function HomePage() {
                   ) : (
                     <>
                       <span>📄</span>
-                      New Page
+                      Next Page
                     </>
                   )}
                 </button>
