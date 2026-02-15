@@ -2213,7 +2213,8 @@ export interface TransferResult {
 export async function transferSecondaryToPrimary(
   secondaryEntries: SecondaryEntry[],
   transferMode: 'page' | 'all',
-  pageLength: number = DEFAULT_PAGE_LENGTH
+  pageLength: number = DEFAULT_PAGE_LENGTH,
+  skipNumbering: boolean = false
 ): Promise<TransferResult> {
   const label = `[Transfer/${transferMode}]`
 
@@ -2225,13 +2226,17 @@ export async function transferSecondaryToPrimary(
   // Sort oldest-first for correct numbering order
   const sorted = [...secondaryEntries].sort((a, b) => a.entry.postTimestamp - b.entry.postTimestamp)
 
-  // Initialize numbering from the day of the oldest entry
+  // Initialize numbering from the day of the oldest entry (unless skipping)
   const oldestTimestamp = sorted[0].entry.postTimestamp
   let currentDayStart = getLocalMidnight(new Date(oldestTimestamp)).getTime()
   let currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
-  let { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
-  let postNumber = maxPostNumber
-  let curationNumber = maxCurationNumber
+  let postNumber = 0
+  let curationNumber = 0
+  if (!skipNumbering) {
+    const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
+    postNumber = dayNumbers.maxPostNumber
+    curationNumber = dayNumbers.maxCurationNumber
+  }
 
   // Collect entries to write
   const primaryEntries: Array<{
@@ -2254,26 +2259,35 @@ export async function transferSecondaryToPrimary(
       break
     }
 
-    // Check if day boundary crossed — update numbering context
-    if (entry.postTimestamp >= currentDayEnd) {
-      currentDayStart = getLocalMidnight(new Date(entry.postTimestamp)).getTime()
-      currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
-      const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
-      postNumber = dayNumbers.maxPostNumber
-      curationNumber = dayNumbers.maxCurationNumber
-    }
-
-    // Assign numbers inline
-    postNumber++
-    summary.postNumber = postNumber
-    if (isStatusDrop(summary.curation_status)) {
-      summary.curationNumber = 0
-    } else if (isStatusShow(summary.curation_status)) {
-      curationNumber++
-      summary.curationNumber = curationNumber
-      displayableCount++
-    } else {
+    if (skipNumbering) {
+      // Leave numbers unassigned — they'll be assigned later by assignAllNumbers
+      summary.postNumber = null
       summary.curationNumber = null
+      if (isStatusShow(summary.curation_status)) {
+        displayableCount++
+      }
+    } else {
+      // Check if day boundary crossed — update numbering context
+      if (entry.postTimestamp >= currentDayEnd) {
+        currentDayStart = getLocalMidnight(new Date(entry.postTimestamp)).getTime()
+        currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
+        const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
+        postNumber = dayNumbers.maxPostNumber
+        curationNumber = dayNumbers.maxCurationNumber
+      }
+
+      // Assign numbers inline
+      postNumber++
+      summary.postNumber = postNumber
+      if (isStatusDrop(summary.curation_status)) {
+        summary.curationNumber = 0
+      } else if (isStatusShow(summary.curation_status)) {
+        curationNumber++
+        summary.curationNumber = curationNumber
+        displayableCount++
+      } else {
+        summary.curationNumber = null
+      }
     }
 
     // Collect primary cache entry (strip originalPost)
@@ -2306,13 +2320,13 @@ export async function transferSecondaryToPrimary(
   // Batch write to primary cache
   const savedCount = await savePostsToPrimaryCache(primaryEntries)
 
-  // Batch save summaries (with numbers already assigned)
+  // Batch save summaries (numbers assigned inline unless skipNumbering)
   await savePostSummariesForce(summariesToSave)
 
   // Update primary cache metadata
   await updateFeedCacheNewestPostTimestamp()
 
-  console.log(`${label} Complete: ${savedCount} saved to primary (${primaryEntries.length} processed), ${displayableCount} displayable`)
+  console.log(`${label} Complete: ${savedCount} saved to primary (${primaryEntries.length} processed), ${displayableCount} displayable${skipNumbering ? ', numbering deferred' : ''}`)
 
   return {
     postsTransferred: savedCount,

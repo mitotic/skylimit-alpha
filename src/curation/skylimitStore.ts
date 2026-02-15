@@ -11,7 +11,7 @@ export const FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT = 240 // minutes
 export const REPOST_DISPLAY_INTERVAL_DEFAULT = 24 // hours
 
 const DEFAULT_SETTINGS: SkylimitSettings = {
-  viewsPerDay: 400,
+  viewsPerDay: 600,
   showTime: true, // Enable post numbering by default
   showAllPosts: false,
   curationSuspended: false,

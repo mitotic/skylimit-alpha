@@ -1039,9 +1039,10 @@ export default function HomePage() {
             ).then(async (fetchResult) => {
               console.log(`[Background Lookback] Fetch complete: ${fetchResult.postsFetched} posts, stopReason=${fetchResult.stopReason}`)
 
-              // Transfer all fetched posts to primary with numbering
+              // Transfer all fetched posts to primary
+              // Skip numbering on initial load — recomputeCurationDecisions will assign correct numbers after stats are computed
               if (fetchResult.entries.length > 0) {
-                const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'all', pageLength)
+                const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'all', pageLength, isInitialLoadMode)
                 console.log(`[Background Lookback] Transferred ${transferResult.postsTransferred} posts to primary`)
               }
 
