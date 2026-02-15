@@ -132,32 +132,45 @@ export async function savePostSummaries(summaries: PostSummary[]): Promise<void>
   if (summaries.length === 0) return
 
   const database = await getDB()
-  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
-  const store = transaction.objectStore(STORE_POST_SUMMARIES)
 
-  let skippedCount = 0
-  for (const summary of summaries) {
-    // Check if already exists (preserve original curation decisions)
-    const existing = await new Promise<PostSummary | undefined>((resolve, reject) => {
-      const request = store.get(summary.uniqueId)
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
+  // Step 1: Read which summaries already exist (single readonly transaction)
+  const existingIds = new Set<string>()
+  const readTransaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+  const readStore = readTransaction.objectStore(STORE_POST_SUMMARIES)
+
+  await Promise.all(summaries.map(summary =>
+    new Promise<void>((resolve) => {
+      const request = readStore.get(summary.uniqueId)
+      request.onsuccess = () => {
+        if (request.result) existingIds.add(summary.uniqueId)
+        resolve()
+      }
+      request.onerror = () => resolve()
     })
+  ))
 
-    if (!existing) {
-      await new Promise<void>((resolve, reject) => {
-        const request = store.put(summary)
-        request.onsuccess = () => resolve()
-        request.onerror = () => reject(request.error)
-      })
-    } else {
-      skippedCount++
-    }
+  // Filter to only new summaries
+  const newSummaries = summaries.filter(s => !existingIds.has(s.uniqueId))
+
+  if (existingIds.size > 0) {
+    console.log(`[Post Summaries] Skipped ${existingIds.size} already-cached summaries`)
   }
 
-  if (skippedCount > 0) {
-    console.log(`[Post Summaries] Skipped ${skippedCount} already-cached summaries`)
+  if (newSummaries.length === 0) return
+
+  // Step 2: Write new summaries (single readwrite transaction, synchronous queuing)
+  const writeTransaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+  const writeStore = writeTransaction.objectStore(STORE_POST_SUMMARIES)
+
+  for (const summary of newSummaries) {
+    writeStore.put(summary)  // Queue synchronously, don't await
   }
+
+  await new Promise<void>((resolve, reject) => {
+    writeTransaction.oncomplete = () => resolve()
+    writeTransaction.onerror = () => reject(writeTransaction.error)
+    writeTransaction.onabort = () => reject(new Error('Transaction aborted'))
+  })
 }
 
 /**
@@ -1312,6 +1325,129 @@ export async function copySecondaryEntryToPrimary(entry: SecondaryCacheEntry): P
     console.error('[Secondary Cache] Failed to copy entry to primary:', error)
     return false
   }
+}
+
+// ============================================================================
+// Batched IndexedDB Operations (for unified fetch/transfer)
+// ============================================================================
+
+/**
+ * Check which uniqueIds exist in the primary feed cache (batched, single readonly transaction)
+ * @param uniqueIds - Array of uniqueIds to check
+ * @returns Set of uniqueIds that exist in primary cache
+ */
+export async function areInPrimaryCache(uniqueIds: string[]): Promise<Set<string>> {
+  if (uniqueIds.length === 0) return new Set()
+
+  const database = await getDB()
+  const transaction = database.transaction(['feed_cache'], 'readonly')
+  const store = transaction.objectStore('feed_cache')
+
+  const existingIds = new Set<string>()
+  await Promise.all(uniqueIds.map(id =>
+    new Promise<void>((resolve) => {
+      const request = store.get(id)
+      request.onsuccess = () => {
+        if (request.result !== undefined) existingIds.add(id)
+        resolve()
+      }
+      request.onerror = () => resolve()
+    })
+  ))
+
+  return existingIds
+}
+
+/**
+ * Save multiple entries to primary feed cache (batched, single readwrite transaction)
+ * Skips entries that already exist.
+ * @param entries - Feed cache entries to save (without originalPost)
+ * @returns Number of new entries saved
+ */
+export async function savePostsToPrimaryCache(entries: Array<{
+  uniqueId: string
+  post: any
+  timestamp: number
+  postTimestamp: number
+  interval: string
+  cachedAt: number
+  reposterDid?: string
+}>): Promise<number> {
+  if (entries.length === 0) return 0
+
+  const database = await getDB()
+
+  // Step 1: Check which already exist (single readonly transaction)
+  const existingIds = await areInPrimaryCache(entries.map(e => e.uniqueId))
+
+  const newEntries = entries.filter(e => !existingIds.has(e.uniqueId))
+  if (newEntries.length === 0) return 0
+
+  // Step 2: Write new entries (single readwrite transaction, synchronous queuing)
+  const writeTransaction = database.transaction(['feed_cache'], 'readwrite')
+  const store = writeTransaction.objectStore('feed_cache')
+
+  for (const entry of newEntries) {
+    store.put(entry)  // Queue synchronously
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    writeTransaction.oncomplete = () => resolve()
+    writeTransaction.onerror = () => reject(writeTransaction.error)
+    writeTransaction.onabort = () => reject(new Error('Transaction aborted'))
+  })
+
+  return newEntries.length
+}
+
+/**
+ * Get multiple post summaries by uniqueIds (batched, single readonly transaction)
+ * @param uniqueIds - Array of uniqueIds to look up
+ * @returns Map from uniqueId to PostSummary (only includes found summaries)
+ */
+export async function getPostSummariesByIds(uniqueIds: string[]): Promise<Map<string, PostSummary>> {
+  if (uniqueIds.length === 0) return new Map()
+
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readonly')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+  const results = new Map<string, PostSummary>()
+  await Promise.all(uniqueIds.map(id =>
+    new Promise<void>((resolve) => {
+      const request = store.get(id)
+      request.onsuccess = () => {
+        if (request.result) results.set(id, request.result)
+        resolve()
+      }
+      request.onerror = () => resolve()
+    })
+  ))
+
+  return results
+}
+
+/**
+ * Save post summaries unconditionally (no existence check, for transfer use)
+ * Uses single readwrite transaction with synchronous queuing.
+ * @param summaries - Summaries to save (will overwrite existing)
+ */
+export async function savePostSummariesForce(summaries: PostSummary[]): Promise<void> {
+  if (summaries.length === 0) return
+
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+  for (const summary of summaries) {
+    store.put(summary)  // Queue synchronously
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(new Error('Transaction aborted'))
+  })
 }
 
 /**

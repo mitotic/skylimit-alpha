@@ -19,6 +19,17 @@ vi.mock('react-router-dom', async () => {
   }
 })
 
+// Mock useSession - PostCard uses session?.handle
+vi.mock('../../auth/SessionContext', () => ({
+  useSession: () => ({
+    session: { handle: 'viewer.bsky.social' },
+    agent: null,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}))
+
 const mockPost: AppBskyFeedDefs.FeedViewPost = {
   post: {
     uri: 'at://did:plc:test/app.bsky.feed.post/123',

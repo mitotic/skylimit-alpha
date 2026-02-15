@@ -1,0 +1,182 @@
+import { AppBskyFeedDefs } from '@atproto/api'
+import { CurationFeedViewPost } from '../curation/types'
+import { getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
+import { clientDate } from '../utils/clientClock'
+
+// Tab type for home page
+export type HomeTab = 'curated' | 'editions'
+
+// Storage key for active tab
+export const HOME_TAB_STATE_KEY = 'websky_home_active_tab'
+
+// Helper functions for per-tab storage keys
+export const getFeedStateKey = (tab: HomeTab) =>
+  tab === 'curated' ? 'websky_home_feed_state' : 'websky_home_editions_feed_state'
+export const getScrollStateKey = (tab: HomeTab) =>
+  tab === 'curated' ? 'websky_home_scroll_state' : 'websky_home_editions_scroll_state'
+
+// Default maximum number of posts to keep in displayed feed (approximately 12 pages)
+// Can be overridden via settings.maxDisplayedFeedSize
+export const DEFAULT_MAX_DISPLAYED_FEED_SIZE = 300
+
+// Saved feed state interface
+export interface SavedFeedState {
+  displayedFeed: AppBskyFeedDefs.FeedViewPost[]  // Renamed from 'feed' for clarity
+  previousPageFeed: AppBskyFeedDefs.FeedViewPost[]  // Pre-fetched next page for instant Prev Page
+  newestDisplayedPostTimestamp: number | null
+  oldestDisplayedPostTimestamp: number | null
+  hasMorePosts: boolean  // Deprecated - use previousPageFeed.length > 0
+  cursor: string | undefined
+  savedAt: number // timestamp when state was saved
+  lowestVisiblePostTimestamp: number | null // timestamp of the lowest visible post (for feed pruning)
+  newPostsCount: number // count of new posts available (for "New Posts" button)
+  showNewPostsButton: boolean // whether to show the "New Posts" button
+  sessionDid: string // DID of the user session when state was saved (to prevent restoring feed for different user)
+  curationSuspended?: boolean // whether curation was suspended when feed was saved
+  showAllPosts?: boolean // whether "show all posts" was enabled when feed was saved
+}
+
+// Helper function to find the timestamp of the lowest visible post
+// This identifies which post is at the bottom of the viewport when state is saved (for feed pruning)
+export function findLowestVisiblePostTimestamp(feed: AppBskyFeedDefs.FeedViewPost[]): number | null {
+  try {
+    const postElements = document.querySelectorAll('[data-post-uri]')
+    const viewportTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+    const viewportBottom = viewportTop + window.innerHeight
+
+    // Find the post element closest to the bottom of the viewport
+    let lowestElement: Element | null = null
+    let lowestDistance = Infinity
+
+    postElements.forEach((element) => {
+      const rect = element.getBoundingClientRect()
+      const elementTop = viewportTop + rect.top
+      const elementBottom = elementTop + rect.height
+
+      // Check if element is visible in viewport
+      if (elementBottom >= viewportTop && elementTop <= viewportBottom) {
+        // Calculate distance from bottom of viewport
+        const distance = Math.max(0, viewportBottom - elementBottom)
+        if (distance < lowestDistance) {
+          lowestDistance = distance
+          lowestElement = element
+        }
+      }
+    })
+
+    if (lowestElement) {
+      const postUri = (lowestElement as Element).getAttribute('data-post-uri')
+      if (postUri) {
+        // Find the post in the feed array
+        const post = feed.find(p => p.post.uri === postUri)
+        if (post) {
+          // Get timestamp using getFeedViewPostTimestamp
+          // Use current time as feedReceivedTime fallback (for reposts)
+          const timestamp = getFeedViewPostTimestamp(post, clientDate())
+          return timestamp.getTime()
+        }
+      }
+    }
+
+    return null
+  } catch (error) {
+    console.warn('Failed to find lowest visible post timestamp:', error)
+    return null
+  }
+}
+
+/**
+ * Trim a filtered feed array so the oldest displayed post aligns to a
+ * curation page boundary (curationNumber = n * pageLength + 1).
+ * Display count stays between pageLength and 2 * pageLength.
+ * If the oldest post has no curation number, returns the feed unchanged.
+ */
+export function alignFeedToPageBoundary(
+  filteredFeed: CurationFeedViewPost[],
+  pageLength: number
+): CurationFeedViewPost[] {
+  // Guard: If feed is smaller than or equal to pageLength, never trim
+  if (filteredFeed.length <= pageLength) {
+    return filteredFeed
+  }
+
+  // Get curationNumber of the oldest post (last element)
+  const oldestPost = filteredFeed[filteredFeed.length - 1] as CurationFeedViewPost
+  const oldestCurationNumber = oldestPost.curation?.curationNumber
+
+  // If no curation number (null/undefined) or is 0 (dropped), keep current behavior
+  if (!oldestCurationNumber || oldestCurationNumber <= 0) {
+    return filteredFeed
+  }
+
+  // Check if already at a page boundary
+  // Page boundary means: curationNumber = (n * pageLength) + 1
+  // i.e., (curationNumber - 1) % pageLength === 0
+  const positionInPage = (oldestCurationNumber - 1) % pageLength
+  if (positionInPage === 0) {
+    // Already at boundary - no trimming needed
+    return filteredFeed
+  }
+
+  // Need to trim `positionInPage` posts from the end to reach boundary
+  const trimmedLength = filteredFeed.length - positionInPage
+
+  if (trimmedLength < pageLength) {
+    // Trimming would reduce below pageLength - don't trim
+    return filteredFeed
+  }
+
+  // Cap at 2 * pageLength
+  const finalLength = Math.min(trimmedLength, 2 * pageLength)
+
+  const newOldest = filteredFeed[finalLength - 1] as CurationFeedViewPost
+  console.log(`[PageBoundary] Trimmed feed from ${filteredFeed.length} to ${finalLength} posts ` +
+    `(removed ${filteredFeed.length - finalLength} oldest, ` +
+    `oldest curationNumber was #${oldestCurationNumber}, ` +
+    `now #${newOldest.curation?.curationNumber ?? '?'})`)
+
+  return filteredFeed.slice(0, finalLength)
+}
+
+/**
+ * Filters out immediate replies to a post by the same user.
+ * If a post is a reply and its parent post appears in the feed (either before or after)
+ * by the same author, the reply is filtered out.
+ */
+export function filterSameUserReplies(feed: AppBskyFeedDefs.FeedViewPost[]): AppBskyFeedDefs.FeedViewPost[] {
+  // First, build a map of all post URIs to their positions and author DIDs
+  const postMap = new Map<string, { index: number; authorDid: string }>()
+  feed.forEach((item, idx) => {
+    postMap.set(item.post.uri, { index: idx, authorDid: item.post.author.did })
+  })
+
+  // Now filter: keep a reply only if its parent is NOT in the feed, or if parent is by different author
+  return feed.filter((item) => {
+    const record = item.post.record as any
+
+    // Check if this is a reply
+    if (!record?.reply?.parent?.uri) {
+      // Not a reply, keep it
+      return true
+    }
+
+    const parentUri = record.reply.parent.uri
+    const replyAuthorDid = item.post.author.did
+
+    // Check if parent post exists in the feed
+    const parentInfo = postMap.get(parentUri)
+    if (!parentInfo) {
+      // Parent not in feed, keep the reply
+      return true
+    }
+
+    // Parent is in the feed - check if it's by the same author
+    if (parentInfo.authorDid === replyAuthorDid) {
+      // Parent is by same author and in feed - filter out this reply
+      return false
+    }
+
+    // Parent is in feed but by different author - keep the reply
+    return true
+  })
+}

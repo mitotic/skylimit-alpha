@@ -347,3 +347,32 @@ export interface FeedCacheEntryWithPost extends FeedCacheEntry {
   originalPost: AppBskyFeedDefs.FeedViewPost  // Keep original for curation
 }
 
+/**
+ * Fetch mode for unified fetchToSecondaryFeedCache
+ */
+export type FetchMode = 'initial' | 'idle_return' | 'next_page' | 'all_new'
+
+/**
+ * Stop reason for unified fetch
+ */
+export type FetchStopReason = 'overlap' | 'boundary' | 'exhausted' | 'max_iterations'
+
+/**
+ * In-memory secondary cache entry — holds a feed cache entry with its inline curation summary
+ */
+export interface SecondaryEntry {
+  entry: FeedCacheEntryWithPost
+  summary: PostSummary
+}
+
+/**
+ * Result of unified fetchToSecondaryFeedCache
+ */
+export interface SecondaryFetchResult {
+  stopReason: FetchStopReason
+  entries: SecondaryEntry[]
+  postsFetched: number
+  oldestTimestamp: number | null
+  newestTimestamp: number | null
+}
+

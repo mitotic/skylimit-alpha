@@ -7,25 +7,17 @@ import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
 import {
   initDB,
   getPostSummary,
-  checkPostSummaryExists,
   clearPostSummaries,
-  clearSecondaryFeedCache,
-  getAllSecondaryPostsOldestFirst,
-  getSecondaryCacheStats,
-  checkSecondaryPrimaryOverlap,
-  getPrimaryNewestTimestamp,
   isInPrimaryCache,
-  copySecondaryEntryToPrimary,
-  saveMultipleToSecondaryCache,
-  savePostSummaries,
   saveEditionPost,
   getFilter,
   getAllFollows,
-  SecondaryCacheEntry
+  savePostsToPrimaryCache,
+  savePostSummariesForce,
 } from './skylimitCache'
 import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId, createPostSummary, getEditionTimeStrs } from './skylimitGeneral'
-import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync } from './types'
-import { curatePosts, insertEditionPosts } from './skylimitTimeline'
+import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync, FetchMode, FetchStopReason, SecondaryEntry, SecondaryFetchResult } from './types'
+import { curatePosts } from './skylimitTimeline'
 import { curateSinglePost } from './skylimitFilter'
 import { getMaxNumbersForDay } from './skylimitNumbering'
 import { getHomeFeed } from '../api/feed'
@@ -429,867 +421,6 @@ export async function updateFeedCacheOldestPostTimestamp(
   }
 }
 
-/**
- * Extend feed cache by fetching more posts from server
- * Uses the cursor stored in feed cache metadata
- * 
- * @param agent - BskyAgent instance
- * @param myUsername - Current user's username
- * @param myDid - Current user's DID
- * @returns Number of posts fetched, or 0 if no cursor available
- */
-export async function extendFeedCache(
-  agent: BskyAgent,
-  myUsername: string,
-  myDid: string
-): Promise<number> {
-  try {
-    // 1. Get last fetch metadata
-    const metadata = await getLastFetchMetadata()
-    if (!metadata || !metadata.lastCursor) {
-      // No cursor available - end of feed
-      return 0
-    }
-
-    // 2. Fetch posts from server using cursor
-    const { feed: newFeed, cursor: newCursor } = await getHomeFeed(agent, {
-      cursor: metadata.lastCursor,
-      limit: 25,
-      onRateLimit: (info) => {
-        console.warn('Rate limit in extendFeedCache:', info)
-      }
-    })
-
-    if (newFeed.length === 0) {
-      // No more posts available
-      return 0
-    }
-
-    // 3. Get oldest cached timestamp for Load More initialLastPostTime
-    const oldestTimestamp = await getOldestCachedPostTimestamp()
-    const initialLastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : clientDate()
-
-    // 4. Create feed cache entries with calculated postTimestamps
-    const settings = await getSettings()
-    const intervalHours = getIntervalHoursSync(settings)
-    const { entries } = createFeedCacheEntries(newFeed, initialLastPostTime, intervalHours)
-
-    // 5. Save to feed cache and curate (ensures both happen together for cache integrity)
-    const { curatedFeed } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
-
-    // 6. Insert edition posts if needed (for display purposes)
-    await insertEditionPosts(curatedFeed)
-
-    // 7. Return number of posts fetched
-    return newFeed.length
-  } catch (error) {
-    console.error('Failed to extend feed cache:', error)
-    return 0
-  }
-}
-
-/**
- * Options for idle return mode in performLookbackFetch
- */
-export interface IdleReturnLookbackOptions {
-  /** Enable idle return behavior (stop on cached summary, different progress calc) */
-  isIdleReturn?: boolean
-  /** Newest cached summary timestamp for progress calculation */
-  progressTargetTimestamp?: number
-  /** Cursor from initial fetch — allows lookback to continue from where the initial fetch left off */
-  initialCursor?: string
-}
-
-/**
- * Result of performLookbackFetch
- */
-export interface LookbackFetchResult {
-  /** Whether lookback completed successfully */
-  completed: boolean
-  /** Whether lookback stopped because it found a cached summary (idle return mode) */
-  stoppedOnCachedSummary: boolean
-  /** Whether the cached summary that stopped lookback has a postNumber (idle return mode) */
-  cachedPostHasNumber: boolean
-  /** Number of posts cached during lookback */
-  postsCached: number
-}
-
-/**
- * Perform background lookback fetch until reaching the lookback boundary
- * Fetches posts in batches, curates them, and caches them
- *
- * Uses lastPostTime tracking for accurate repost timestamps:
- * - Initial lastPostTime comes from oldest timestamp in feed cache (or provided externally)
- * - Each batch chains finalLastPostTime to the next
- *
- * Idle Return Mode (when options.isIdleReturn is true):
- * - Stops when encountering a post that already has a cached summary
- * - Uses progressTargetTimestamp for progress calculation instead of lookbackBoundary
- * - Does NOT clear feed cache (caller should not clear it)
- *
- * @param agent - BskyAgent instance
- * @param myUsername - Current user's username
- * @param myDid - Current user's DID
- * @param lookbackBoundary - Date representing the lookback boundary
- * @param pageLength - Number of posts per batch
- * @param onProgress - Callback for progress updates (0-100)
- * @param initialLastPostTimeParam - Optional initial lastPostTime (e.g., from initial fetch)
- * @param options - Optional idle return mode options
- * @returns LookbackFetchResult with completion status and details
- */
-export async function performLookbackFetch(
-  agent: BskyAgent,
-  myUsername: string,
-  myDid: string,
-  lookbackBoundary: Date,
-  pageLength: number = DEFAULT_PAGE_LENGTH,
-  onProgress?: (percent: number) => void,
-  initialLastPostTimeParam?: Date,
-  options?: IdleReturnLookbackOptions
-): Promise<LookbackFetchResult> {
-  const isIdleReturn = options?.isIdleReturn ?? false
-  const progressTargetTimestamp = options?.progressTargetTimestamp
-  let totalPostsCached = 0
-  let stoppedOnCachedSummary = false
-  let cachedPostHasNumber = false
-
-  try {
-    const modeLabel = isIdleReturn ? '[Idle Return Lookback]' : '[Lookback]'
-    console.log(`${modeLabel} Starting background fetch until ${lookbackBoundary.toISOString()}`)
-    if (isIdleReturn && progressTargetTimestamp) {
-      console.log(`${modeLabel} Progress target: ${new Date(progressTargetTimestamp).toISOString()}`)
-    }
-
-    // Get interval settings for cache entries
-    const settings = await getSettings()
-    const intervalHours = getIntervalHoursSync(settings)
-
-    const metadata = await getLastFetchMetadata()
-    let iterations = 0
-    const maxIterations = 100 // Safety limit
-
-    // Initialize cursor state with staleness checking
-    // Cursor state tracks: cursor value, when received, oldest post timestamp from that response
-    // For idle return mode with initialCursor, continue from where the initial fetch left off
-    // For idle return mode without initialCursor, start fresh (fetch from newest posts)
-    let cursorState: { cursor: string | undefined; receivedAt: number; oldestPostTimestamp: number } | null = null
-    if (isIdleReturn && options?.initialCursor) {
-      cursorState = {
-        cursor: options.initialCursor,
-        receivedAt: Date.now(),
-        oldestPostTimestamp: clientNow()
-      }
-      console.log(`${modeLabel} Idle return mode - using cursor from initial fetch`)
-    } else if (!isIdleReturn && metadata?.lastCursor && metadata.lastFetchTime) {
-      const cursorAge = clientNow() - metadata.lastFetchTime
-      if (cursorAge < CURSOR_STALENESS_MS) {
-        cursorState = {
-          cursor: metadata.lastCursor,
-          receivedAt: metadata.lastFetchTime,
-          oldestPostTimestamp: metadata.oldestCachedPostTimestamp || clientNow()
-        }
-        console.log(`${modeLabel} Using existing cursor (age: ${Math.round(cursorAge / 1000)}s)`)
-      } else {
-        console.log(`${modeLabel} Cursor is stale (age: ${Math.round(cursorAge / 1000)}s), starting fresh`)
-      }
-    } else {
-      console.log(`${modeLabel} ${isIdleReturn ? 'Idle return mode - starting fresh' : 'No cursor available, starting fresh'}`)
-    }
-
-    // Initialize lastPostTime from parameter, oldest cached timestamp, or current time
-    let lastPostTime: Date
-    if (initialLastPostTimeParam) {
-      lastPostTime = initialLastPostTimeParam
-    } else {
-      const oldestTimestamp = await getOldestCachedPostTimestamp()
-      lastPostTime = oldestTimestamp ? new Date(oldestTimestamp) : clientDate()
-    }
-    console.log(`${modeLabel} Initial lastPostTime: ${lastPostTime.toISOString()}`)
-
-    // Loop continues until we hit a stopping condition (not dependent on having a cursor)
-    while (iterations < maxIterations) {
-      iterations++
-
-      // Fetch batch using cursor (undefined cursor = fetch from newest)
-      const batchSize = 2 * pageLength
-      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
-        cursor: cursorState?.cursor,  // undefined = fetch from newest
-        limit: batchSize,
-        onRateLimit: (info) => {
-          console.warn(`${modeLabel} Rate limit encountered:`, info)
-        }
-      })
-
-      if (feed.length === 0) {
-        console.log(`${modeLabel} No more posts from server`)
-        break
-      }
-
-      // Create feed cache entries with calculated postTimestamps
-      // Chain lastPostTime from previous batch
-      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
-      lastPostTime = finalLastPostTime  // Chain for next batch
-
-      // In idle return mode, check if any post already has a cached summary BEFORE saving
-      // This allows us to stop early when we reach the gap boundary
-      if (isIdleReturn) {
-        for (const entry of entries) {
-          const summaryExists = await checkPostSummaryExists(entry.uniqueId)
-          if (summaryExists) {
-            const cachedSummary = await getPostSummary(entry.uniqueId)
-            cachedPostHasNumber = cachedSummary?.postNumber != null && cachedSummary.postNumber > 0
-            console.log(`${modeLabel} Found cached summary for post ${entry.uniqueId}, gap filled! (hasNumber: ${cachedPostHasNumber})`)
-            stoppedOnCachedSummary = true
-            break
-          }
-        }
-        if (stoppedOnCachedSummary) {
-          // Still save the posts we fetched before hitting the cached one
-          const entriesToSave = []
-          for (const entry of entries) {
-            const summaryExists = await checkPostSummaryExists(entry.uniqueId)
-            if (summaryExists) break
-            entriesToSave.push(entry)
-          }
-          if (entriesToSave.length > 0) {
-            const { savedCount } = await savePostsWithCuration(entriesToSave, newCursor, agent, myUsername, myDid)
-            totalPostsCached += savedCount
-            console.log(`${modeLabel} Saved ${savedCount} posts before cached summary`)
-          }
-          break
-        }
-      }
-
-      // Save to feed cache and curate (ensures both happen together for cache integrity)
-      const { curatedFeed, savedCount } = await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
-      totalPostsCached += savedCount
-
-      // Insert edition posts if needed (for display purposes)
-      await insertEditionPosts(curatedFeed)
-
-      console.log(`${modeLabel} Fetched ${feed.length} posts, saved ${savedCount} new (iteration ${iterations})`)
-
-      // Update cursor state for next iteration
-      if (newCursor && entries.length > 0) {
-        cursorState = {
-          cursor: newCursor,
-          receivedAt: clientNow(),
-          oldestPostTimestamp: entries[entries.length - 1].postTimestamp
-        }
-      } else {
-        cursorState = null  // No more pages
-      }
-
-      // Stop if we've reached already-cached posts (no new posts saved)
-      // Note: For idle return mode, this is a fallback - we primarily stop on cached summary
-      if (savedCount === 0) {
-        console.log(`${modeLabel} Reached already-cached posts, stopping`)
-        if (isIdleReturn) {
-          stoppedOnCachedSummary = true  // Treat as finding cached content
-          // Check if the first cached entry has a post number
-          if (entries.length > 0) {
-            const cachedSummary = await getPostSummary(entries[0].uniqueId)
-            cachedPostHasNumber = cachedSummary?.postNumber != null && cachedSummary.postNumber > 0
-            console.log(`${modeLabel} Cached post hasNumber: ${cachedPostHasNumber}`)
-          }
-        }
-        break
-      }
-
-      // Check if oldest postTimestamp in batch is beyond lookback boundary
-      // Use the last entry's postTimestamp (oldest in batch)
-      const oldestEntry = entries[entries.length - 1]
-      const oldestTimestamp = new Date(oldestEntry.postTimestamp)
-
-      if (oldestTimestamp < lookbackBoundary) {
-        console.log(`${modeLabel} Reached lookback boundary (oldest post: ${oldestTimestamp.toISOString()})`)
-        break
-      }
-
-      // Calculate and report progress
-      if (onProgress) {
-        let progress: number
-        if (isIdleReturn && progressTargetTimestamp) {
-          // For idle return, progress is based on how close we are to the newest cached summary
-          const now = clientNow()
-          const totalSpan = now - progressTargetTimestamp
-          const covered = now - oldestEntry.postTimestamp
-          progress = Math.min(100, Math.round((covered / totalSpan) * 100))
-        } else {
-          // For initial lookback, use the standard boundary-based progress
-          progress = calculateLookbackProgress(oldestTimestamp, lookbackBoundary)
-        }
-        onProgress(progress)
-      }
-
-      // If cursor became undefined, server has no more posts
-      if (!cursorState?.cursor) {
-        console.log(`${modeLabel} Server cursor exhausted`)
-        break
-      }
-    }
-
-    if (iterations >= maxIterations) {
-      console.warn(`${modeLabel} Reached max iterations limit`)
-    }
-
-    // Mark lookback as complete
-    await markLookbackComplete()
-    console.log(`${modeLabel} Background fetch completed (${totalPostsCached} posts cached)`)
-
-    return {
-      completed: true,
-      stoppedOnCachedSummary,
-      cachedPostHasNumber,
-      postsCached: totalPostsCached
-    }
-  } catch (error) {
-    console.error('[Lookback] Failed during background fetch:', error)
-    return {
-      completed: false,
-      stoppedOnCachedSummary,
-      cachedPostHasNumber,
-      postsCached: totalPostsCached
-    }
-  }
-}
-
-/**
- * Perform a lookback fetch to SECONDARY cache for gap-filling
- * Used when returning from idle with a fresh primary cache
- * Writes to secondary cache until overlap with primary is found, then merges
- *
- * @param agent - BskyAgent instance
- * @param myUsername - Current user's username
- * @param myDid - Current user's DID
- * @param pageLength - Number of posts per batch
- * @param onProgress - Callback for progress updates (0-100)
- * @param onMergeProgress - Callback for merge progress updates (0-100)
- * @returns Object with completion status and whether merge happened
- */
-export async function performLookbackFetchToSecondary(
-  agent: BskyAgent,
-  myUsername: string,
-  myDid: string,
-  pageLength: number = DEFAULT_PAGE_LENGTH,
-  onProgress?: (percent: number) => void,
-  onMergeProgress?: (percent: number) => void
-): Promise<{ completed: boolean; merged: boolean; postsMerged: number; newestTimestamp: number | null }> {
-  try {
-    console.log('[Secondary Lookback] Starting gap-filling lookback to secondary cache')
-
-    // Get interval settings for cache entries
-    const settings = await getSettings()
-    const intervalHours = getIntervalHoursSync(settings)
-
-    // Clear any existing secondary cache from interrupted lookback
-    await clearSecondaryFeedCache()
-
-    // Get primary cache newest timestamp (our target to reach)
-    const primaryNewest = await getPrimaryNewestTimestamp()
-    if (!primaryNewest) {
-      console.warn('[Secondary Lookback] No primary cache found, should use regular lookback instead')
-      return { completed: false, merged: false, postsMerged: 0, newestTimestamp: null }
-    }
-    console.log(`[Secondary Lookback] Primary newest: ${new Date(primaryNewest).toISOString()}`)
-
-    // Update metadata to mark secondary cache as active
-    await updateSecondaryCacheMetadata(true, null, null)
-
-    let iterations = 0
-    const maxIterations = 100
-    let cursor: string | undefined = undefined
-    let lastPostTime = clientDate()
-    let secondaryNewest: number | null = null
-    let secondaryOldest: number | null = null
-
-    while (iterations < maxIterations) {
-      iterations++
-
-      // Fetch batch (undefined cursor = fetch from newest)
-      const batchSize = 2 * pageLength
-      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
-        cursor,
-        limit: batchSize,
-        onRateLimit: (info) => {
-          console.warn('[Secondary Lookback] Rate limit encountered:', info)
-        }
-      })
-
-      if (feed.length === 0) {
-        console.log('[Secondary Lookback] No more posts from server')
-        break
-      }
-
-      // Create feed cache entries
-      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
-      lastPostTime = finalLastPostTime
-
-      // Curate posts (respects existing summaries)
-      // curatePosts takes FeedCacheEntryWithPost[] and saves summaries
-      await curatePosts(entries, agent, myUsername, myDid)
-
-      // Save to secondary cache
-      const secondaryEntries: SecondaryCacheEntry[] = entries.map(entry => ({
-        uniqueId: entry.uniqueId,
-        post: entry.post,
-        timestamp: entry.timestamp,
-        postTimestamp: entry.postTimestamp,
-        interval: entry.interval,
-        cachedAt: entry.cachedAt,
-        reposterDid: entry.reposterDid,
-      }))
-
-      await saveMultipleToSecondaryCache(secondaryEntries)
-
-      // Track secondary cache boundaries
-      const batchNewest = entries[0].postTimestamp
-      const batchOldest = entries[entries.length - 1].postTimestamp
-      if (secondaryNewest === null || batchNewest > secondaryNewest) {
-        secondaryNewest = batchNewest
-      }
-      if (secondaryOldest === null || batchOldest < secondaryOldest) {
-        secondaryOldest = batchOldest
-      }
-
-      // Update metadata
-      await updateSecondaryCacheMetadata(true, secondaryNewest, secondaryOldest)
-
-      console.log(`[Secondary Lookback] Saved ${entries.length} posts to secondary (iteration ${iterations})`)
-
-      // Check for overlap with primary cache
-      const { hasOverlap, overlapUri, overlapTimestamp, overlapHandle } = await checkSecondaryPrimaryOverlap()
-      if (hasOverlap) {
-        console.log(`[Secondary Lookback] Found overlap with primary at: ${overlapUri}`)
-
-        // Debug: Check for suspicious gap
-        if (secondaryOldest && primaryNewest) {
-          const gapMs = secondaryOldest - primaryNewest
-          const gapHours = gapMs / (1000 * 60 * 60)
-          console.log(`[Secondary Lookback] Gap: ${gapHours.toFixed(1)} hours (secondaryOldest=${new Date(secondaryOldest).toISOString()}, primaryNewest=${new Date(primaryNewest).toISOString()})`)
-
-          if (gapHours > 2) {
-            const secondaryOldestTime = new Date(secondaryOldest).toLocaleString()
-            const primaryNewestTime = new Date(primaryNewest).toLocaleString()
-            const overlapTime = overlapTimestamp ? new Date(overlapTimestamp).toLocaleString() : 'unknown'
-            alert(`Debug warning: Long gap (${gapHours.toFixed(1)} hours) between secondary and primary cache: ${secondaryOldestTime} to ${primaryNewestTime}. Overlapping post at ${overlapTime} from ${overlapHandle || 'unknown'}`)
-          }
-        }
-
-        break
-      }
-
-      // Failsafe: stop if we've gone past primary's newest
-      if (secondaryOldest && secondaryOldest < primaryNewest) {
-        const gapMs = primaryNewest - secondaryOldest
-        const gapHours = gapMs / (1000 * 60 * 60)
-        console.log(`[Secondary Lookback] Failsafe triggered: no URI overlap found`)
-        console.log(`[Secondary Lookback] Secondary oldest: ${new Date(secondaryOldest).toISOString()}`)
-        console.log(`[Secondary Lookback] Primary newest: ${new Date(primaryNewest).toISOString()}`)
-        console.log(`[Secondary Lookback] Time overlap: ${gapHours.toFixed(2)} hours (secondary fetched ${gapHours.toFixed(2)}h past primary)`)
-        console.log(`[Secondary Lookback] Iterations: ${iterations}, Secondary newest: ${secondaryNewest ? new Date(secondaryNewest).toISOString() : 'none'}`)
-        break
-      }
-
-      // Report progress
-      if (onProgress && secondaryOldest && secondaryNewest) {
-        // Progress based on how close oldest is to primary newest
-        const totalGap = secondaryNewest - primaryNewest
-        const coveredGap = secondaryNewest - secondaryOldest
-        const percent = totalGap > 0 ? Math.min(99, Math.round((coveredGap / totalGap) * 100)) : 50
-        onProgress(percent)
-      }
-
-      cursor = newCursor
-      if (!cursor) {
-        console.log('[Secondary Lookback] Server cursor exhausted')
-        break
-      }
-    }
-
-    if (iterations >= maxIterations) {
-      console.warn('[Secondary Lookback] Reached max iterations limit')
-    }
-
-    // Merge secondary to primary
-    console.log('[Secondary Lookback] Starting merge to primary cache')
-    const mergeResult = await mergeSecondaryToPrimary(onMergeProgress)
-
-    // Clear secondary cache metadata
-    await updateSecondaryCacheMetadata(false, null, null)
-
-    console.log(`[Secondary Lookback] Completed. Merged ${mergeResult.postsMerged} posts, newestTimestamp=${secondaryNewest ? new Date(secondaryNewest).toLocaleString() : 'null'}`)
-    return {
-      completed: true,
-      merged: mergeResult.success,
-      postsMerged: mergeResult.postsMerged,
-      newestTimestamp: secondaryNewest
-    }
-  } catch (error) {
-    console.error('[Secondary Lookback] Failed:', error)
-    // Clear secondary metadata on error
-    await updateSecondaryCacheMetadata(false, null, null)
-    return { completed: false, merged: false, postsMerged: 0, newestTimestamp: null }
-  }
-}
-
-/**
- * Fetch posts to secondary cache for Next Page display.
- * Similar to performLookbackFetchToSecondary but:
- * - Curates inline (saves summary in secondary entry) without saving to summaries cache
- * - Stops when a post already in primary cache is encountered (overlap)
- * - Does NOT merge to primary — leaves secondary intact for transferSecondaryPageToPrimary
- */
-export async function fetchToSecondaryForNextPage(
-  agent: BskyAgent,
-  myUsername: string,
-  myDid: string,
-  pageLength: number = 25,
-  onProgress?: (percent: number) => void
-): Promise<{ completed: boolean; postsFetched: number; newestTimestamp: number | null }> {
-  try {
-    console.log('[NextPage Fetch] Starting fetch to secondary cache')
-
-    // Get interval settings for cache entries
-    const settings = await getSettings()
-    const intervalHours = getIntervalHoursSync(settings)
-
-    // Clear any existing secondary cache from interrupted operations
-    await clearSecondaryFeedCache()
-
-    // Get primary cache newest timestamp (our overlap target)
-    const primaryNewest = await getPrimaryNewestTimestamp()
-    if (!primaryNewest) {
-      console.warn('[NextPage Fetch] No primary cache found')
-      return { completed: false, postsFetched: 0, newestTimestamp: null }
-    }
-    console.log(`[NextPage Fetch] Primary newest: ${new Date(primaryNewest).toISOString()}`)
-
-    // Mark secondary cache as active
-    await updateSecondaryCacheMetadata(true, null, null)
-
-    // Setup curation context (same as curatePosts lines 27-40)
-    const [currentStats, currentProbs] = await getFilter() || [null, null]
-    const currentFollows = await getAllFollows()
-    const followMap: Record<string, any> = {}
-    for (const follow of currentFollows) {
-      followMap[follow.username] = follow
-    }
-    const editionTimeStrs = await getEditionTimeStrs()
-    const editionCount = editionTimeStrs.length
-    const secretKey = settings?.secretKey || 'default'
-
-    let iterations = 0
-    const maxIterations = 100
-    let cursor: string | undefined = undefined
-    let lastPostTime = clientDate()
-    let secondaryNewest: number | null = null
-    let secondaryOldest: number | null = null
-    let totalPostsFetched = 0
-    let overlapFound = false
-
-    while (iterations < maxIterations && !overlapFound) {
-      iterations++
-
-      // Fetch batch from server (undefined cursor = fetch from newest)
-      const batchSize = 2 * pageLength
-      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
-        cursor,
-        limit: batchSize,
-        onRateLimit: (info) => {
-          console.warn('[NextPage Fetch] Rate limit encountered:', info)
-        }
-      })
-
-      if (feed.length === 0) {
-        console.log('[NextPage Fetch] No more posts from server')
-        break
-      }
-
-      // Create feed cache entries
-      const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
-      lastPostTime = finalLastPostTime
-
-      // Curate each entry inline and build secondary cache entries
-      const secondaryEntries: SecondaryCacheEntry[] = []
-
-      for (const entry of entries) {
-        // Check if this post is already in primary cache — if so, overlap found
-        if (await isInPrimaryCache(entry.uniqueId)) {
-          console.log(`[NextPage Fetch] Found post in primary cache: ${entry.uniqueId}`)
-          overlapFound = true
-          break
-        }
-
-        // Check for existing summary (respect prior curation decisions)
-        const existingSummary = await getPostSummary(entry.uniqueId)
-
-        let summary: PostSummary
-        if (existingSummary) {
-          summary = existingSummary
-        } else {
-          // Curate the post without saving
-          const curationResult = await curateSinglePost(
-            entry.originalPost,
-            myUsername,
-            myDid,
-            followMap,
-            currentStats,
-            currentProbs,
-            secretKey,
-            editionCount
-          )
-
-          // Create summary and set curation fields
-          summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
-          summary.curation_status = curationResult.curation_status
-          summary.curation_msg = curationResult.curation_msg
-          if (curationResult.curation_save) {
-            summary.curation_save = curationResult.curation_save
-          }
-        }
-
-        // Build secondary entry with summary
-        secondaryEntries.push({
-          uniqueId: entry.uniqueId,
-          post: entry.post,
-          timestamp: entry.timestamp,
-          postTimestamp: entry.postTimestamp,
-          interval: entry.interval,
-          cachedAt: entry.cachedAt,
-          reposterDid: entry.reposterDid,
-          summary,
-        })
-      }
-
-      // Save batch to secondary cache
-      if (secondaryEntries.length > 0) {
-        await saveMultipleToSecondaryCache(secondaryEntries)
-        totalPostsFetched += secondaryEntries.length
-
-        // Track boundaries
-        const batchNewest = secondaryEntries[0].postTimestamp
-        const batchOldest = secondaryEntries[secondaryEntries.length - 1].postTimestamp
-        if (secondaryNewest === null || batchNewest > secondaryNewest) {
-          secondaryNewest = batchNewest
-        }
-        if (secondaryOldest === null || batchOldest < secondaryOldest) {
-          secondaryOldest = batchOldest
-        }
-
-        await updateSecondaryCacheMetadata(true, secondaryNewest, secondaryOldest)
-        console.log(`[NextPage Fetch] Saved ${secondaryEntries.length} posts to secondary (iteration ${iterations})`)
-      }
-
-      if (overlapFound) break
-
-      // Failsafe: stop if we've gone past primary's newest in time
-      if (secondaryOldest && secondaryOldest < primaryNewest) {
-        console.log(`[NextPage Fetch] Failsafe: secondary oldest (${new Date(secondaryOldest).toISOString()}) < primary newest (${new Date(primaryNewest).toISOString()})`)
-        break
-      }
-
-      // Report progress
-      if (onProgress && secondaryOldest && secondaryNewest) {
-        const totalGap = secondaryNewest - primaryNewest
-        const coveredGap = secondaryNewest - secondaryOldest
-        const percent = totalGap > 0 ? Math.min(99, Math.round((coveredGap / totalGap) * 100)) : 50
-        onProgress(percent)
-      }
-
-      cursor = newCursor
-      if (!cursor) {
-        console.log('[NextPage Fetch] Server cursor exhausted')
-        break
-      }
-    }
-
-    if (iterations >= maxIterations) {
-      console.warn('[NextPage Fetch] Reached max iterations limit')
-    }
-
-    // Do NOT merge — leave secondary intact for transferSecondaryPageToPrimary
-    console.log(`[NextPage Fetch] Completed. ${totalPostsFetched} posts in secondary, overlap=${overlapFound}`)
-    return {
-      completed: true,
-      postsFetched: totalPostsFetched,
-      newestTimestamp: secondaryNewest
-    }
-  } catch (error) {
-    console.error('[NextPage Fetch] Failed:', error)
-    await updateSecondaryCacheMetadata(false, null, null)
-    return { completed: false, postsFetched: 0, newestTimestamp: null }
-  }
-}
-
-/**
- * Transfer posts from secondary cache to primary, oldest-first,
- * until pageLength displayable posts have been transferred.
- * Saves summaries and edition posts during transfer.
- * Discards remaining (newer) posts in secondary.
- */
-export async function transferSecondaryPageToPrimary(
-  pageLength: number
-): Promise<{ postsTransferred: number; displayableCount: number; newestTransferredTimestamp: number | null }> {
-  try {
-    console.log(`[NextPage Transfer] Starting transfer (target: ${pageLength} displayable posts)`)
-
-    const allEntries = await getAllSecondaryPostsOldestFirst()
-    if (allEntries.length === 0) {
-      console.log('[NextPage Transfer] No posts in secondary cache')
-      await clearSecondaryFeedCache()
-      await updateSecondaryCacheMetadata(false, null, null)
-      return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null }
-    }
-
-    // Initialize numbering from the day of the oldest entry
-    const oldestTimestamp = allEntries[0].postTimestamp
-    let currentDayStart = getLocalMidnight(new Date(oldestTimestamp)).getTime()
-    let currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
-    let { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
-    let postNumber = maxPostNumber
-    let curationNumber = maxCurationNumber
-
-    let postsTransferred = 0
-    let displayableCount = 0
-    let newestTransferredTimestamp: number | null = null
-    const summariesToSave: PostSummary[] = []
-
-    for (const entry of allEntries) {
-      // Skip if already in primary
-      if (await isInPrimaryCache(entry.uniqueId)) {
-        continue
-      }
-
-      // Strip summary from entry before copying to primary
-      const { summary, ...primaryEntry } = entry
-      await copySecondaryEntryToPrimary(primaryEntry as SecondaryCacheEntry)
-      postsTransferred++
-      newestTransferredTimestamp = entry.postTimestamp
-
-      // Save summary if present and not already cached
-      if (summary) {
-        // Check if day boundary crossed
-        if (entry.postTimestamp >= currentDayEnd) {
-          currentDayStart = getLocalMidnight(new Date(entry.postTimestamp)).getTime()
-          currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
-          const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
-          postNumber = dayNumbers.maxPostNumber
-          curationNumber = dayNumbers.maxCurationNumber
-        }
-
-        // Assign numbers inline
-        postNumber++
-        summary.postNumber = postNumber
-        if (isStatusDrop(summary.curation_status)) {
-          summary.curationNumber = 0
-        } else if (isStatusShow(summary.curation_status)) {
-          curationNumber++
-          summary.curationNumber = curationNumber
-        } else {
-          summary.curationNumber = null
-        }
-
-        const existingSummary = await getPostSummary(entry.uniqueId)
-        if (!existingSummary) {
-          summariesToSave.push(summary)
-        }
-
-        // Save edition post if needed
-        if (summary.curation_save) {
-          await saveEditionPost(entry.post.post.uri, entry.post, summary.curation_save)
-        }
-
-        // Check if this is a displayable post
-        if (isStatusShow(summary.curation_status)) {
-          displayableCount++
-        }
-      }
-
-      // Stop when we have enough displayable posts
-      if (displayableCount >= pageLength) {
-        break
-      }
-    }
-
-    // Save all accumulated summaries (with numbers already assigned)
-    if (summariesToSave.length > 0) {
-      await savePostSummaries(summariesToSave)
-    }
-
-    // Discard remaining (newer) posts in secondary
-    await clearSecondaryFeedCache()
-
-    // Update primary cache metadata
-    await updateFeedCacheNewestPostTimestamp()
-
-    // Clear secondary metadata
-    await updateSecondaryCacheMetadata(false, null, null)
-
-    console.log(`[NextPage Transfer] Complete. Transferred: ${postsTransferred}, Displayable: ${displayableCount}`)
-    return { postsTransferred, displayableCount, newestTransferredTimestamp }
-  } catch (error) {
-    console.error('[NextPage Transfer] Failed:', error)
-    await clearSecondaryFeedCache()
-    await updateSecondaryCacheMetadata(false, null, null)
-    return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null }
-  }
-}
-
-/**
- * Update secondary cache metadata
- */
-async function updateSecondaryCacheMetadata(
-  active: boolean,
-  newestTimestamp: number | null,
-  oldestTimestamp: number | null
-): Promise<void> {
-  try {
-    const database = await getDB()
-    const transaction = database.transaction(['feed_metadata'], 'readwrite')
-    const store = transaction.objectStore('feed_metadata')
-
-    const existingMetadata = await new Promise<FeedCacheMetadata | null>((resolve, reject) => {
-      const request = store.get('last_fetch')
-      request.onsuccess = () => resolve(request.result || null)
-      request.onerror = () => reject(request.error)
-    })
-
-    const updatedMetadata: FeedCacheMetadata = {
-      id: 'last_fetch',
-      lastFetchTime: existingMetadata?.lastFetchTime || clientNow(),
-      newestCachedPostTimestamp: existingMetadata?.newestCachedPostTimestamp || 0,
-      oldestCachedPostTimestamp: existingMetadata?.oldestCachedPostTimestamp || 0,
-      lastCursor: existingMetadata?.lastCursor,
-      lookbackCompleted: existingMetadata?.lookbackCompleted,
-      lookbackCompletedAt: existingMetadata?.lookbackCompletedAt,
-      secondaryCacheActive: active,
-      secondaryCacheNewestTimestamp: newestTimestamp || undefined,
-      secondaryCacheOldestTimestamp: oldestTimestamp || undefined,
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      const request = store.put(updatedMetadata)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
-    })
-  } catch (error) {
-    console.error('[Secondary Metadata] Failed to update:', error)
-  }
-}
-
-/**
- * Check if secondary cache is active (lookback in progress)
- */
-export async function isSecondaryCacheActive(): Promise<boolean> {
-  try {
-    const metadata = await getLastFetchMetadata()
-    return metadata?.secondaryCacheActive === true
-  } catch (error) {
-    console.error('[Secondary Cache] Failed to check active status:', error)
-    return false
-  }
-}
 
 /**
  * Get local midnight for a given date (00:00:00 in user's timezone)
@@ -1321,157 +452,6 @@ export function isCacheWithinLookback(timestamp: number | null, lookbackDays: nu
   return timestamp >= lookbackBoundary.getTime()
 }
 
-/**
- * Result of a gap fill lookback operation
- */
-export interface GapFillResult {
-  totalNewPosts: number
-  stoppedOnCachedPost: boolean
-  cachedPostHasNumber: boolean  // true if the cached post that stopped us has a postNumber
-}
-
-/**
- * Perform a limited lookback to fill gaps back to a boundary
- * Used when loading new posts to ensure consistent counter numbering
- * Stops when hitting cached posts OR reaching the lookback boundary
- *
- * @param oldestFetchedTimestamp - Timestamp of the oldest post from the initial fetch
- * @param initialCursor - Cursor from the initial fetch for pagination
- * @param agent - BskyAgent for API calls
- * @param myUsername - User's username
- * @param myDid - User's DID
- * @param pageLength - Number of posts per page (default 25)
- * @param lookbackBoundary - Optional boundary timestamp to use instead of computing from current time
- * @returns GapFillResult with post count and stop condition info
- */
-export async function limitedLookbackToCachedPosts(
-  oldestFetchedTimestamp: number,
-  initialCursor: string | undefined,
-  agent: BskyAgent,
-  myUsername: string,
-  myDid: string,
-  pageLength: number = DEFAULT_PAGE_LENGTH,
-  lookbackBoundary?: number
-): Promise<GapFillResult> {
-  // Use supplied boundary if provided, otherwise compute from current time
-  const boundary = lookbackBoundary ?? getLocalMidnight().getTime()
-
-  // If oldest fetched is already at or before boundary, no lookback needed
-  if (oldestFetchedTimestamp <= boundary) {
-    console.log('[Gap Fill Lookback] Already at or past boundary, skipping')
-    return { totalNewPosts: 0, stoppedOnCachedPost: false, cachedPostHasNumber: false }
-  }
-
-  // Get interval settings for cache entries
-  const settings = await getSettings()
-  const intervalHours = getIntervalHoursSync(settings)
-
-  console.log(`[Gap Fill Lookback] Starting from ${new Date(oldestFetchedTimestamp).toLocaleTimeString()} to boundary ${new Date(boundary).toLocaleString()}${lookbackBoundary ? ' (supplied)' : ' (computed)'}`)
-
-  let currentOldestTimestamp = oldestFetchedTimestamp
-  let cursor = initialCursor
-  let totalNewPosts = 0
-  let iterations = 0
-  let stoppedOnCachedPost = false
-  let cachedPostHasNumber = false
-  const maxIterations = MAX_FETCH_ITERATIONS
-
-  // Keep fetching backward until we hit boundary OR cached posts
-  while (currentOldestTimestamp > boundary && iterations < maxIterations) {
-    iterations++
-
-    if (!cursor) {
-      console.log('[Gap Fill Lookback] No cursor available, stopping')
-      break
-    }
-
-    try {
-      const { feed, cursor: newCursor } = await getHomeFeed(agent, {
-        cursor,
-        limit: pageLength
-      })
-
-      if (feed.length === 0) {
-        console.log('[Gap Fill Lookback] No more posts from server, stopping')
-        break
-      }
-
-      const feedReceivedTime = clientDate()
-
-      // Check each post - stop if we hit a cached post
-      let hitCachedPost = false
-      const newPosts: AppBskyFeedDefs.FeedViewPost[] = []
-
-      for (const post of feed) {
-        const uniqueId = getPostUniqueId(post)
-        const postTimestamp = getFeedViewPostTimestamp(post, feedReceivedTime).getTime()
-
-        // Check if already cached (using summaries cache) - if so, stop lookback
-        const existsInCache = await checkPostSummaryExists(uniqueId)
-        if (existsInCache) {
-          const cachedSummary = await getPostSummary(uniqueId)
-          cachedPostHasNumber = cachedSummary?.postNumber != null && cachedSummary.postNumber > 0
-          console.log(`[Gap Fill Lookback] Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()} (hasNumber: ${cachedPostHasNumber}), stopping`)
-          hitCachedPost = true
-          break
-        }
-
-        // Stop if post is before boundary
-        if (postTimestamp < boundary) {
-          console.log(`[Gap Fill Lookback] Reached boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
-          break
-        }
-
-        // Track oldest timestamp
-        if (postTimestamp < currentOldestTimestamp) {
-          currentOldestTimestamp = postTimestamp
-        }
-
-        newPosts.push(post)
-      }
-
-      // Save new posts if any (with no-overwrite protection)
-      if (newPosts.length > 0) {
-        // Use current time as initialLastPostTime for entries
-        const initialLastPostTime = clientDate()
-        const { entries } = createFeedCacheEntries(newPosts, initialLastPostTime, intervalHours)
-
-        // Save to feed cache and curate
-        await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
-        totalNewPosts += newPosts.length
-
-        console.log(`[Gap Fill Lookback] Cached ${newPosts.length} new posts (total: ${totalNewPosts})`)
-      }
-
-      if (hitCachedPost) {
-        stoppedOnCachedPost = true
-        break
-      }
-
-      // If no new posts were collected (all were before boundary), stop
-      if (newPosts.length === 0) {
-        console.log('[Gap Fill Lookback] All posts in batch before boundary, stopping')
-        break
-      }
-
-      cursor = newCursor
-      if (!cursor) {
-        console.log('[Gap Fill Lookback] No more cursor, stopping')
-        break
-      }
-    } catch (error) {
-      console.warn('[Gap Fill Lookback] Error during fetch:', error)
-      break
-    }
-  }
-
-  if (iterations >= maxIterations) {
-    console.warn('[Gap Fill Lookback] Hit max iterations limit')
-  }
-
-  console.log(`[Gap Fill Lookback] Completed - cached ${totalNewPosts} new posts (stoppedOnCached: ${stoppedOnCachedPost}, cachedHasNumber: ${cachedPostHasNumber})`)
-  return { totalNewPosts, stoppedOnCachedPost, cachedPostHasNumber }
-}
 
 /**
  * Detect if there's a gap in the summary cache at a given timestamp
@@ -2935,70 +1915,6 @@ export async function isPrimaryCacheStale(): Promise<boolean> {
 }
 
 /**
- * Merge secondary cache into primary cache
- * Copies posts oldest-first to preserve contiguity
- *
- * @param onProgress - Callback for progress updates (0-100)
- * @returns Result with success status and count of posts merged
- */
-export async function mergeSecondaryToPrimary(
-  onProgress?: (percent: number) => void
-): Promise<{ success: boolean; postsMerged: number }> {
-  try {
-    console.log('[Merge] Starting secondary to primary cache merge')
-
-    // Get all secondary posts sorted oldest first
-    const secondaryPosts = await getAllSecondaryPostsOldestFirst()
-    if (secondaryPosts.length === 0) {
-      console.log('[Merge] No posts in secondary cache to merge')
-      await clearSecondaryFeedCache()
-      return { success: true, postsMerged: 0 }
-    }
-
-    console.log(`[Merge] Found ${secondaryPosts.length} posts to merge`)
-
-    let mergedCount = 0
-    let skippedCount = 0
-
-    // Copy posts oldest first (preserves contiguity after each copy)
-    for (let i = 0; i < secondaryPosts.length; i++) {
-      const entry = secondaryPosts[i]
-
-      // Skip if already in primary (by uniqueId)
-      const alreadyExists = await isInPrimaryCache(entry.uniqueId)
-      if (alreadyExists) {
-        skippedCount++
-        continue
-      }
-
-      // Copy to primary
-      const success = await copySecondaryEntryToPrimary(entry)
-      if (success) {
-        mergedCount++
-      }
-
-      // Report progress
-      if (onProgress) {
-        const percent = Math.round(((i + 1) / secondaryPosts.length) * 100)
-        onProgress(percent)
-      }
-    }
-
-    // Clear secondary cache after successful merge
-    await clearSecondaryFeedCache()
-
-    // Update primary cache metadata with new boundaries
-    await updateFeedCacheNewestPostTimestamp()
-
-    console.log(`[Merge] Complete. Merged: ${mergedCount}, Skipped: ${skippedCount}`)
-    return { success: true, postsMerged: mergedCount }
-  } catch (error) {
-    console.error('[Merge] Failed to merge secondary to primary:', error)
-    return { success: false, postsMerged: 0 }
-  }
-}
-
-/**
  * Update the feed cache metadata with the newest post timestamp
  * Called after merge to ensure metadata reflects new cache state
  */
@@ -3056,41 +1972,353 @@ export async function updateFeedCacheNewestPostTimestamp(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Unified Secondary Fetch
+// ============================================================================
+
 /**
- * Get sync progress for secondary cache merge
- * Returns percentage based on secondary cache oldest vs primary cache newest
+ * Unified fetch to in-memory secondary cache.
+ * Handles all 4 new-post-loading scenarios: initial, idle_return, all_new, next_page.
+ *
+ * Fetches posts from the server into an in-memory array, curating each post inline.
+ * No IndexedDB writes during fetch — only reads for overlap detection.
+ *
+ * Stop conditions:
+ * - 'initial': stop at midnight boundary (yesterday's midnight per clientDate())
+ * - 'idle_return' / 'all_new': stop on overlap with primary cache OR midnight boundary
+ * - 'next_page': stop on overlap with primary cache OR midnight boundary
+ *
+ * @param agent - BskyAgent instance
+ * @param myUsername - Current user's username
+ * @param myDid - Current user's DID
+ * @param mode - Fetch mode determining stop conditions and behavior
+ * @param options - Configuration options
+ * @returns SecondaryFetchResult with in-memory entries and metadata
  */
-export async function getSecondaryMergeProgress(): Promise<number> {
-  try {
-    const secondaryStats = await getSecondaryCacheStats()
-    if (secondaryStats.count === 0 || !secondaryStats.oldestTimestamp || !secondaryStats.newestTimestamp) {
-      return 100 // No secondary cache = complete
+export async function fetchToSecondaryFeedCache(
+  agent: BskyAgent,
+  myUsername: string,
+  myDid: string,
+  mode: FetchMode,
+  options: {
+    pageLength?: number
+    onProgress?: (percent: number) => void
+  } = {}
+): Promise<SecondaryFetchResult> {
+  const pageLength = options.pageLength ?? DEFAULT_PAGE_LENGTH
+  const label = `[Unified Fetch/${mode}]`
+
+  console.log(`${label} Starting fetch`)
+
+  // Get interval settings and curation context
+  const settings = await getSettings()
+  const intervalHours = getIntervalHoursSync(settings)
+
+  // Setup curation context (mirrors fetchToSecondaryForNextPage pattern)
+  const [currentStats, currentProbs] = await getFilter() || [null, null]
+  const currentFollows = await getAllFollows()
+  const followMap: Record<string, any> = {}
+  for (const follow of currentFollows) {
+    followMap[follow.username] = follow
+  }
+  const editionTimeStrs = await getEditionTimeStrs()
+  const editionCount = editionTimeStrs.length
+  const secretKey = settings?.secretKey || 'default'
+
+  // Calculate midnight boundary: yesterday's midnight per clientDate()
+  const today = clientDate()
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  yesterday.setHours(0, 0, 0, 0)
+  const midnightBoundary = yesterday.getTime()
+  console.log(`${label} Midnight boundary: ${yesterday.toLocaleString()}`)
+
+  // For non-initial modes, get primary cache newest timestamp for overlap detection
+  let primaryNewestTimestamp: number | null = null
+  if (mode !== 'initial') {
+    const metadata = await getLastFetchMetadata()
+    primaryNewestTimestamp = metadata?.newestCachedPostTimestamp ?? null
+    if (primaryNewestTimestamp) {
+      console.log(`${label} Primary newest: ${new Date(primaryNewestTimestamp).toLocaleString()}`)
+    } else {
+      console.warn(`${label} No primary cache metadata, will stop on boundary only`)
+    }
+  }
+
+  // In-memory secondary cache
+  const secondaryEntries: SecondaryEntry[] = []
+  let oldestTimestamp: number | null = null
+  let newestTimestamp: number | null = null
+
+  let cursor: string | undefined = undefined
+  let lastPostTime = clientDate()
+  let iterations = 0
+  const maxIterations = MAX_FETCH_ITERATIONS
+  let stopReason: FetchStopReason = 'exhausted'
+
+  while (iterations < maxIterations) {
+    iterations++
+
+    // Fetch batch from server (undefined cursor = fetch from newest)
+    const batchSize = 2 * pageLength
+    const { feed, cursor: newCursor } = await getHomeFeed(agent, {
+      cursor,
+      limit: batchSize,
+      onRateLimit: (info) => {
+        console.warn(`${label} Rate limit encountered:`, info)
+      }
+    })
+
+    if (feed.length === 0) {
+      console.log(`${label} No more posts from server`)
+      stopReason = 'exhausted'
+      break
     }
 
-    const primaryNewest = await getPrimaryNewestTimestamp()
-    if (!primaryNewest) {
-      return 0 // No primary cache = starting fresh
+    // Create feed cache entries with calculated postTimestamps
+    const { entries, finalLastPostTime } = createFeedCacheEntries(feed, lastPostTime, intervalHours)
+    lastPostTime = finalLastPostTime
+
+    let batchStopped = false
+
+    for (const entry of entries) {
+      // Check midnight boundary — stop if post is at or before boundary
+      if (entry.postTimestamp <= midnightBoundary) {
+        console.log(`${label} Reached midnight boundary at ${new Date(entry.postTimestamp).toLocaleString()}`)
+        stopReason = 'boundary'
+        batchStopped = true
+        break
+      }
+
+      // For non-initial modes, check overlap with primary cache
+      if (mode !== 'initial' && primaryNewestTimestamp !== null) {
+        // Timestamp-first approach: only check IndexedDB when timestamps overlap
+        if (entry.postTimestamp <= primaryNewestTimestamp) {
+          // Timestamps overlap — do IndexedDB check to confirm
+          if (await isInPrimaryCache(entry.uniqueId)) {
+            console.log(`${label} Found overlap with primary cache: ${entry.uniqueId}`)
+            stopReason = 'overlap'
+            batchStopped = true
+            break
+          }
+        }
+      }
+
+      // Check for existing summary (respect prior curation decisions)
+      const existingSummary = await getPostSummary(entry.uniqueId)
+
+      let summary: PostSummary
+      if (existingSummary) {
+        summary = existingSummary
+      } else {
+        // Curate the post inline (no save)
+        const curationResult = await curateSinglePost(
+          entry.originalPost,
+          myUsername,
+          myDid,
+          followMap,
+          currentStats,
+          currentProbs,
+          secretKey,
+          editionCount
+        )
+
+        summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
+        summary.curation_status = curationResult.curation_status
+        summary.curation_msg = curationResult.curation_msg
+        if (curationResult.curation_save) {
+          summary.curation_save = curationResult.curation_save
+        }
+      }
+
+      // Append to in-memory array
+      secondaryEntries.push({ entry, summary })
+
+      // Track boundaries
+      if (newestTimestamp === null || entry.postTimestamp > newestTimestamp) {
+        newestTimestamp = entry.postTimestamp
+      }
+      if (oldestTimestamp === null || entry.postTimestamp < oldestTimestamp) {
+        oldestTimestamp = entry.postTimestamp
+      }
     }
 
-    // Calculate progress: how close is secondary's oldest to primary's newest?
-    // When they meet (overlap), progress is 100%
-    const secondaryRange = secondaryStats.newestTimestamp - secondaryStats.oldestTimestamp
-    if (secondaryRange <= 0) {
-      return 50 // Single post, unknown progress
+    console.log(`${label} Batch ${iterations}: ${entries.length} entries, ${secondaryEntries.length} total in secondary`)
+
+    if (batchStopped) break
+
+    // Report progress based on time distance to boundary
+    if (options.onProgress && newestTimestamp !== null && oldestTimestamp !== null) {
+      const now = clientNow()
+      const totalSpan = now - midnightBoundary
+      const covered = now - oldestTimestamp
+      const progress = totalSpan > 0 ? Math.min(99, Math.round((covered / totalSpan) * 100)) : 50
+      options.onProgress(progress)
     }
 
-    const distanceToTarget = secondaryStats.oldestTimestamp - primaryNewest
-    if (distanceToTarget <= 0) {
-      return 100 // Overlap achieved
+    // Update cursor for next iteration
+    cursor = newCursor
+    if (!cursor) {
+      console.log(`${label} Server cursor exhausted`)
+      stopReason = 'exhausted'
+      break
+    }
+  }
+
+  if (iterations >= maxIterations) {
+    console.warn(`${label} Reached max iterations limit (${maxIterations})`)
+    stopReason = 'max_iterations'
+  }
+
+  console.log(`${label} Complete: ${secondaryEntries.length} posts, stopReason=${stopReason}, ` +
+    `oldest=${oldestTimestamp ? new Date(oldestTimestamp).toLocaleString() : 'null'}, ` +
+    `newest=${newestTimestamp ? new Date(newestTimestamp).toLocaleString() : 'null'}`)
+
+  return {
+    stopReason,
+    entries: secondaryEntries,
+    postsFetched: secondaryEntries.length,
+    oldestTimestamp,
+    newestTimestamp,
+  }
+}
+
+/**
+ * Result of transferring secondary entries to primary cache
+ */
+export interface TransferResult {
+  postsTransferred: number
+  displayableCount: number
+  newestTransferredTimestamp: number | null
+  oldestTransferredTimestamp: number | null
+}
+
+/**
+ * Transfer in-memory secondary entries to primary cache with numbering.
+ *
+ * Processes entries oldest-first:
+ * - 'page' mode: stops after pageLength displayable (shown) posts, discards remaining newer entries
+ * - 'all' mode: processes all entries
+ *
+ * Numbers posts inline during processing. Starting numbers come from the overlap point
+ * (maxPostNumber/maxCurationNumber for the day of the oldest entry).
+ *
+ * Batch-writes to primary cache and summaries for efficiency.
+ *
+ * @param secondaryEntries - In-memory entries from fetchToSecondaryFeedCache
+ * @param transferMode - 'page' to transfer one page of displayable posts, 'all' to transfer everything
+ * @param pageLength - Number of displayable posts per page (only used in 'page' mode)
+ * @returns TransferResult with counts and timestamps
+ */
+export async function transferSecondaryToPrimary(
+  secondaryEntries: SecondaryEntry[],
+  transferMode: 'page' | 'all',
+  pageLength: number = DEFAULT_PAGE_LENGTH
+): Promise<TransferResult> {
+  const label = `[Transfer/${transferMode}]`
+
+  if (secondaryEntries.length === 0) {
+    console.log(`${label} No entries to transfer`)
+    return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null, oldestTransferredTimestamp: null }
+  }
+
+  // Sort oldest-first for correct numbering order
+  const sorted = [...secondaryEntries].sort((a, b) => a.entry.postTimestamp - b.entry.postTimestamp)
+
+  // Initialize numbering from the day of the oldest entry
+  const oldestTimestamp = sorted[0].entry.postTimestamp
+  let currentDayStart = getLocalMidnight(new Date(oldestTimestamp)).getTime()
+  let currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
+  let { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
+  let postNumber = maxPostNumber
+  let curationNumber = maxCurationNumber
+
+  // Collect entries to write
+  const primaryEntries: Array<{
+    uniqueId: string
+    post: any
+    timestamp: number
+    postTimestamp: number
+    interval: string
+    cachedAt: number
+    reposterDid?: string
+  }> = []
+  const summariesToSave: PostSummary[] = []
+  let displayableCount = 0
+  let newestTransferredTimestamp: number | null = null
+  let oldestTransferredTimestamp: number | null = null
+
+  for (const { entry, summary } of sorted) {
+    // In 'page' mode, stop when we have enough displayable posts
+    if (transferMode === 'page' && displayableCount >= pageLength) {
+      break
     }
 
-    // Estimate based on how far we still need to go
-    // This is a rough estimate since we don't know the exact gap
-    const estimatedProgress = Math.max(0, Math.min(99, 100 - (distanceToTarget / (60 * 60 * 1000)) * 10))
-    return Math.round(estimatedProgress)
-  } catch (error) {
-    console.error('[Merge Progress] Failed to calculate:', error)
-    return 0
+    // Check if day boundary crossed — update numbering context
+    if (entry.postTimestamp >= currentDayEnd) {
+      currentDayStart = getLocalMidnight(new Date(entry.postTimestamp)).getTime()
+      currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
+      const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
+      postNumber = dayNumbers.maxPostNumber
+      curationNumber = dayNumbers.maxCurationNumber
+    }
+
+    // Assign numbers inline
+    postNumber++
+    summary.postNumber = postNumber
+    if (isStatusDrop(summary.curation_status)) {
+      summary.curationNumber = 0
+    } else if (isStatusShow(summary.curation_status)) {
+      curationNumber++
+      summary.curationNumber = curationNumber
+      displayableCount++
+    } else {
+      summary.curationNumber = null
+    }
+
+    // Collect primary cache entry (strip originalPost)
+    primaryEntries.push({
+      uniqueId: entry.uniqueId,
+      post: entry.post,
+      timestamp: entry.timestamp,
+      postTimestamp: entry.postTimestamp,
+      interval: entry.interval,
+      cachedAt: entry.cachedAt,
+      reposterDid: entry.reposterDid,
+    })
+
+    summariesToSave.push(summary)
+
+    // Track timestamps
+    if (newestTransferredTimestamp === null || entry.postTimestamp > newestTransferredTimestamp) {
+      newestTransferredTimestamp = entry.postTimestamp
+    }
+    if (oldestTransferredTimestamp === null || entry.postTimestamp < oldestTransferredTimestamp) {
+      oldestTransferredTimestamp = entry.postTimestamp
+    }
+
+    // Save edition post if needed
+    if (summary.curation_save) {
+      await saveEditionPost(entry.post.post.uri, entry.post, summary.curation_save)
+    }
+  }
+
+  // Batch write to primary cache
+  const savedCount = await savePostsToPrimaryCache(primaryEntries)
+
+  // Batch save summaries (with numbers already assigned)
+  await savePostSummariesForce(summariesToSave)
+
+  // Update primary cache metadata
+  await updateFeedCacheNewestPostTimestamp()
+
+  console.log(`${label} Complete: ${savedCount} saved to primary (${primaryEntries.length} processed), ${displayableCount} displayable`)
+
+  return {
+    postsTransferred: savedCount,
+    displayableCount,
+    newestTransferredTimestamp,
+    oldestTransferredTimestamp,
   }
 }
 

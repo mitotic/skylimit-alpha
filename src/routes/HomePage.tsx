@@ -4,7 +4,6 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
 import { getHomeFeed, onSkyspeedCommand, offSkyspeedCommand, type SkyspeedCommand } from '../api/feed'
-import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
 import PostCard from '../components/PostCard'
 import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
@@ -12,7 +11,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, getNewestSummaryTimestamp, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
+import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
 import { getSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
@@ -20,191 +19,16 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToCachedPosts, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, fetchToSecondaryForNextPage, transferSecondaryPageToPrimary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/skylimitNumbering'
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeout, clearClientInterval } from '../utils/clientClock'
-
-// Tab type for home page
-type HomeTab = 'curated' | 'editions'
-
-// Storage key for active tab
-const HOME_TAB_STATE_KEY = 'websky_home_active_tab'
-
-// Helper functions for per-tab storage keys
-const getFeedStateKey = (tab: HomeTab) =>
-  tab === 'curated' ? 'websky_home_feed_state' : 'websky_home_editions_feed_state'
-const getScrollStateKey = (tab: HomeTab) =>
-  tab === 'curated' ? 'websky_home_scroll_state' : 'websky_home_editions_scroll_state'
-
-// Default maximum number of posts to keep in displayed feed (approximately 12 pages)
-// Can be overridden via settings.maxDisplayedFeedSize
-const DEFAULT_MAX_DISPLAYED_FEED_SIZE = 300
-
-// Saved feed state interface
-interface SavedFeedState {
-  displayedFeed: AppBskyFeedDefs.FeedViewPost[]  // Renamed from 'feed' for clarity
-  previousPageFeed: AppBskyFeedDefs.FeedViewPost[]  // Pre-fetched next page for instant Prev Page
-  newestDisplayedPostTimestamp: number | null
-  oldestDisplayedPostTimestamp: number | null
-  hasMorePosts: boolean  // Deprecated - use previousPageFeed.length > 0
-  cursor: string | undefined
-  savedAt: number // timestamp when state was saved
-  lowestVisiblePostTimestamp: number | null // timestamp of the lowest visible post (for feed pruning)
-  newPostsCount: number // count of new posts available (for "New Posts" button)
-  showNewPostsButton: boolean // whether to show the "New Posts" button
-  sessionDid: string // DID of the user session when state was saved (to prevent restoring feed for different user)
-  curationSuspended?: boolean // whether curation was suspended when feed was saved
-  showAllPosts?: boolean // whether "show all posts" was enabled when feed was saved
-}
-
-// Helper function to find the timestamp of the lowest visible post
-// This identifies which post is at the bottom of the viewport when state is saved (for feed pruning)
-function findLowestVisiblePostTimestamp(feed: AppBskyFeedDefs.FeedViewPost[]): number | null {
-  try {
-    const postElements = document.querySelectorAll('[data-post-uri]')
-    const viewportTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
-    const viewportBottom = viewportTop + window.innerHeight
-    
-    // Find the post element closest to the bottom of the viewport
-    let lowestElement: Element | null = null
-    let lowestDistance = Infinity
-    
-    postElements.forEach((element) => {
-      const rect = element.getBoundingClientRect()
-      const elementTop = viewportTop + rect.top
-      const elementBottom = elementTop + rect.height
-      
-      // Check if element is visible in viewport
-      if (elementBottom >= viewportTop && elementTop <= viewportBottom) {
-        // Calculate distance from bottom of viewport
-        const distance = Math.max(0, viewportBottom - elementBottom)
-        if (distance < lowestDistance) {
-          lowestDistance = distance
-          lowestElement = element
-        }
-      }
-    })
-    
-    if (lowestElement) {
-      const postUri = (lowestElement as Element).getAttribute('data-post-uri')
-      if (postUri) {
-        // Find the post in the feed array
-        const post = feed.find(p => p.post.uri === postUri)
-        if (post) {
-          // Get timestamp using getFeedViewPostTimestamp
-          // Use current time as feedReceivedTime fallback (for reposts)
-          const timestamp = getFeedViewPostTimestamp(post, clientDate())
-          return timestamp.getTime()
-        }
-      }
-    }
-    
-    return null
-  } catch (error) {
-    console.warn('Failed to find lowest visible post timestamp:', error)
-    return null
-  }
-}
-
-/**
- * Trim a filtered feed array so the oldest displayed post aligns to a
- * curation page boundary (curationNumber = n * pageLength + 1).
- * Display count stays between pageLength and 2 * pageLength.
- * If the oldest post has no curation number, returns the feed unchanged.
- */
-function alignFeedToPageBoundary(
-  filteredFeed: CurationFeedViewPost[],
-  pageLength: number
-): CurationFeedViewPost[] {
-  // Guard: If feed is smaller than or equal to pageLength, never trim
-  if (filteredFeed.length <= pageLength) {
-    return filteredFeed
-  }
-
-  // Get curationNumber of the oldest post (last element)
-  const oldestPost = filteredFeed[filteredFeed.length - 1] as CurationFeedViewPost
-  const oldestCurationNumber = oldestPost.curation?.curationNumber
-
-  // If no curation number (null/undefined) or is 0 (dropped), keep current behavior
-  if (!oldestCurationNumber || oldestCurationNumber <= 0) {
-    return filteredFeed
-  }
-
-  // Check if already at a page boundary
-  // Page boundary means: curationNumber = (n * pageLength) + 1
-  // i.e., (curationNumber - 1) % pageLength === 0
-  const positionInPage = (oldestCurationNumber - 1) % pageLength
-  if (positionInPage === 0) {
-    // Already at boundary - no trimming needed
-    return filteredFeed
-  }
-
-  // Need to trim `positionInPage` posts from the end to reach boundary
-  const trimmedLength = filteredFeed.length - positionInPage
-
-  if (trimmedLength < pageLength) {
-    // Trimming would reduce below pageLength - don't trim
-    return filteredFeed
-  }
-
-  // Cap at 2 * pageLength
-  const finalLength = Math.min(trimmedLength, 2 * pageLength)
-
-  const newOldest = filteredFeed[finalLength - 1] as CurationFeedViewPost
-  console.log(`[PageBoundary] Trimmed feed from ${filteredFeed.length} to ${finalLength} posts ` +
-    `(removed ${filteredFeed.length - finalLength} oldest, ` +
-    `oldest curationNumber was #${oldestCurationNumber}, ` +
-    `now #${newOldest.curation?.curationNumber ?? '?'})`)
-
-  return filteredFeed.slice(0, finalLength)
-}
-
-/**
- * Filters out immediate replies to a post by the same user.
- * If a post is a reply and its parent post appears in the feed (either before or after)
- * by the same author, the reply is filtered out.
- */
-function filterSameUserReplies(feed: AppBskyFeedDefs.FeedViewPost[]): AppBskyFeedDefs.FeedViewPost[] {
-  // First, build a map of all post URIs to their positions and author DIDs
-  const postMap = new Map<string, { index: number; authorDid: string }>()
-  feed.forEach((item, idx) => {
-    postMap.set(item.post.uri, { index: idx, authorDid: item.post.author.did })
-  })
-  
-  // Now filter: keep a reply only if its parent is NOT in the feed, or if parent is by different author
-  return feed.filter((item) => {
-    const record = item.post.record as any
-    
-    // Check if this is a reply
-    if (!record?.reply?.parent?.uri) {
-      // Not a reply, keep it
-      return true
-    }
-    
-    const parentUri = record.reply.parent.uri
-    const replyAuthorDid = item.post.author.did
-    
-    // Check if parent post exists in the feed
-    const parentInfo = postMap.get(parentUri)
-    if (!parentInfo) {
-      // Parent not in feed, keep the reply
-      return true
-    }
-    
-    // Parent is in the feed - check if it's by the same author
-    if (parentInfo.authorDid === replyAuthorDid) {
-      // Parent is by same author and in feed - filter out this reply
-      return false
-    }
-    
-    // Parent is in feed but by different author - keep the reply
-    return true
-  })
-}
+import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary, filterSameUserReplies } from '../hooks/homePageTypes'
+import { usePostInteractions } from '../hooks/usePostInteractions'
+import { useScrollManagement } from '../hooks/useScrollManagement'
 
 export default function HomePage() {
   const location = useLocation()
@@ -219,9 +43,7 @@ export default function HomePage() {
   const [serverCursor, setServerCursor] = useState<string | undefined>(undefined)  // Cursor for server fallback fetches
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [showCompose, setShowCompose] = useState(false)
-  const [replyToUri, setReplyToUri] = useState<string | null>(null)
-  const [quotePost, setQuotePost] = useState<AppBskyFeedDefs.PostView | null>(null)
+  const loadFeedRef = useRef<((cursor?: string, useCache?: boolean) => Promise<void>) | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [dbInitialized, setDbInitialized] = useState(false)
   const [skylimitStats, setSkylimitStats] = useState<GlobalStats | null>(null)
@@ -229,7 +51,6 @@ export default function HomePage() {
   const [showAllPosts, setShowAllPosts] = useState(false)
   const [newPostsCount, setNewPostsCount] = useState(0)
   const [showNewPostsButton, setShowNewPostsButton] = useState(false)
-  const [isScrolledDown, setIsScrolledDown] = useState(false)
   const [newestDisplayedPostTimestamp, setNewestDisplayedPostTimestamp] = useState<number | null>(null)
   const [oldestDisplayedPostTimestamp, setOldestDisplayedPostTimestamp] = useState<number | null>(null)
   const [isInitialLoad, setIsInitialLoad] = useState(true)
@@ -263,14 +84,7 @@ export default function HomePage() {
   const isPrefetchingRef = useRef(false)  // Ref for observer callback (avoids stale closure)
   const prevPageHadUnnumberedRef = useRef(false)  // Tracks if previous Prev Page had unnumbered posts
 
-  // Scroll state refs (for UI state and restoration)
-  const isProgrammaticScrollRef = useRef(false)
-  const lastScrollTopRef = useRef(0)
   const previousPathnameRef = useRef<string>(location.pathname)
-  const scrollRestoredRef = useRef(false)  // Tracks if scroll has been restored
-  const scrollRestoreBlockedRef = useRef(false)  // Blocks restoration if user is actively scrolling
-  const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)  // For debouncing scroll saves
-  const scrollSaveBlockedRef = useRef(false)  // Blocks scroll saves during restoration phase
   
   // Tab state - initialize from sessionStorage
   const getInitialTab = (): HomeTab => {
@@ -279,6 +93,36 @@ export default function HomePage() {
     return 'curated'
   }
   const [activeTab, setActiveTab] = useState<HomeTab>(getInitialTab)
+
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = clientNow().toString()
+    setToasts(prev => [...prev, { id, message, type }])
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id))
+    }, type === 'error' ? 10000 : 5000)
+  }
+
+  const {
+    showCompose, setShowCompose,
+    replyToUri, setReplyToUri,
+    quotePost, setQuotePost,
+    handleLike, handleBookmark, handleRepost,
+    handleQuotePost, handleReply, handlePost, handleAmpChange,
+  } = usePostInteractions({ agent, feed, setFeed, loadFeedRef, addToast })
+
+  const {
+    isScrolledDown,
+    isProgrammaticScrollRef,
+    lastScrollTopRef,
+    scrollRestoredRef,
+    handleScrollToTop,
+  } = useScrollManagement({
+    locationPathname: location.pathname,
+    isLoading,
+    feedLength: feed.length,
+    activeTab,
+    firstPostRef,
+  })
 
   // Save active tab to sessionStorage when it changes
   useEffect(() => {
@@ -331,13 +175,6 @@ export default function HomePage() {
 
     previousPathnameRef.current = location.pathname
   }, [location.pathname, feed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, newPostsCount, showNewPostsButton, session, activeTab, curationSuspended, showAllPosts])
-
-  // Disable browser scroll restoration
-  useEffect(() => {
-    if ('scrollRestoration' in history) {
-      history.scrollRestoration = 'manual'
-    }
-  }, [])
 
   // Load infinite scrolling setting
   useEffect(() => {
@@ -505,14 +342,6 @@ export default function HomePage() {
       loadSkylimitStats()
     }
   }, [dbInitialized, feed.length, loadSkylimitStats])
-
-  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = clientNow().toString()
-    setToasts(prev => [...prev, { id, message, type }])
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id))
-    }, type === 'error' ? 10000 : 5000)
-  }
 
   // Helper function to look up curation status and filter posts
   // NEVER uses deprecated post.curation field - always looks up from summaries cache
@@ -1187,115 +1016,59 @@ export default function HomePage() {
           // For idle return: skip if all entries had summaries OR if a cached summary was found in the first page
           const skipIdleReturnLookback = isIdleReturnMode && (allEntriesHadSummaries || firstCachedSummaryIndex > 0)
           if ((isInitialLoadMode || isIdleReturnMode) && !cursor && !skipIdleReturnLookback) {
-            const lookbackBoundary = getLookbackBoundary(lookbackDays)
+            const fetchMode = isIdleReturnMode ? 'idle_return' as const : 'initial' as const
+            console.log(`[Background Lookback] Starting unified fetch (mode: ${fetchMode})...`)
 
-            if (isIdleReturnMode) {
-              // IDLE RETURN MODE: Curate while fetching, stop on cached summary
-              console.log('[Idle Return Lookback] Starting idle return lookback...')
-
-              // Get newest summary timestamp for progress calculation
-              const newestSummaryTs = await getNewestSummaryTimestamp()
-
-              setLookingBack(true)
-              setLookbackProgress(0)
-
-              performLookbackFetch(
-                agent,
-                myUsername,
-                myDid,
-                lookbackBoundary,
-                pageLength,
-                (progress) => {
-                  setLookbackProgress(progress)
-                },
-                oldestFetchedTimestamp ? new Date(oldestFetchedTimestamp) : undefined,
-                {
-                  isIdleReturn: true,
-                  progressTargetTimestamp: newestSummaryTs ?? undefined,
-                  initialCursor: newCursor
-                }
-              ).then(async (result) => {
-                console.log(`[Idle Return Lookback] Completed: ${result.postsCached} posts cached, stoppedOnCachedSummary: ${result.stoppedOnCachedSummary}, cachedPostHasNumber: ${result.cachedPostHasNumber}`)
-                setLookingBack(false)
-                setLookbackProgress(100)
-
-                // Number posts based on stop condition (same logic as multi-page)
-                const todayMidnight = getLocalMidnight(clientDate()).getTime()
-                const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
-                const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
-
-                if (result.stoppedOnCachedSummary && result.cachedPostHasNumber) {
-                  // Cached post has numbers — yesterday: incremental, today: full re-number
-                  await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return Lookback] (yesterday)')
-                  await assignNumbersForDay(todayMidnight, todayEnd)
-                } else if (!result.stoppedOnCachedSummary) {
-                  // Reached midnight boundary — full day available
-                  await assignNumbersForDay(todayMidnight, todayEnd)
-                  await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return Lookback] (yesterday)')
-                }
-                // else: stopped on cached summary without numbers — don't number
-
-                // Clear sessionStorage to force fresh load from feed cache with updated numbers
-                sessionStorage.removeItem(getFeedStateKey('curated'))
-
-                // Refresh feed display with numbered posts
-                console.log('[Idle Return Lookback] Refreshing feed display with numbered posts...')
-                await redisplayFeed()
-
-                setInitialPrefetchDone(true)
-              }).catch((err) => {
-                console.error('[Idle Return Lookback] Failed:', err)
-                setLookingBack(false)
-                setLookbackProgress(null)
-                setInitialPrefetchDone(true)
-              })
-            } else {
-              // INITIAL LOAD MODE: Full lookback with delayed curation, stats computation
-              console.log('[Initial Load] Starting full lookback...')
+            if (isInitialLoadMode) {
               await clearPrevPageCursor()
+            }
 
-              setLookingBack(true)
-              setLookbackProgress(0)
+            setLookingBack(true)
+            setLookbackProgress(0)
 
-              performLookbackFetch(
-                agent,
-                myUsername,
-                myDid,
-                lookbackBoundary,
+            // Unified background fetch + transfer
+            fetchToSecondaryFeedCache(
+              agent,
+              myUsername,
+              myDid,
+              fetchMode,
+              {
                 pageLength,
-                (progress) => {
-                  setLookbackProgress(progress)
-                }
-              ).then(async (result) => {
-                console.log(`[Lookback] Background lookback ${result.completed ? 'completed' : 'interrupted'}`)
-                setLookingBack(false)
-                setLookbackProgress(100)
+                onProgress: (progress) => setLookbackProgress(progress),
+              }
+            ).then(async (fetchResult) => {
+              console.log(`[Background Lookback] Fetch complete: ${fetchResult.postsFetched} posts, stopReason=${fetchResult.stopReason}`)
 
-                // If this was initial curation, compute stats and show modal
-                if (isInitialCurationRef.current && result.completed) {
+              // Transfer all fetched posts to primary with numbering
+              if (fetchResult.entries.length > 0) {
+                const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'all', pageLength)
+                console.log(`[Background Lookback] Transferred ${transferResult.postsTransferred} posts to primary`)
+              }
+
+              setLookingBack(false)
+              setLookbackProgress(100)
+
+              if (isInitialLoadMode) {
+                // INITIAL LOAD: compute stats, recompute curation, mark complete
+                if (isInitialCurationRef.current) {
                   try {
                     console.log('[Curation Init] Computing filter statistics...')
-                    // Compute stats/filter first (this populates the filter cache)
                     await computeStatsInBackground(agent, myUsername, myDid, true)
 
-                    // Recompute curation status for all cached posts (updates summaries with drop decisions)
                     console.log('[Curation Init] Updating curation decisions for cached posts...')
                     await recomputeCurationDecisions(agent, myUsername, myDid)
 
-                    // Mark that initial lookback is complete - subsequent rounds will use normal logic
                     await markInitialLookbackCompleted()
                     console.log('[Curation Init] Initial lookback complete, flag set')
 
                     console.log('[Curation Init] Getting curation statistics...')
                     const curationStats = await getCurationInitStats()
 
-                    // Get followee count from filter (now populated)
                     const filterResult = await getFilter()
                     const followeeCount = filterResult
                       ? Object.keys(filterResult[1]).filter(k => !k.startsWith('#')).length
                       : 0
 
-                    // Calculate days analyzed and posts per day
                     let daysAnalyzed = 0
                     let postsPerDay = 0
                     if (curationStats.oldestTimestamp && curationStats.newestTimestamp) {
@@ -1314,15 +1087,10 @@ export default function HomePage() {
                       postsPerDay,
                     })
 
-                    // Clear sessionStorage to force fresh load from feed cache
-                    // This ensures the feed is re-numbered with all lookback posts
                     sessionStorage.removeItem(getFeedStateKey('curated'))
-
-                    // Reload feed with updated curation via redisplayFeed (will fall through to loadFeed)
                     console.log('[Curation Init] Reloading feed with curation data...')
                     await redisplayFeed()
 
-                    // Show modal
                     setShowCurationInitModal(true)
                     isInitialCurationRef.current = false
                     console.log('[Curation Init] Modal displayed')
@@ -1330,34 +1098,31 @@ export default function HomePage() {
                     console.error('[Curation Init] Failed to compute stats:', err)
                     isInitialCurationRef.current = false
                   }
-                } else if (result.completed) {
-                  // Non-initial lookback (e.g., Reset Feed) — assign numbers and redisplay
+                } else {
+                  // Non-initial lookback (e.g., Reset Feed) — redisplay with numbers
                   try {
-                    console.log('[Lookback] Non-initial lookback complete, assigning numbers...')
-                    const todayMidnight = getLocalMidnight(clientDate()).getTime()
-                    const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
-                    const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
-                    await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Lookback] (yesterday)')
-                    await numberUnnumberedPostsForDay(todayMidnight, todayEnd, '[Lookback]')
-
-                    // Clear sessionStorage and redisplay with numbered posts
+                    console.log('[Lookback] Non-initial lookback complete, redisplaying...')
                     sessionStorage.removeItem(getFeedStateKey('curated'))
-                    console.log('[Lookback] Refreshing feed display with numbered posts...')
                     await redisplayFeed()
-
                     setInitialPrefetchDone(true)
                   } catch (err) {
                     console.error('[Lookback] Post-lookback processing failed:', err)
                     setInitialPrefetchDone(true)
                   }
                 }
-              }).catch((err) => {
-                console.error('[Lookback] Background lookback failed:', err)
-                setLookingBack(false)
-                setLookbackProgress(null)
-                setInitialPrefetchDone(true)  // Mark done so we don't show "Initializing..." forever
-              })
-            }
+              } else {
+                // IDLE RETURN: numbers already assigned during transfer, just redisplay
+                sessionStorage.removeItem(getFeedStateKey('curated'))
+                console.log('[Idle Return Lookback] Refreshing feed display with numbered posts...')
+                await redisplayFeed()
+                setInitialPrefetchDone(true)
+              }
+            }).catch((err) => {
+              console.error('[Background Lookback] Failed:', err)
+              setLookingBack(false)
+              setLookbackProgress(null)
+              setInitialPrefetchDone(true)
+            })
           } else if (skipIdleReturnLookback) {
             // Idle return with gap already filled - just assign numbers to any new posts and prefetch
             console.log('[Idle Return] Gap already filled by first page - skipping background lookback')
@@ -1422,6 +1187,9 @@ export default function HomePage() {
       setIsLoadingMore(false)
     }
   }, [agent, session, dbInitialized, setRateLimitStatus])
+
+  // Keep ref current for usePostInteractions hook
+  loadFeedRef.current = loadFeed
 
   const redisplayFeed = useCallback(async () => {
     if (!agent || !session || !dbInitialized) return
@@ -1868,137 +1636,6 @@ export default function HomePage() {
     shouldRedisplay()
   }, [loadFeed, redisplayFeed, location.pathname, session, activeTab])
 
-  // Restore scroll position when feed state is restored
-  // Note: Scroll restoration works regardless of infinite scrolling setting
-  useEffect(() => {
-    if (location.pathname !== '/') {
-      // Unblock scroll saves when leaving home page
-      scrollSaveBlockedRef.current = false
-      return
-    }
-
-    // Block scroll saves while restoration is pending (prevents browser scroll restoration from overwriting saved position)
-    // Also reset scrollRestoreBlockedRef - browser's native scroll may have set this before our effect ran
-    if (!scrollRestoredRef.current) {
-      scrollSaveBlockedRef.current = true
-      scrollRestoreBlockedRef.current = false  // Reset to allow our restoration to proceed
-    }
-
-    if (scrollRestoredRef.current) {
-      return // Only restore once
-    }
-    if (isLoading) {
-      return // Wait for feed to load
-    }
-
-    // Check if feed state was restored (not initial load) - use current tab's key
-    const savedStateJson = sessionStorage.getItem(getFeedStateKey(activeTab))
-    if (!savedStateJson && activeTab === 'curated') {
-      // No saved feed state for curated tab, don't restore scroll - unblock saves and mark as restored
-      scrollRestoredRef.current = true
-      scrollSaveBlockedRef.current = false
-      return
-    }
-
-    // Check for saved scroll position - use current tab's key
-    const savedScrollY = sessionStorage.getItem(getScrollStateKey(activeTab))
-    if (!savedScrollY) {
-      // No saved scroll position - unblock saves and mark as restored
-      scrollRestoredRef.current = true
-      scrollSaveBlockedRef.current = false
-      return
-    }
-
-    const scrollY = parseInt(savedScrollY, 10)
-    if (isNaN(scrollY) || scrollY < 0) {
-      // Invalid scroll position - unblock saves and mark as restored
-      scrollRestoredRef.current = true
-      scrollSaveBlockedRef.current = false
-      return
-    }
-
-    // Check if restoration is blocked
-    if (scrollRestoreBlockedRef.current) {
-      // Blocked by user scrolling - unblock saves and mark as restored
-      scrollRestoredRef.current = true
-      scrollSaveBlockedRef.current = false
-      return
-    }
-    
-    // Wait for DOM to be ready
-    // Use a retry mechanism to ensure DOM is fully rendered
-    const attemptRestore = (attempt: number = 1) => {
-      const maxAttempts = 10
-      const baseDelay = 100
-      const delay = attempt * baseDelay
-
-      setTimeout(() => {
-        // Reset scrollRestoreBlockedRef at the start of each attempt
-        // This prevents scroll events from previous attempts blocking retries
-        scrollRestoreBlockedRef.current = false
-
-        const scrollHeight = document.documentElement.scrollHeight
-        const clientHeight = window.innerHeight
-        const maxScroll = Math.max(scrollHeight - clientHeight, 0)
-        const targetScroll = Math.min(scrollY, maxScroll)
-
-        // Only restore if DOM is ready (has content) and target is valid
-        if (targetScroll > 0 && scrollHeight > clientHeight && scrollHeight >= targetScroll) {
-          // Restore scroll position
-          isProgrammaticScrollRef.current = true
-          window.scrollTo(0, targetScroll)
-          document.documentElement.scrollTop = targetScroll
-          document.body.scrollTop = targetScroll
-
-          // Verify the scroll actually reached the ORIGINAL requested position (within tolerance)
-          const actualScroll = window.scrollY
-          const scrollTolerance = 100 // Allow 100px tolerance
-          // Check if we reached the original requested position, not just the clamped target
-          const reachedOriginalTarget = Math.abs(actualScroll - scrollY) < scrollTolerance
-          // Also check if document was too short (targetScroll < scrollY means we couldn't scroll far enough)
-          const documentTooShort = targetScroll < scrollY - scrollTolerance
-
-          if (reachedOriginalTarget) {
-            // Successfully reached the original requested position
-            scrollRestoredRef.current = true
-
-            // Reset flags after scroll completes
-            setTimeout(() => {
-              isProgrammaticScrollRef.current = false
-              scrollSaveBlockedRef.current = false  // Allow scroll saves again
-              lastScrollTopRef.current = window.scrollY
-            }, 200)
-          } else if (documentTooShort && attempt < maxAttempts) {
-            // Document not tall enough yet (images/content still loading), retry
-            isProgrammaticScrollRef.current = false
-            attemptRestore(attempt + 1)
-          } else if (attempt < maxAttempts) {
-            // Scroll didn't reach target for other reason, retry
-            isProgrammaticScrollRef.current = false
-            attemptRestore(attempt + 1)
-          } else {
-            // Max attempts reached, accept current position
-            scrollRestoredRef.current = true
-            scrollSaveBlockedRef.current = false  // Allow scroll saves again
-            setTimeout(() => {
-              isProgrammaticScrollRef.current = false
-              lastScrollTopRef.current = window.scrollY
-            }, 200)
-          }
-        } else if (attempt < maxAttempts) {
-          // DOM not ready yet, retry
-          attemptRestore(attempt + 1)
-        } else {
-          // Max attempts reached, give up
-          scrollRestoredRef.current = true
-          scrollSaveBlockedRef.current = false  // Allow scroll saves again
-        }
-      }, delay)
-    }
-    
-    attemptRestore()
-  }, [location.pathname, isLoading, feed.length, activeTab])
-
   // Check for new posts periodically
   // Check for new posts - uses different logic based on paged updates mode
   // Standard mode: checks feed cache for posts already fetched and curated
@@ -2160,102 +1797,6 @@ export default function HomePage() {
     return () => clearClientInterval(interval)
   }, [newestDisplayedPostTimestamp, isInitialLoad, partialPageCount])
 
-  // Scroll event handler (for UI state and scroll position saving)
-  useEffect(() => {
-    // Only track scroll if we're on the home page
-    if (location.pathname !== '/') return
-
-    let scrollBlockResetTimeout: NodeJS.Timeout | null = null
-
-    const handleScroll = () => {
-      const scrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
-      const threshold = 200
-      
-      // Update last scroll position
-      const currentScrollTop = scrollY
-      const lastScrollTop = lastScrollTopRef.current
-      
-      // Check if user is actively scrolling (movement > 10px)
-      if (Math.abs(currentScrollTop - lastScrollTop) > 10) {
-        scrollRestoreBlockedRef.current = true
-        
-        // Reset scrollRestoreBlockedRef after user stops scrolling
-        if (scrollBlockResetTimeout) {
-          clearTimeout(scrollBlockResetTimeout)
-        }
-        scrollBlockResetTimeout = setTimeout(() => {
-          scrollRestoreBlockedRef.current = false
-        }, 500) // Reset after 500ms of no scrolling
-      }
-      
-      lastScrollTopRef.current = currentScrollTop
-      
-      // Update UI state - always update regardless of programmatic scroll
-      const shouldShow = scrollY > threshold
-      setIsScrolledDown(shouldShow)
-      
-      // Save scroll position (debounced, always save regardless of infinite scrolling setting)
-      if (scrollSaveTimeoutRef.current) {
-        clearTimeout(scrollSaveTimeoutRef.current)
-      }
-      
-      scrollSaveTimeoutRef.current = setTimeout(() => {
-        // Don't save during programmatic scrolls or restoration phase
-        if (isProgrammaticScrollRef.current || scrollSaveBlockedRef.current) {
-          return
-        }
-
-        // Clear saved position when scrolled to top
-        if (scrollY < 50) {
-          try {
-            sessionStorage.removeItem(getScrollStateKey(activeTab))
-          } catch (error) {
-            console.warn('Failed to clear scroll position:', error)
-          }
-          return
-        }
-
-        // Save scroll position (always save, always restore when feed state is restored)
-        try {
-          sessionStorage.setItem(getScrollStateKey(activeTab), scrollY.toString())
-        } catch (error) {
-          console.warn('Failed to save scroll position:', error)
-        }
-      }, 150) // 150ms debounce
-    }
-
-    // Initialize isScrolledDown based on current scroll position
-    const updateScrollState = () => {
-      const scrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
-      const threshold = 200
-      const shouldShow = scrollY > threshold
-      setIsScrolledDown(shouldShow)
-    }
-    
-    // Initial check
-    updateScrollState()
-    
-    // Also check after a short delay to catch cases where scroll position changes after render
-    const initialCheckTimeout = setTimeout(updateScrollState, 100)
-    
-    // Periodic check to ensure state stays accurate (in case scroll events are missed)
-    const periodicCheckInterval = setInterval(updateScrollState, 500)
-
-    window.addEventListener('scroll', handleScroll, { passive: true })
-    return () => {
-      window.removeEventListener('scroll', handleScroll)
-      clearTimeout(initialCheckTimeout)
-      clearInterval(periodicCheckInterval)
-      if (scrollSaveTimeoutRef.current) {
-        clearTimeout(scrollSaveTimeoutRef.current)
-      }
-      if (scrollBlockResetTimeout) {
-        clearTimeout(scrollBlockResetTimeout)
-      }
-    }
-  }, [location.pathname, feed.length])
-
-
   // Handle loading new posts
   // Standard mode: loads posts from cache (already curated)
   // Paged updates mode: fetches fresh from server, curates one-by-one until PageSize displayed
@@ -2289,31 +1830,34 @@ export default function HomePage() {
       const settings = await getSettings()
       const pageLength = settings?.feedPageLength || 25
 
-      // Paged updates: use secondary cache flow for contiguous caching
-      console.log('[New Posts] SINGLE PAGE: Loading via secondary cache...')
+      // Paged updates: use unified secondary cache flow for contiguous caching
+      console.log('[New Posts] SINGLE PAGE: Loading via unified fetch...')
 
       setSyncInProgress(true)
       setSyncProgress(0)
 
       try {
-        // Phase 1: Fetch posts to secondary cache until overlap with primary
-        const fetchResult = await fetchToSecondaryForNextPage(
+        // Phase 1: Fetch posts to in-memory secondary cache until overlap with primary
+        const fetchResult = await fetchToSecondaryFeedCache(
           agent,
           session.handle,
           session.did,
-          pageLength,
-          (progress) => setSyncProgress(Math.round(progress * 0.8))  // 0-80% for fetch
+          'next_page',
+          {
+            pageLength,
+            onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),  // 0-80% for fetch
+          }
         )
         console.log(`[New Posts] SINGLE PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
 
-        // Phase 2: Transfer oldest-first from secondary to primary until 1 page of displayable posts
+        // Phase 2: Transfer oldest-first from in-memory secondary to primary until 1 page of displayable posts
         setSyncProgress(80)
-        const transferResult = await transferSecondaryPageToPrimary(pageLength)
+        const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'page', pageLength)
         setSyncProgress(100)
         console.log(`[New Posts] SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
           `${transferResult.displayableCount} displayable`)
 
-        // Numbering is done inside transferSecondaryPageToPrimary
+        // Numbering is done inside transferSecondaryToPrimary
 
         // Clear UI state
         setNewPostsCount(0)
@@ -2462,8 +2006,8 @@ export default function HomePage() {
     }
 
     if (isMultiPage) {
-      // MULTI-PAGE FLOW: Full re-display
-      console.log(`[New Posts] MULTI-PAGE: Processing ${multiPageCount} posts one-by-one`)
+      // MULTI-PAGE FLOW: Unified fetch + transfer all
+      console.log(`[New Posts] MULTI-PAGE: Using unified fetch (${multiPageCount} posts expected)`)
 
       setIsLoadingMore(true)
       setSyncInProgress(true)
@@ -2472,93 +2016,30 @@ export default function HomePage() {
         const feedReceivedTime = clientDate()
         const pageLength = settings?.feedPageLength || 25
 
-        // Get filter fraction and calculate PageRaw for first page
-        const [, currentProbs] = await getFilter() || [null, null]
-        const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
-        const pagedSettings = await getPagedUpdatesSettings()
-        const pageRaw = calculatePageRaw(pageLength * 2, currentFilterFrac, pagedSettings.varFactor)
+        // Phase 1: Fetch all new posts to in-memory secondary cache
+        const fetchResult = await fetchToSecondaryFeedCache(
+          agent,
+          session.handle,
+          session.did,
+          'all_new',
+          {
+            pageLength,
+            onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),
+          }
+        )
+        console.log(`[New Posts] MULTI-PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
 
-        // Fetch fresh posts from server
-        const { feed: serverFeed, cursor: fetchCursor } = await getHomeFeed(agent, { limit: pageRaw })
-
-        if (serverFeed.length === 0) {
+        if (fetchResult.postsFetched === 0) {
           addToast('No new posts available', 'info')
           return
         }
 
-        // Sort posts by timestamp (NEWEST first - we want the newest page)
-        const sortedPosts = [...serverFeed].sort((a, b) => {
-          const timeA = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-          const timeB = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-          return timeB - timeA  // newest first
-        })
-
-        // Process posts ONE AT A TIME until PageSize displayed posts
-        const postsToDisplay: CurationFeedViewPost[] = []
-        let newestCuratedTimestamp = 0
-        let oldestCuratedTimestamp = Number.MAX_SAFE_INTEGER
-        let displayedCount = 0
-        let lastPostTime = clientDate()
-        const allNewIntervalHours = getIntervalHoursSync(settings)
-
-        let loopIndex = 0
-        for (const post of sortedPosts) {
-          if (displayedCount >= pageLength) break
-          loopIndex++
-
-          const { entries: [entry], finalLastPostTime } = createFeedCacheEntries([post], lastPostTime, allNewIntervalHours)
-          lastPostTime = finalLastPostTime
-          const postTimestamp = entry.postTimestamp
-
-          // Save to feed cache and curate
-          const { curatedFeed: curatedPosts } = await savePostsWithCuration([entry], undefined, agent, session.handle, session.did)
-          const curatedPost = curatedPosts[0] as CurationFeedViewPost
-
-          // Track timestamps
-          if (postTimestamp > newestCuratedTimestamp) newestCuratedTimestamp = postTimestamp
-          if (postTimestamp < oldestCuratedTimestamp) oldestCuratedTimestamp = postTimestamp
-
-          // Add to display if not dropped
-          if (isStatusShow(curatedPost.curation?.curation_status)) {
-            postsToDisplay.push(curatedPost)
-            displayedCount++
-          }
-        }
-
-        // Cache remaining unprocessed posts from the initial server fetch.
-        // The loop above processes posts one-by-one and stops after pageLength
-        // pass curation. Unlike loadFeed (which saves ALL fetched posts),
-        // remaining posts are unsaved, creating a gap between processed posts
-        // and the cursor position used by limitedLookbackToCachedPosts.
-        if (loopIndex < sortedPosts.length) {
-          const remainingPosts = sortedPosts.slice(loopIndex)
-          const { entries: remainingEntries } = createFeedCacheEntries(
-            remainingPosts, lastPostTime, allNewIntervalHours
-          )
-          await savePostsWithCuration(
-            remainingEntries, fetchCursor, agent, session.handle, session.did
-          )
-          console.log(`[New Posts] MULTI-PAGE: Cached ${remainingPosts.length} remaining posts from initial fetch`)
-
-          // Update oldestCuratedTimestamp to include remaining posts
-          for (const entry of remainingEntries) {
-            if (entry.postTimestamp < oldestCuratedTimestamp) {
-              oldestCuratedTimestamp = entry.postTimestamp
-            }
-          }
-        }
-
-        if (postsToDisplay.length === 0) {
-          addToast('No new posts to display (filtered by settings)', 'info')
-          return
-        }
-
-        // Sort displayed posts newest first
-        postsToDisplay.sort((a, b) => {
-          const timeA = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-          const timeB = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-          return timeB - timeA
-        })
+        // Phase 2: Transfer all to primary with numbering
+        setSyncProgress(80)
+        const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'all', pageLength)
+        setSyncProgress(100)
+        console.log(`[New Posts] MULTI-PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
+          `${transferResult.displayableCount} displayable`)
 
         // Reset all button states and set cooldown
         setNewPostsCount(0)
@@ -2567,46 +2048,66 @@ export default function HomePage() {
         setPartialPageCount(0)
         setIdleTimerTriggered(false)
         setMultiPageCount(0)
-        lastDisplayTimeRef.current = clientNow() // Start cooldown
+        lastDisplayTimeRef.current = clientNow()
 
-        // Don't number yet — wait for gap fill to determine day boundary
-        // Posts display as "#" until numbered after gap fill completes
-
-        // Re-lookup curation data for page boundary alignment (numbers may be null)
-        let postsWithNumbers = await lookupCurationAndFilter(
-          postsToDisplay, feedReceivedTime, undefined, true  // skipFiltering
+        // Load 1 page of curated posts from primary cache for display
+        const cachedPosts = await getCachedFeedAfterPosts(
+          newestDisplayedPostTimestamp || 0,
+          transferResult.postsTransferred + 50
         )
 
-        // Combine with current feed for page boundary alignment
-        // Skip for extended idle - old feed is too stale to mix with new posts
-        if (!isExtendedIdle) {
-          const seenUris = new Set(postsWithNumbers.map(p => p.post.uri))
-          for (const existingPost of [...feed, ...previousPageFeed]) {
-            if (!seenUris.has(existingPost.post.uri)) {
-              seenUris.add(existingPost.post.uri)
-              postsWithNumbers.push(existingPost as CurationFeedViewPost)
+        if (cachedPosts.length > 0) {
+          // Apply curation filtering
+          let filteredPosts = await lookupCurationAndFilter(
+            cachedPosts, feedReceivedTime, undefined, false
+          )
+
+          // Cap at pageLength
+          if (filteredPosts.length > pageLength) {
+            filteredPosts = filteredPosts.slice(0, pageLength)
+          }
+
+          // Combine with current feed for page boundary alignment
+          // Skip for extended idle - old feed is too stale to mix with new posts
+          if (!isExtendedIdle) {
+            const seenUris = new Set(filteredPosts.map(p => p.post.uri))
+            for (const existingPost of [...feed, ...previousPageFeed]) {
+              if (!seenUris.has(existingPost.post.uri)) {
+                seenUris.add(existingPost.post.uri)
+                filteredPosts.push(existingPost as CurationFeedViewPost)
+              }
+            }
+            filteredPosts.sort((a, b) => {
+              const aTime = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
+              const bTime = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
+              return bTime - aTime
+            })
+            if (filteredPosts.length > 2 * pageLength) {
+              filteredPosts.splice(2 * pageLength)
             }
           }
-          postsWithNumbers.sort((a, b) => {
-            const aTime = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-            const bTime = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-            return bTime - aTime
-          })
-          if (postsWithNumbers.length > 2 * pageLength) {
-            postsWithNumbers.splice(2 * pageLength)
+          const alignedPosts = alignFeedToPageBoundary(filteredPosts, pageLength)
+
+          // Replace feed with aligned posts (full re-display)
+          setFeed(alignedPosts)
+          setPreviousPageFeed([])
+          if (fetchResult.newestTimestamp) {
+            setNewestDisplayedPostTimestamp(fetchResult.newestTimestamp)
           }
+          setOldestDisplayedPostTimestamp(getFeedViewPostTimestamp(alignedPosts[alignedPosts.length - 1], feedReceivedTime).getTime())
+
+          console.log(`[New Posts] MULTI-PAGE: Displayed ${alignedPosts.length} posts`)
+
+          // Prefetch for scroll-back
+          const oldestDisplayed = getFeedViewPostTimestamp(
+            alignedPosts[alignedPosts.length - 1], clientDate()
+          ).getTime()
+          setTimeout(async () => {
+            await prefetchPrevPage(oldestDisplayed)
+          }, 100)
+        } else {
+          addToast('No new posts to display (filtered by settings)', 'info')
         }
-        const alignedPosts = alignFeedToPageBoundary(postsWithNumbers, pageLength)
-
-        // Replace feed with aligned posts (full re-display)
-        setFeed(alignedPosts)
-        setPreviousPageFeed([])  // Clear - feed was completely replaced
-        setNewestDisplayedPostTimestamp(newestCuratedTimestamp)
-        setOldestDisplayedPostTimestamp(getFeedViewPostTimestamp(alignedPosts[alignedPosts.length - 1], feedReceivedTime).getTime())
-
-        // Debug: compare probe expected count vs actual display count
-        console.log(`[New Posts] MULTI-PAGE: COUNT COMPARISON: Probe expected ${probeExpectedCountRef.current} posts, actually displayed ${alignedPosts.length} posts (diff: ${probeExpectedCountRef.current - alignedPosts.length})`)
-        console.log(`[New Posts] MULTI-PAGE: Displayed ${alignedPosts.length} posts (from ${postsToDisplay.length} curated), starting background gap fill...`)
 
         // Scroll to top
         isProgrammaticScrollRef.current = true
@@ -2615,43 +2116,6 @@ export default function HomePage() {
           isProgrammaticScrollRef.current = false
           lastScrollTopRef.current = window.scrollY
         }, 1000)
-
-        // Start background gap fill
-        if (fetchCursor && oldestCuratedTimestamp < Number.MAX_SAFE_INTEGER) {
-          const lookbackDays = settings?.lookbackDays || 1
-          const lookbackBoundaryTime = getLookbackBoundary(lookbackDays).getTime()
-          console.log(`[New Posts] MULTI-PAGE: Gap fill from ${new Date(oldestCuratedTimestamp).toLocaleTimeString()} to ${new Date(lookbackBoundaryTime).toLocaleString()}`)
-          try {
-            const gapFillResult = await limitedLookbackToCachedPosts(oldestCuratedTimestamp, fetchCursor, agent, session.handle, session.did, pageLength, lookbackBoundaryTime)
-            console.log(`[New Posts] MULTI-PAGE: Gap fill complete (${gapFillResult.totalNewPosts} posts, stoppedOnCached: ${gapFillResult.stoppedOnCachedPost}, cachedHasNumber: ${gapFillResult.cachedPostHasNumber})`)
-
-            // Number posts based on gap fill stop condition
-            const todayStart = getLocalMidnight(new Date(newestCuratedTimestamp)).getTime()
-            const todayEnd = todayStart + 24 * 60 * 60 * 1000
-            const yesterdayStart = todayStart - 24 * 60 * 60 * 1000
-
-            if (gapFillResult.stoppedOnCachedPost && gapFillResult.cachedPostHasNumber) {
-              // Cached post has numbers — yesterday: incremental from cached max
-              // Today: full re-number (all today's posts are new, no pre-existing numbers)
-              await numberUnnumberedPostsForDay(yesterdayStart, todayStart, '[New Posts] MULTI-PAGE (yesterday)')
-              await assignNumbersForDay(todayStart, todayEnd)
-            } else if (!gapFillResult.stoppedOnCachedPost) {
-              // Reached midnight boundary — full day available for today
-              await assignNumbersForDay(todayStart, todayEnd)
-              await numberUnnumberedPostsForDay(yesterdayStart, todayStart, '[New Posts] MULTI-PAGE (yesterday)')
-            }
-            // else: stopped on cached post without numbers — don't number
-
-            // Prefetch for scroll-back after gap fill
-            const oldestDisplayed = getFeedViewPostTimestamp(
-              alignedPosts[alignedPosts.length - 1], clientDate()
-            ).getTime()
-            await prefetchPrevPage(oldestDisplayed)
-            console.log('[New Posts] MULTI-PAGE: Post-gap-fill prefetch complete')
-          } catch (gapError) {
-            console.warn('[New Posts] MULTI-PAGE: Gap fill error:', gapError)
-          }
-        }
 
       } catch (error) {
         console.error('[All New Posts] Multi-page load failed:', error)
@@ -2667,23 +2131,6 @@ export default function HomePage() {
       setIdleTimerTriggered(false)
     }
   }, [agent, session, isLoadingMore, multiPageCount, partialPageCount, handleLoadNewPosts])
-
-  // Scroll to top handler
-  const handleScrollToTop = useCallback(() => {
-    isProgrammaticScrollRef.current = true
-    
-    if (firstPostRef.current) {
-      firstPostRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    } else {
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    }
-    
-    // Reset flag after scroll completes
-    setTimeout(() => {
-      isProgrammaticScrollRef.current = false
-      lastScrollTopRef.current = window.scrollY
-    }, 1000)
-  }, [])
 
   const handlePrevPage = useCallback(async () => {
     // Guard: button shouldn't be visible if empty, but check anyway
@@ -2916,235 +2363,8 @@ export default function HomePage() {
     return () => offSkyspeedCommand(handleCommand)
   }, [feed, handleLoadNewPosts, handleLoadAllNewPosts, handlePrevPage])
 
-  const handleLike = async (uri: string, cid: string) => {
-    if (!agent) return
-
-    const post = feed.find(p => p.post.uri === uri)
-    if (!post) return
-
-    // Capture original state BEFORE any updates
-    const originalLikeUri = post.post.viewer?.like
-    const isLiked = !!originalLikeUri
-
-    // Optimistic update - only update count, not the like URI
-    // This prevents issues if user double-clicks quickly
-    setFeed(prev => prev.map(p => {
-      if (p.post.uri === uri) {
-        return {
-          ...p,
-          post: {
-            ...p.post,
-            likeCount: (p.post.likeCount || 0) + (isLiked ? -1 : 1),
-          },
-        }
-      }
-      return p
-    }))
-
-    try {
-      if (isLiked && originalLikeUri) {
-        await unlikePost(agent, originalLikeUri)
-        // Update state to reflect unliked
-        setFeed(prev => prev.map(p => {
-          if (p.post.uri === uri) {
-            return {
-              ...p,
-              post: {
-                ...p.post,
-                viewer: { ...p.post.viewer, like: undefined },
-              },
-            }
-          }
-          return p
-        }))
-      } else {
-        const likeResponse = await likePost(agent, uri, cid)
-        // Update state with real like URI so unlike works
-        setFeed(prev => prev.map(p => {
-          if (p.post.uri === uri) {
-            return {
-              ...p,
-              post: {
-                ...p.post,
-                viewer: { ...p.post.viewer, like: likeResponse.uri },
-              },
-            }
-          }
-          return p
-        }))
-      }
-    } catch (error) {
-      // Revert optimistic update by reloading
-      loadFeed(undefined, false)
-      addToast(error instanceof Error ? error.message : 'Failed to update like', 'error')
-    }
-  }
-
-  const handleBookmark = async (uri: string, cid: string) => {
-    if (!agent) return
-
-    const post = feed.find(p => p.post.uri === uri)
-    if (!post) return
-
-    const wasBookmarked = !!post.post.viewer?.bookmarked
-
-    // Optimistic update
-    setFeed(prev => prev.map(p => {
-      if (p.post.uri === uri) {
-        return {
-          ...p,
-          post: {
-            ...p.post,
-            viewer: { ...p.post.viewer, bookmarked: !wasBookmarked },
-          },
-        }
-      }
-      return p
-    }))
-
-    try {
-      if (wasBookmarked) {
-        await unbookmarkPost(agent, uri)
-      } else {
-        await bookmarkPost(agent, uri, cid)
-      }
-    } catch (error) {
-      // Revert optimistic update
-      setFeed(prev => prev.map(p => {
-        if (p.post.uri === uri) {
-          return {
-            ...p,
-            post: {
-              ...p.post,
-              viewer: { ...p.post.viewer, bookmarked: wasBookmarked },
-            },
-          }
-        }
-        return p
-      }))
-      addToast(error instanceof Error ? error.message : 'Failed to update bookmark', 'error')
-    }
-  }
-
-  const handleRepost = async (uri: string, cid: string) => {
-    if (!agent) return
-
-    const post = feed.find(p => p.post.uri === uri)
-    if (!post) return
-
-    // Capture original state BEFORE any updates
-    const originalRepostUri = post.post.viewer?.repost
-    const isReposted = !!originalRepostUri
-
-    // Optimistic update - only update count, not the repost URI
-    // This prevents issues if user double-clicks quickly
-    setFeed(prev => prev.map(p => {
-      if (p.post.uri === uri) {
-        return {
-          ...p,
-          post: {
-            ...p.post,
-            repostCount: (p.post.repostCount || 0) + (isReposted ? -1 : 1),
-          },
-        }
-      }
-      return p
-    }))
-
-    try {
-      if (isReposted && originalRepostUri) {
-        await removeRepost(agent, originalRepostUri)
-        // Update state to reflect unreposted
-        setFeed(prev => prev.map(p => {
-          if (p.post.uri === uri) {
-            return {
-              ...p,
-              post: {
-                ...p.post,
-                viewer: { ...p.post.viewer, repost: undefined },
-              },
-            }
-          }
-          return p
-        }))
-      } else {
-        const repostResponse = await repost(agent, uri, cid)
-        // Update state with real repost URI so unrepost works
-        setFeed(prev => prev.map(p => {
-          if (p.post.uri === uri) {
-            return {
-              ...p,
-              post: {
-                ...p.post,
-                viewer: { ...p.post.viewer, repost: repostResponse.uri },
-              },
-            }
-          }
-          return p
-        }))
-      }
-    } catch (error) {
-      // Revert optimistic update by reloading
-      loadFeed(undefined, false)
-      addToast(error instanceof Error ? error.message : 'Failed to update repost', 'error')
-    }
-  }
-
-  const handleQuotePost = (post: AppBskyFeedDefs.PostView) => {
-    setQuotePost(post)
-    setReplyToUri(null)
-    setShowCompose(true)
-  }
-
-  const handleReply = (uri: string) => {
-    setReplyToUri(uri)
-    setQuotePost(null)
-    setShowCompose(true)
-  }
-
-  const handlePost = async (
-    text: string, 
-    replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string }, 
-    quotePost?: AppBskyFeedDefs.PostView,
-    images?: Array<{ image: Blob; alt: string }>
-  ) => {
-    if (!agent) return
-
-    if (quotePost) {
-      await createQuotePost(agent, {
-        text,
-        quotedPost: {
-          uri: quotePost.uri,
-          cid: quotePost.cid,
-        },
-        embed: images && images.length > 0 ? { images } : undefined,
-      })
-      addToast('Quote post created!', 'success')
-    } else {
-      await createPost(agent, {
-        text,
-        replyTo,
-        embed: images && images.length > 0 ? { images } : undefined,
-      })
-      addToast('Post created!', 'success')
-    }
-    // Clear cache and reload feed
-    await clearFeedCache()
-    await clearPrevPageCursor()
-    sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
-    loadFeed(undefined, false)
-  }
-
   // Filter out immediate same-user replies
   const filteredFeed = useMemo(() => filterSameUserReplies(feed), [feed])
-
-  const handleAmpChange = async () => {
-    // Clear cache and reload feed when amp factor changes
-    await clearFeedCache()
-    await clearPrevPageCursor()
-    sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
-    loadFeed(undefined, false)
-  }
 
   // Handle tab change - saves current tab's state and switches to new tab
   const handleTabChange = useCallback((newTab: HomeTab) => {
