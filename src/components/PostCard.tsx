@@ -14,6 +14,7 @@ import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo } from '../cu
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 import { getFilter, getFollow } from '../curation/skylimitCache'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
+import { useSession } from '../auth/SessionContext'
 import CurationPopup from './CurationPopup'
 import RichText from './RichText'
 
@@ -48,6 +49,8 @@ interface PostCardProps {
 
 export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, showCounter = false, onAmpChange, showRootPost = true, engagementStats }: PostCardProps) {
   const navigate = useNavigate()
+  const { session } = useSession()
+  const myUsername = session?.handle || ''
   const record = post.post.record as any
   const author = post.post.author
   const embed = post.post.embed
@@ -236,16 +239,25 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   // Get the display info for the popup (reposter for reposts, author for originals)
   const popupAuthor = isReposted && repostedBy ? repostedBy : author
 
+  const refreshAfterAmpChange = async () => {
+    // Refresh followInfo and userEntry to reflect updated amp_factor and probabilities
+    const follow = await getFollow(ampUsername)
+    setFollowInfo(follow)
+    const filterResult = await getFilter()
+    if (filterResult) {
+      const [, userFilterData] = filterResult
+      setUserEntry(userFilterData[ampUsername] || null)
+    }
+    if (onAmpChange) {
+      onAmpChange()
+    }
+  }
+
   const handleAmpUp = async () => {
     try {
       setLoading(true)
-      await ampUp(ampUsername)
-      // Refresh followInfo to get updated amp_factor for display
-      const follow = await getFollow(ampUsername)
-      setFollowInfo(follow)
-      if (onAmpChange) {
-        onAmpChange()
-      }
+      await ampUp(ampUsername, myUsername)
+      await refreshAfterAmpChange()
     } catch (error) {
       console.error('Failed to amp up:', error)
       alert('Failed to update amplification factor')
@@ -257,13 +269,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const handleAmpDown = async () => {
     try {
       setLoading(true)
-      await ampDown(ampUsername)
-      // Refresh followInfo to get updated amp_factor for display
-      const follow = await getFollow(ampUsername)
-      setFollowInfo(follow)
-      if (onAmpChange) {
-        onAmpChange()
-      }
+      await ampDown(ampUsername, myUsername)
+      await refreshAfterAmpChange()
     } catch (error) {
       console.error('Failed to amp down:', error)
       alert('Failed to update amplification factor')
@@ -361,6 +368,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   anchorRect={popupAnchorRect || undefined}
                   rawPostNumber={rawPostNumber}
                   postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
+                  shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
                   originalsPerDay={userEntry?.original_daily}
                   repostsPerDay={userEntry?.repost_daily}
                   followedRepliesPerDay={userEntry?.followed_reply_daily}
@@ -435,6 +443,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 anchorRect={popupAnchorRect || undefined}
                 rawPostNumber={rawPostNumber}
                 postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
+                shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
                 originalsPerDay={userEntry?.original_daily}
                 repostsPerDay={userEntry?.repost_daily}
                 followedRepliesPerDay={userEntry?.followed_reply_daily}
@@ -517,6 +526,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     anchorRect={popupAnchorRect || undefined}
                     rawPostNumber={rawPostNumber}
                     postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
+                    shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
                     originalsPerDay={userEntry?.original_daily}
                     repostsPerDay={userEntry?.repost_daily}
                     followedRepliesPerDay={userEntry?.followed_reply_daily}

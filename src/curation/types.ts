@@ -218,6 +218,7 @@ export interface FollowInfo {
   timezone?: string
   displayName?: string
   last_posted_at?: number  // postTimestamp of most recent post (ms)
+  amp_factor_changed_at?: number  // Timestamp (ms) of last amp factor change
   [MOTD_TAG]?: string
   [MOTW_TAG]?: string
   [MOTM_TAG]?: string

@@ -749,6 +749,108 @@ function computeUserProbabilities(
 }
 
 /**
+ * Recompute probabilities from an existing UserFilter after an amp factor change.
+ * This is a lightweight alternative to computePostStats() that reuses the daily rates
+ * already stored in the UserFilter, only recalculating weights, skylimit number,
+ * and probabilities.
+ */
+export async function recomputeProbabilities(
+  userFilter: UserFilter,
+  globalStats: GlobalStats,
+  viewsPerDay: number,
+  myUsername: string
+): Promise<[GlobalStats, UserFilter]> {
+  // Read current amp factors from follows
+  const follows = await getAllFollows()
+  const followMap: Record<string, FollowInfo> = {}
+  for (const follow of follows) {
+    followMap[follow.username] = follow
+  }
+
+  // Build per-user weight and normalized_daily
+  const entries: Array<{ username: string, entry: UserEntry, weight: number, normalized_daily: number }> = []
+  let totalUserWeight = 0
+
+  for (const [username, entry] of Object.entries(userFilter)) {
+    if (username === myUsername) continue  // Skip self-user
+
+    const follow = followMap[username]
+    const ampFactor = follow
+      ? Math.min(MAX_AMP_FACTOR, Math.max(MIN_AMP_FACTOR, follow.amp_factor))
+      : entry.amp_factor
+    entry.amp_factor = ampFactor
+
+    const weight = ampFactor
+    const normalized_daily = weight ? entry.total_daily / weight : 0
+
+    entries.push({ username, entry, weight, normalized_daily })
+    totalUserWeight += weight
+  }
+
+  // Sort by normalized daily count (ascending)
+  entries.sort((a, b) => a.normalized_daily - b.normalized_daily)
+
+  // Calculate skylimit number
+  let skylimitNumber = 0
+  let remainingViews = viewsPerDay
+  let remainingWeight = totalUserWeight
+
+  for (const item of entries) {
+    if (item.weight === 0) continue
+    if (item.normalized_daily <= 0) continue
+
+    const viewsForThis = Math.min(item.normalized_daily, remainingViews / remainingWeight)
+    skylimitNumber = Math.max(skylimitNumber, viewsForThis)
+
+    remainingViews -= viewsForThis * item.weight
+    remainingWeight -= item.weight
+  }
+
+  // Calculate probabilities for each followed user
+  for (const item of entries) {
+    const entry = item.entry
+
+    entry.net_prob = Math.min(1, skylimitNumber / Math.max(1, item.normalized_daily))
+
+    const regularPostsPlusReposts = Math.max(1,
+      entry.original_daily + entry.followed_reply_daily +
+      entry.unfollowed_reply_daily + entry.repost_daily)
+    const userSkylimitNumber = skylimitNumber * (item.weight || 1)
+    let availableViews = userSkylimitNumber - entry.motx_daily
+
+    if (userSkylimitNumber < MOTD_MIN_SKYLIMIT_NUMBER) {
+      availableViews = userSkylimitNumber - Math.min(1 / 7 + 1 / 30, entry.motx_daily)
+    }
+
+    if (availableViews <= 0) {
+      entry.priority_prob = 0
+      entry.regular_prob = 0
+    } else if (entry.priority_daily >= availableViews) {
+      entry.priority_prob = Math.min(1, availableViews / entry.priority_daily)
+      entry.regular_prob = 0
+    } else {
+      entry.priority_prob = 1.0
+      entry.regular_prob = Math.min(1, (availableViews - entry.priority_daily) / regularPostsPlusReposts)
+    }
+  }
+
+  // Update self-user probability (diagnostic only — self-posts always bypass curation)
+  const selfEntry = userFilter[myUsername]
+  if (selfEntry) {
+    selfEntry.net_prob = Math.min(1, skylimitNumber / Math.max(1, selfEntry.total_daily))
+    selfEntry.priority_prob = 0
+    selfEntry.regular_prob = 0
+  }
+
+  // Update global stats with new skylimit number
+  globalStats.skylimit_number = skylimitNumber
+
+  // Save and return
+  await saveFilter(globalStats, userFilter)
+  return [globalStats, userFilter]
+}
+
+/**
  * Get current follows as a map
  */
 async function getCurrentFollows(): Promise<Record<string, FollowInfo>> {

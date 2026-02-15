@@ -17,6 +17,7 @@ export interface CurationPopupProps {
   repostsPerDay?: number               // Reposts/day (Debug Info)
   followedRepliesPerDay?: number       // Replies to followees/day (Debug Info)
   unfollowedRepliesPerDay?: number     // Replies to non-followees/day (Debug Info)
+  shownPerDay?: number                 // Posts shown per day after curation
   regularProb?: number                 // Both (0-1 scale)
   priorityProb?: number                // Both (0-1 scale)
   curationMsg?: string                 // Fallback message
@@ -48,6 +49,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   anchorRect,
   rawPostNumber,
   postingPerDay,
+  shownPerDay,
   originalsPerDay,
   repostsPerDay,
   followedRepliesPerDay,
@@ -69,6 +71,12 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   onNavigateToSettings,
   onClose,
 }, ref) => {
+  // Format count: show 1 decimal if < 10, otherwise round to integer
+  const formatCount = (count: number): string => {
+    if (count < 10) return count.toFixed(1)
+    return Math.round(count).toString()
+  }
+
   // Calculate fixed position styles if anchorRect is provided
   const getPositionStyle = (): React.CSSProperties => {
     if (!anchorRect) {
@@ -141,9 +149,9 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             <div>Raw post #{rawPostNumber}</div>
           )}
 
-          {/* Posting rate (reposting moved to Debug Info) */}
+          {/* Posting rate and shown rate */}
           {postingPerDay !== undefined && (
-            <div>Posting {postingPerDay.toFixed(1)}/day</div>
+            <div>Posting {formatCount(postingPerDay)}/day{shownPerDay !== undefined ? `, Showing ${formatCount(shownPerDay)}/day` : ''}</div>
           )}
 
           {/* Probabilities */}

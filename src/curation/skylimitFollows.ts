@@ -4,7 +4,9 @@
 
 import { BskyAgent, AppBskyGraphGetFollows } from '@atproto/api'
 import { FollowInfo } from './types'
-import { getAllFollows, saveFollow } from './skylimitCache'
+import { getAllFollows, saveFollow, getFilter } from './skylimitCache'
+import { recomputeProbabilities } from './skylimitStats'
+import { getSettings } from './skylimitStore'
 import { extractTopicsFromProfile, extractTimezone } from './skylimitGeneral'
 import { getProfiles } from '../api/profile'
 import { AppBskyActorDefs } from '@atproto/api'
@@ -213,31 +215,46 @@ export async function updateAmplificationFactor(
   
   if (follow) {
     follow.amp_factor = Math.max(0.125, Math.min(8.0, factor))
+    follow.amp_factor_changed_at = Date.now()
     await saveFollow(follow)
   }
 }
 
 /**
+ * Recompute probabilities after an amp factor change.
+ * Loads the current filter and settings, then recomputes all probabilities.
+ */
+async function recomputeAfterAmpChange(myUsername: string): Promise<void> {
+  const filterResult = await getFilter()
+  if (!filterResult) return
+  const [globalStats, userFilter] = filterResult
+  const settings = await getSettings()
+  await recomputeProbabilities(userFilter, globalStats, settings.viewsPerDay, myUsername)
+}
+
+/**
  * Amp up a follow (multiply by √2, approximately +41%)
  */
-export async function ampUp(username: string): Promise<void> {
+export async function ampUp(username: string, myUsername: string): Promise<void> {
   const follows = await getAllFollows()
   const follow = follows.find(f => f.username === username)
 
   if (follow) {
     await updateAmplificationFactor(username, follow.amp_factor * Math.SQRT2)
+    await recomputeAfterAmpChange(myUsername)
   }
 }
 
 /**
  * Amp down a follow (divide by √2, approximately -29%)
  */
-export async function ampDown(username: string): Promise<void> {
+export async function ampDown(username: string, myUsername: string): Promise<void> {
   const follows = await getAllFollows()
   const follow = follows.find(f => f.username === username)
 
   if (follow) {
     await updateAmplificationFactor(username, follow.amp_factor / Math.SQRT2)
+    await recomputeAfterAmpChange(myUsername)
   }
 }
 

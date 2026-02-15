@@ -25,7 +25,7 @@ interface AccountStatistics {
   isSelf: boolean
 }
 
-type SortField = 'username' | 'postsPerDay' | 'shownPerDay' | 'name'
+type SortField = 'username' | 'postsPerDay' | 'shownPerDay' | 'probability' | 'name'
 type SortDirection = 'asc' | 'desc'
 
 export default function SkylimitStatistics() {
@@ -268,8 +268,8 @@ export default function SkylimitStatistics() {
   const handleAmpUp = async (username: string) => {
     try {
       setLoadingAmp(true)
-      await ampUp(username)
-      // Reload statistics to reflect the change (popup stays open)
+      await ampUp(username, myUsername)
+      // Reload statistics to reflect recomputed probabilities
       await loadStatistics()
     } catch (error) {
       console.error('Failed to amp up:', error)
@@ -282,8 +282,8 @@ export default function SkylimitStatistics() {
   const handleAmpDown = async (username: string) => {
     try {
       setLoadingAmp(true)
-      await ampDown(username)
-      // Reload statistics to reflect the change (popup stays open)
+      await ampDown(username, myUsername)
+      // Reload statistics to reflect recomputed probabilities
       await loadStatistics()
     } catch (error) {
       console.error('Failed to amp down:', error)
@@ -338,6 +338,9 @@ export default function SkylimitStatistics() {
           comparison = shownA - shownB
           break
         }
+        case 'probability':
+          comparison = a.displayProbability - b.displayProbability
+          break
         case 'name': {
           const nameA = a.followInfo?.displayName || a.username
           const nameB = b.followInfo?.displayName || b.username
@@ -351,9 +354,11 @@ export default function SkylimitStatistics() {
   }, [accountStats, sortField, sortDirection])
 
   // Get sort indicator for column header
-  const getSortIndicator = (field: SortField): string => {
-    if (sortField !== field) return ''
-    return sortDirection === 'asc' ? ' ↑' : ' ↓'
+  const getSortIndicator = (field: SortField): JSX.Element => {
+    if (sortField !== field) {
+      return <span className="text-gray-400 dark:text-gray-500 ml-1">↓</span>
+    }
+    return <span className="text-green-600 dark:text-green-400 ml-1 font-bold">{sortDirection === 'asc' ? '↑' : '↓'}</span>
   }
 
   if (loading) {
@@ -464,7 +469,8 @@ export default function SkylimitStatistics() {
 
       {/* Active Followee Statistics Table */}
       <div className="w-full">
-        <h3 className="text-lg font-semibold mb-3">Active Followees</h3>
+        <h3 className="text-lg font-semibold mb-1">Active Followees</h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Daily average statistics (* =&gt; probabilities updated within last week)</p>
         <div className="overflow-x-auto max-w-full" style={{ WebkitOverflowScrolling: 'touch' }}>
           <table className="w-full border-collapse border border-gray-300 dark:border-gray-600 text-sm">
             <thead>
@@ -487,6 +493,12 @@ export default function SkylimitStatistics() {
                   onClick={() => handleSort('shownPerDay')}
                 >
                   Shown{getSortIndicator('shownPerDay')}
+                </th>
+                <th
+                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
+                  onClick={() => handleSort('probability')}
+                >
+                  Prob{getSortIndicator('probability')}
                 </th>
                 <th
                   className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
@@ -577,15 +589,16 @@ export default function SkylimitStatistics() {
                       </div>
                     </td>
                     <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">{formatPostCount(account.postsPerDay)}</td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
+                      {formatPostCount(shownPerDay)}
+                    </td>
                     <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm relative">
-                      {formatPostCount(shownPerDay)} (
-                        <button
-                          onClick={handleProbabilityClick}
-                          className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                        >
-                          {formatPercentage(probabilityPercent)}%
-                        </button>
-                      )
+                      <button
+                        onClick={handleProbabilityClick}
+                        className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                      >
+                        {formatPercentage(probabilityPercent)}%{account.followInfo?.amp_factor_changed_at && (Date.now() - account.followInfo.amp_factor_changed_at < 7 * 24 * 60 * 60 * 1000) ? '*' : ''}
+                      </button>
                       {isPopupOpen && (
                         <CurationPopup
                           ref={popupRef}
@@ -594,6 +607,7 @@ export default function SkylimitStatistics() {
                           popupPosition={popupPosition}
                           anchorRect={popupAnchorRect || undefined}
                           postingPerDay={curationStats.postingCount}
+                          shownPerDay={curationStats.postingCount * (account.displayProbability / 100)}
                           originalsPerDay={curationStats.originalsPerDay}
                           repostsPerDay={curationStats.repostsPerDay}
                           followedRepliesPerDay={curationStats.followedRepliesPerDay}
