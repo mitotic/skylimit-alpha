@@ -949,6 +949,7 @@ export interface SecondaryCacheEntry {
   interval: string
   cachedAt: number
   reposterDid?: string
+  summary?: PostSummary          // Pre-computed summary (not yet saved to summaries cache)
 }
 
 /**

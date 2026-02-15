@@ -207,6 +207,8 @@ export interface PostSummary {
   // Text fields for search capability
   postText?: string             // Main post text content
   quotedText?: string           // Text from quoted/embedded post (if any)
+  // Edition save section (from CurationResult, for deferred edition saving)
+  curation_save?: string
 }
 
 export interface FollowInfo {

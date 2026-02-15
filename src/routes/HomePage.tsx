@@ -20,7 +20,7 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToCachedPosts, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, performLookbackFetchToSecondary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, getLookbackBoundary, performLookbackFetch, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, limitedLookbackToCachedPosts, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, fetchToSecondaryForNextPage, transferSecondaryPageToPrimary, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted } from '../curation/skylimitFeedCache'
 import { clearSecondaryFeedCache } from '../curation/skylimitCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/skylimitNumbering'
@@ -2296,27 +2296,24 @@ export default function HomePage() {
       setSyncProgress(0)
 
       try {
-        // Use secondary cache flow - fetches, caches to secondary, merges to primary
-        const result = await performLookbackFetchToSecondary(
+        // Phase 1: Fetch posts to secondary cache until overlap with primary
+        const fetchResult = await fetchToSecondaryForNextPage(
           agent,
           session.handle,
           session.did,
           pageLength,
-          (progress) => setSyncProgress(Math.round(progress * 0.8)),  // 0-80% for fetch
-          (mergeProgress) => setSyncProgress(80 + Math.round(mergeProgress * 0.2))  // 80-100% for merge
+          (progress) => setSyncProgress(Math.round(progress * 0.8))  // 0-80% for fetch
         )
+        console.log(`[New Posts] SINGLE PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
 
-        console.log(`[New Posts] SINGLE PAGE: Secondary cache flow completed: ${result.postsMerged} posts merged`)
+        // Phase 2: Transfer oldest-first from secondary to primary until 1 page of displayable posts
+        setSyncProgress(80)
+        const transferResult = await transferSecondaryPageToPrimary(pageLength)
+        setSyncProgress(100)
+        console.log(`[New Posts] SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
+          `${transferResult.displayableCount} displayable`)
 
-        // Assign numbers to merged posts
-        if (result.postsMerged > 0) {
-          // Use the day of the newest merged post, not current time
-          // This handles the case where posts are from yesterday but user clicks after midnight
-          const newestPostDate = new Date(result.newestTimestamp || clientNow())
-          const dayStart = getLocalMidnight(newestPostDate).getTime()
-          const dayEnd = dayStart + 24 * 60 * 60 * 1000
-          await numberUnnumberedPostsForDay(dayStart, dayEnd, '[New Posts] SINGLE PAGE')
-        }
+        // Numbering is done inside transferSecondaryPageToPrimary
 
         // Clear UI state
         setNewPostsCount(0)
@@ -2327,14 +2324,12 @@ export default function HomePage() {
         setIdleTimerTriggered(false)
         lastDisplayTimeRef.current = clientNow()
 
-        // Load one page of curated posts from cache, then combine with current feed for alignment
-        const pagedSettings = await getPagedUpdatesSettings()
-        const [, currentProbs] = await getFilter() || [null, null]
-        const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
-        const rawPostsNeeded = calculatePageRaw(pageLength, currentFilterFrac, pagedSettings.varFactor)
-
+        // Load transferred posts from primary cache for display
         const feedReceivedTime = clientDate()
-        const cachedPosts = await getCachedFeed(rawPostsNeeded)
+        const cachedPosts = await getCachedFeedAfterPosts(
+          newestDisplayedPostTimestamp || 0,
+          transferResult.postsTransferred + 50  // margin for overlap
+        )
 
         if (cachedPosts.length > 0) {
           // Apply curation filtering
@@ -2371,7 +2366,7 @@ export default function HomePage() {
           }
           filteredPosts = alignFeedToPageBoundary(combinedForAlignment, pageLength)
 
-          console.log(`[Next Page] Displaying ${filteredPosts.length} curated posts (from ${cachedPosts.length} raw, filterFrac=${currentFilterFrac.toFixed(2)})`)
+          console.log(`[Next Page] Displaying ${filteredPosts.length} curated posts (from ${cachedPosts.length} raw)`)
 
           // Update feed state
           setFeed(filteredPosts)
