@@ -209,6 +209,8 @@ export interface PostSummary {
   quotedText?: string           // Text from quoted/embedded post (if any)
   // Edition save section (from CurationResult, for deferred edition saving)
   curation_save?: string
+  // View tracking
+  viewedAt?: number             // Client time timestamp (ms via clientNow()) when the post was first viewed in the viewport
 }
 
 export interface FollowInfo {
@@ -315,6 +317,8 @@ export interface CurationMetadata {
   // Number fields to avoid IndexedDB lookups in PostCard
   postNumber?: number | null
   curationNumber?: number | null
+  // View tracking
+  viewedAt?: number
 }
 
 export type CurationFeedViewPost = AppBskyFeedDefs.FeedViewPost & {

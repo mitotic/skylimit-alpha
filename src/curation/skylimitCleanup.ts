@@ -5,13 +5,13 @@
 
 import { removePostSummariesBefore, removeOldEditionPosts } from './skylimitCache'
 import { getSettings } from './skylimitStore'
-import { clientNow } from '../utils/clientClock'
+import { clientNow, clientTimeout, clearClientTimeout } from '../utils/clientClock'
 
 // Cleanup constants (matching Mahoot's approach)
 const CURATION_DELAY = 5 * 60 * 1000 // 5 minutes debounce delay
 const EDITION_POSTS_AGO = 2 * 24 * 60 * 60 * 1000 // 2 days ago
 
-let cleanupTimeoutId: number | null = null
+let cleanupTimeoutId: ReturnType<typeof setTimeout> | null = null
 
 /**
  * Cleanup old summaries and edition posts
@@ -47,11 +47,11 @@ export async function performCleanup(): Promise<void> {
 export function scheduleCleanup(): void {
   // Clear existing timeout
   if (cleanupTimeoutId !== null) {
-    clearTimeout(cleanupTimeoutId)
+    clearClientTimeout(cleanupTimeoutId)
   }
-  
-  // Schedule cleanup after delay
-  cleanupTimeoutId = window.setTimeout(() => {
+
+  // Schedule cleanup after delay (uses client clock for accelerated time)
+  cleanupTimeoutId = clientTimeout(() => {
     performCleanup().catch(err => {
       console.error('Scheduled cleanup failed:', err)
     })
@@ -64,7 +64,7 @@ export function scheduleCleanup(): void {
  */
 export function cancelScheduledCleanup(): void {
   if (cleanupTimeoutId !== null) {
-    clearTimeout(cleanupTimeoutId)
+    clearClientTimeout(cleanupTimeoutId)
     cleanupTimeoutId = null
   }
 }

@@ -8,6 +8,7 @@ import { getFilter, getAllFollows, savePostSummaries, saveEditionPost, getEditio
 import { createPostSummary } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { scheduleCleanup } from './skylimitCleanup'
+import { clientDate } from '../utils/clientClock'
 import { CurationFeedViewPost, PostSummary, FeedCacheEntryWithPost, CurationResult } from './types'
 
 /**
@@ -135,7 +136,7 @@ export async function insertEditionPosts(
   }
   
   // Check if it's time to show an edition
-  const now = editionTime || new Date()
+  const now = editionTime || clientDate()
   const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   
   if (!editionTimeStrs.includes(nowTime)) {

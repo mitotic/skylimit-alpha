@@ -11,16 +11,15 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal, { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
+import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh, updatePostSummaryViewedAt } from '../curation/skylimitCache'
 import { getSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
-import { GlobalStats, CurationFeedViewPost, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary } from '../curation/skylimitFeedCache'
-import { clearSecondaryFeedCache } from '../curation/skylimitCache'
+import { GlobalStats, CurationFeedViewPost, SecondaryEntry, getIntervalHoursSync, isStatusShow } from '../curation/types'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/skylimitNumbering'
 import { getNonStandardServerName } from '../api/atproto-client'
@@ -84,6 +83,10 @@ export default function HomePage() {
   const previousPageFeedRef = useRef<CurationFeedViewPost[]>([])  // Ref for observer callback (avoids stale closure)
   const isPrefetchingRef = useRef(false)  // Ref for observer callback (avoids stale closure)
   const prevPageHadUnnumberedRef = useRef(false)  // Tracks if previous Prev Page had unnumbered posts
+  const viewTrackingObserverRef = useRef<IntersectionObserver | null>(null)  // Observer for post view tracking
+  const viewedPostIdsRef = useRef<Set<string>>(new Set())  // In-session set of already-viewed post uniqueIds
+  const pendingViewedUpdatesRef = useRef<Map<string, number>>(new Map())  // Batched viewedAt updates for feed state
+  const viewedUpdateScheduledRef = useRef(false)  // Whether a batched feed state update is scheduled
 
   const previousPathnameRef = useRef<string>(location.pathname)
   
@@ -224,14 +227,6 @@ export default function HomePage() {
         // Otherwise redisplayFeed would restore posts without curation data
         sessionStorage.removeItem(getFeedStateKey('curated'))
         console.log('[Init] Cleared sessionStorage saved feed state')
-      }
-
-      // Clear any incomplete secondary cache from interrupted lookback
-      try {
-        await clearSecondaryFeedCache()
-        console.log('[Init] Cleared any incomplete secondary cache')
-      } catch (err) {
-        console.warn('[Init] Failed to clear secondary cache:', err)
       }
 
       // Check if summaries cache is empty (initial curation needed)
@@ -378,6 +373,9 @@ export default function HomePage() {
         }
         if (summary?.curationNumber !== undefined) {
           curation.curationNumber = summary.curationNumber
+        }
+        if (summary?.viewedAt !== undefined) {
+          curation.viewedAt = summary.viewedAt
         }
 
         return {
@@ -781,6 +779,7 @@ export default function HomePage() {
       // - Both fresh + within idle interval → Use cache
       let isIdleReturnMode = false
       let isInitialLoadMode = false
+      let preIdleCacheNewest: number | null = null  // Pre-idle cache boundary for lookback overlap
 
       if (!summariesCacheIsFresh || forceInitialLoadRef.current) {
         // Summaries stale or forced by Reset Feed → initial load mode
@@ -799,7 +798,9 @@ export default function HomePage() {
       } else if (idleTimeExceeded) {
         // Both fresh, but idle time exceeded → idle return load (don't clear cache)
         isIdleReturnMode = true
-        console.log(`[Feed] Mode: IDLE RETURN - idle time exceeded (${Math.round(timeSinceLastFetch / 60000)} min > ${Math.round(idleThreshold / 60000)} min threshold), preserving cache`)
+        // Capture pre-idle boundary BEFORE metadata gets overwritten by the initial fetch
+        preIdleCacheNewest = metadata?.newestCachedPostTimestamp ?? null
+        console.log(`[Feed] Mode: IDLE RETURN - idle time exceeded (${Math.round(timeSinceLastFetch / 60000)} min > ${Math.round(idleThreshold / 60000)} min threshold), preserving cache, pre-idle newest: ${preIdleCacheNewest ? new Date(preIdleCacheNewest).toLocaleString() : 'null'}`)
       } else {
         // Both caches fresh and within idle interval → use cache
         console.log(`[Feed] Mode: USE CACHE - both caches fresh, idle time ${Math.round(timeSinceLastFetch / 60000)} min within ${Math.round(idleThreshold / 60000)} min threshold`)
@@ -945,11 +946,28 @@ export default function HomePage() {
         }
       }
 
-      // Save to feed cache and curate (ensures both happen together for cache integrity)
-      // For idle return with some cached summaries, only save the new entries
-      const { curatedFeed } = entriesToSave.length > 0
-        ? await savePostsWithCuration(entriesToSave, newCursor, agent, myUsername, myDid)
-        : { curatedFeed: [] }
+      // Save to feed cache and curate
+      // For forward fetches (initial load, idle return): curate to in-memory secondary, defer primary writes
+      // For backward pagination (cursor): save directly to primary cache + summaries
+      let curatedFeed: CurationFeedViewPost[]
+      let initialSecondaryEntries: SecondaryEntry[] | null = null
+
+      if ((isIdleReturnMode || isInitialLoadMode) && !cursor) {
+        // Forward fetch: curate to in-memory secondary (don't write to primary yet)
+        if (entriesToSave.length > 0) {
+          const secondaryEntries = await curateEntriesToSecondary(entriesToSave, myUsername, myDid)
+          initialSecondaryEntries = secondaryEntries
+          curatedFeed = secondaryEntriesToCuratedFeed(secondaryEntries)
+        } else {
+          curatedFeed = []
+        }
+      } else {
+        // Backward pagination path: save directly to primary cache + summaries
+        const result = entriesToSave.length > 0
+          ? await savePostsWithCuration(entriesToSave, newCursor, agent, myUsername, myDid)
+          : { curatedFeed: [] }
+        curatedFeed = result.curatedFeed
+      }
 
       // Debug: Log curation results
       if (newFeed.length > 0 && !cursor) {
@@ -961,9 +979,18 @@ export default function HomePage() {
 
       // Use feedReceivedTime for timestamp calculations (same as initialLastPostTime for initial fetch)
       const feedReceivedTime = initialLastPostTime
-      
+
       // Look up curation status and filter for display
-      const filteredPosts = await lookupCurationAndFilter(feedWithEditions, feedReceivedTime)
+      // For idle return with secondary entries: filter from in-memory summaries (not IndexedDB)
+      let filteredPosts: CurationFeedViewPost[]
+      if (initialSecondaryEntries) {
+        const fetchSettings2 = await getSettings()
+        const curationSuspended = !fetchSettings2 || fetchSettings2?.curationSuspended
+        const showAllPosts = fetchSettings2?.showAllPosts || false
+        filteredPosts = filterSecondaryForDisplay(initialSecondaryEntries, curationSuspended, showAllPosts)
+      } else {
+        filteredPosts = await lookupCurationAndFilter(feedWithEditions, feedReceivedTime)
+      }
       
       if (cursor) {
         // For pagination, append to existing feed and maintain sort
@@ -993,12 +1020,15 @@ export default function HomePage() {
           // IMPORTANT: Update oldestCachedPostTimestamp in metadata to the oldest postTimestamp from ALL fetched posts (not just filtered)
           // This ensures we don't query for posts that were already in the initial fetch batch
           // Use the last post from feedWithEditions (which are sorted newest first) as the boundary
-          const oldestFetchedTimestamp = feedWithEditions.length > 0
-            ? getFeedViewPostTimestamp(feedWithEditions[feedWithEditions.length - 1], feedReceivedTime).getTime()
-            : undefined
-          if (oldestFetchedTimestamp !== undefined) {
-            await updateFeedCacheOldestPostTimestamp(oldestFetchedTimestamp)
-            console.log(`[Feed] Updated oldestCachedPostTimestamp in metadata to oldest fetched post: ${new Date(oldestFetchedTimestamp).toISOString()} (from ${feedWithEditions.length} fetched posts, ${filteredPosts.length} displayed)`)
+          // Skip for idle return with secondary entries — metadata is updated after transfer
+          if (!initialSecondaryEntries) {
+            const oldestFetchedTimestamp = feedWithEditions.length > 0
+              ? getFeedViewPostTimestamp(feedWithEditions[feedWithEditions.length - 1], feedReceivedTime).getTime()
+              : undefined
+            if (oldestFetchedTimestamp !== undefined) {
+              await updateFeedCacheOldestPostTimestamp(oldestFetchedTimestamp)
+              console.log(`[Feed] Updated oldestCachedPostTimestamp in metadata to oldest fetched post: ${new Date(oldestFetchedTimestamp).toISOString()} (from ${feedWithEditions.length} fetched posts, ${filteredPosts.length} displayed)`)
+            }
           }
           
           // Mark initial load as complete
@@ -1036,14 +1066,22 @@ export default function HomePage() {
               {
                 pageLength,
                 onProgress: (progress) => setLookbackProgress(progress),
+                ...(preIdleCacheNewest !== null ? { overlapTargetTimestamp: preIdleCacheNewest } : {}),
               }
             ).then(async (fetchResult) => {
               console.log(`[Background Lookback] Fetch complete: ${fetchResult.postsFetched} posts, stopReason=${fetchResult.stopReason}`)
 
+              // Combine initial idle-return secondary entries with lookback entries before transfer
+              let allEntries = fetchResult.entries
+              if (initialSecondaryEntries) {
+                allEntries = [...initialSecondaryEntries, ...allEntries]
+                console.log(`[Background Lookback] Combined ${initialSecondaryEntries.length} initial + ${fetchResult.entries.length} lookback = ${allEntries.length} total entries`)
+              }
+
               // Transfer all fetched posts to primary
               // Skip numbering on initial load — recomputeCurationDecisions will assign correct numbers after stats are computed
-              if (fetchResult.entries.length > 0) {
-                const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'all', pageLength, isInitialLoadMode)
+              if (allEntries.length > 0) {
+                const transferResult = await transferSecondaryToPrimary(allEntries, 'all', pageLength, isInitialLoadMode)
                 console.log(`[Background Lookback] Transferred ${transferResult.postsTransferred} posts to primary`)
               }
 
@@ -1657,7 +1695,7 @@ export default function HomePage() {
     const checkForNewPosts = async () => {
       // Guard against overlapping invocations (e.g., interval fires while retryWithBackoff is sleeping)
       if (probeInProgressRef.current !== null) {
-        const elapsed = Date.now() - probeInProgressRef.current
+        const elapsed = clientNow() - probeInProgressRef.current
         if (elapsed < PROBE_STALE_MS) {
           console.log('[Paged Updates] Skipping probe — previous probe still in progress')
           return
@@ -1672,7 +1710,7 @@ export default function HomePage() {
       // Paged updates: probe server without caching
       if (!agent || !session) return
 
-      probeInProgressRef.current = Date.now()
+      probeInProgressRef.current = clientNow()
       try {
         // Get current filter fraction and settings
         const [, currentProbs] = await getFilter() || [null, null]
@@ -2303,6 +2341,89 @@ export default function HomePage() {
     }
   }, [infiniteScrollingEnabled, handlePrevPage])
 
+  // IntersectionObserver for post view tracking
+  // When a post becomes at least 50% visible, record viewedAt timestamp in IndexedDB
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const el = entry.target as HTMLElement
+          const uniqueId = el.dataset.postId
+          if (!uniqueId) continue
+          // Skip if already recorded this session
+          if (viewedPostIdsRef.current.has(uniqueId)) {
+            observer.unobserve(el)
+            continue
+          }
+          viewedPostIdsRef.current.add(uniqueId)
+          observer.unobserve(el)
+          // Fire-and-forget: save viewedAt to IndexedDB and update in-memory feed state
+          const now = clientNow()
+          updatePostSummaryViewedAt(uniqueId, now)
+          // Batch in-memory feed state updates (coalesce multiple visible posts into one setFeed)
+          pendingViewedUpdatesRef.current.set(uniqueId, now)
+          if (!viewedUpdateScheduledRef.current) {
+            viewedUpdateScheduledRef.current = true
+            requestAnimationFrame(() => {
+              viewedUpdateScheduledRef.current = false
+              const updates = new Map(pendingViewedUpdatesRef.current)
+              pendingViewedUpdatesRef.current.clear()
+              setFeed(prev => prev.map(p => {
+                const id = getPostUniqueId(p)
+                const vt = updates.get(id)
+                if (vt && 'curation' in p) {
+                  const cp = p as CurationFeedViewPost
+                  // Don't overwrite existing viewedAt (first view wins)
+                  if (cp.curation?.viewedAt) return p
+                  return { ...cp, curation: { ...cp.curation, viewedAt: vt } } as CurationFeedViewPost
+                }
+                return p
+              }))
+            })
+          }
+        }
+      },
+      { threshold: 0.5 }
+    )
+    viewTrackingObserverRef.current = observer
+    return () => {
+      observer.disconnect()
+      viewTrackingObserverRef.current = null
+    }
+  }, [])
+
+  // Observe post elements for view tracking whenever feed changes
+  // Use requestAnimationFrame to ensure React has committed DOM updates before querying
+  useEffect(() => {
+    const observer = viewTrackingObserverRef.current
+    if (!observer) return
+    const rafId = requestAnimationFrame(() => {
+      // Build set of posts that already have viewedAt from hydration (e.g., after navigation back)
+      // These should not be re-observed since their viewedAt is already set
+      const alreadyViewedFromFeed = new Set<string>()
+      for (const p of feed) {
+        if ('curation' in p && (p as CurationFeedViewPost).curation?.viewedAt) {
+          alreadyViewedFromFeed.add(getPostUniqueId(p))
+        }
+      }
+
+      const postElements = document.querySelectorAll('[data-post-id]')
+      postElements.forEach(el => {
+        const uniqueId = (el as HTMLElement).dataset.postId
+        if (!uniqueId) return
+        if (viewedPostIdsRef.current.has(uniqueId)) return
+        // Skip posts that already have viewedAt from cache hydration
+        if (alreadyViewedFromFeed.has(uniqueId)) {
+          viewedPostIdsRef.current.add(uniqueId)
+          return  // Don't observe - already viewed
+        }
+        observer.observe(el)
+      })
+    })
+    return () => cancelAnimationFrame(rafId)
+  }, [feed])
+
   // Subscribe to Skyspeed server commands (CLICK, SCROLL, SCROLL TO)
   useEffect(() => {
     const handleCommand = (command: SkyspeedCommand) => {
@@ -2391,6 +2512,15 @@ export default function HomePage() {
 
   // Filter out immediate same-user replies
   const filteredFeed = useMemo(() => filterSameUserReplies(feed), [feed])
+
+  // Check if any prefetched posts in previousPageFeed have not been viewed
+  const hasUnreadPrevPage = useMemo(() => {
+    if (previousPageFeed.length === 0) return false
+    return previousPageFeed.some(p => {
+      const curation = 'curation' in p ? (p as CurationFeedViewPost).curation : undefined
+      return !curation?.viewedAt
+    })
+  }, [previousPageFeed])
 
   // Handle tab change - saves current tab's state and switches to new tab
   const handleTabChange = useCallback((newTab: HomeTab) => {
@@ -2572,6 +2702,7 @@ export default function HomePage() {
                 key={getPostUniqueId(post)}
                 ref={index === 0 ? firstPostRef : null}
                 data-post-uri={post.post.uri}
+                data-post-id={getPostUniqueId(post)}
               >
                 <PostCard
                   post={post}
@@ -2634,7 +2765,7 @@ export default function HomePage() {
                 ) : (
                   <>
                     <span>📄</span>
-                    Prev Page
+                    Prev Page{hasUnreadPrevPage ? ' (unread posts)' : ''}
                   </>
                 )}
               </button>

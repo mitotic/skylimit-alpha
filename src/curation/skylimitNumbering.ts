@@ -33,11 +33,21 @@ async function saveNumberedSummaries(summaries: PostSummary[]): Promise<void> {
   const store = transaction.objectStore('post_summaries')
 
   for (const summary of summaries) {
-    await new Promise<void>((resolve, reject) => {
-      const request = store.put(summary)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
+    // Re-read from store to preserve fields (e.g., viewedAt) that may have been
+    // written concurrently since the summary was originally read
+    const fresh = await new Promise<PostSummary | null>((resolve) => {
+      const request = store.get(summary.uniqueId)
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => resolve(null)
     })
+    if (fresh) {
+      // Apply only the numbering fields to the fresh copy
+      fresh.postNumber = summary.postNumber
+      fresh.curationNumber = summary.curationNumber
+      store.put(fresh)
+    } else {
+      store.put(summary)
+    }
   }
 
   await new Promise<void>((resolve, reject) => {

@@ -215,7 +215,7 @@ export async function updateAmplificationFactor(
   
   if (follow) {
     follow.amp_factor = Math.max(0.125, Math.min(8.0, factor))
-    follow.amp_factor_changed_at = Date.now()
+    follow.amp_factor_changed_at = clientNow()
     await saveFollow(follow)
   }
 }

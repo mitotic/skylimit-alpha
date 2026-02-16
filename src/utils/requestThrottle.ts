@@ -3,6 +3,8 @@
  * Limits concurrent requests and adds delays between requests
  */
 
+import { clientNow, clientTimeout } from './clientClock'
+
 interface QueuedRequest<T> {
   fn: () => Promise<T>
   resolve: (value: T) => void
@@ -40,10 +42,10 @@ class RequestThrottle {
     }
 
     // Check if we need to wait before next request
-    const now = Date.now()
+    const now = clientNow()
     const timeSinceLastRequest = now - this.lastRequestTime
     if (timeSinceLastRequest < this.minDelay) {
-      setTimeout(() => this.processQueue(), this.minDelay - timeSinceLastRequest)
+      clientTimeout(() => this.processQueue(), this.minDelay - timeSinceLastRequest)
       return
     }
 
@@ -54,7 +56,7 @@ class RequestThrottle {
     }
 
     this.activeRequests++
-    this.lastRequestTime = Date.now()
+    this.lastRequestTime = clientNow()
 
     try {
       const result = await request.fn()
@@ -64,7 +66,7 @@ class RequestThrottle {
     } finally {
       this.activeRequests--
       // Process next request in queue
-      setTimeout(() => this.processQueue(), this.minDelay)
+      clientTimeout(() => this.processQueue(), this.minDelay)
     }
   }
 

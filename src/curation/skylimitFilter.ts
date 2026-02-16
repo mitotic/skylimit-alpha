@@ -27,6 +27,7 @@ import {
   getFeedViewPostTimestamp
 } from './skylimitGeneral'
 import { saveFollow, wasRepostOrOriginalDisplayedWithinInterval } from './skylimitCache'
+import { clientNow } from '../utils/clientClock'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
 
 const DIGEST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000  // 7 days - posts within this window are digestible
@@ -127,7 +128,7 @@ export async function curateSinglePost(
     !summary.repostUri && 
     !summary.inReplyToUri && 
     !summary.tags.includes(NODIGEST_TAG) &&
-    (statusTime.getTime() >= (Date.now() - DIGEST_WINDOW_MS))
+    (statusTime.getTime() >= (clientNow() - DIGEST_WINDOW_MS))
   
   let handledStatus = ''
   let userSave = ''

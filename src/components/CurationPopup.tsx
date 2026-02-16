@@ -36,6 +36,7 @@ export interface CurationPopupProps {
   followedAt?: string
   topics?: string
   timezone?: string
+  viewedAt?: number                    // Client time timestamp when post was first viewed
 
   // Actions
   onNavigateToSettings?: () => void    // Optional - show "Curation Settings" link if provided
@@ -68,6 +69,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   followedAt,
   topics,
   timezone,
+  viewedAt,
   onNavigateToSettings,
   onClose,
 }, ref) => {
@@ -98,21 +100,29 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
 
     // Calculate vertical position based on popupPosition
     // Use 'bottom' for above positioning and 'top' for below positioning
+    const viewportPadding = 16 // Breathing room from viewport edges
+
     if (popupPosition === 'above') {
       // Position above the anchor - use bottom to anchor from viewport bottom
       const bottom = window.innerHeight - anchorRect.top + margin
+      const maxHeight = anchorRect.top - margin - viewportPadding
       return {
         position: 'fixed' as const,
         left: `${left}px`,
         bottom: `${bottom}px`,
+        maxHeight: `${maxHeight}px`,
+        overflowY: 'auto' as const,
       }
     } else {
       // Position below the anchor
       const top = anchorRect.bottom + margin
+      const maxHeight = window.innerHeight - anchorRect.bottom - margin - viewportPadding
       return {
         position: 'fixed' as const,
         left: `${left}px`,
         top: `${top}px`,
+        maxHeight: `${maxHeight}px`,
+        overflowY: 'auto' as const,
       }
     }
   }
@@ -123,7 +133,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   const popupContent = (
     <div
       ref={ref}
-      className={`${useFixedPositioning ? '' : 'absolute right-0'} w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
+      className={`${useFixedPositioning ? '' : 'absolute right-0 max-h-[80vh] overflow-y-auto'} w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 ${
         !useFixedPositioning && popupPosition === 'above'
           ? 'bottom-full mb-1'
           : !useFixedPositioning ? 'top-full mt-1' : ''
@@ -232,6 +242,9 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             {timezone && (
               <div>Timezone: {timezone}</div>
             )}
+            <div>Viewed at: {viewedAt
+              ? `${new Date(viewedAt).toLocaleDateString()}, ${String(new Date(viewedAt).getHours()).padStart(2, '0')}:${String(new Date(viewedAt).getMinutes()).padStart(2, '0')}`
+              : '—'}</div>
           </div>
         </div>
       )}

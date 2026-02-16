@@ -12,6 +12,7 @@ import { getSettings } from '../curation/skylimitStore'
 import { useSession } from '../auth/SessionContext'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 import CurationPopup from './CurationPopup'
+import { clientNow } from '../utils/clientClock'
 
 interface AccountStatistics {
   username: string
@@ -597,7 +598,7 @@ export default function SkylimitStatistics() {
                         onClick={handleProbabilityClick}
                         className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                       >
-                        {formatPercentage(probabilityPercent)}%{account.followInfo?.amp_factor_changed_at && (Date.now() - account.followInfo.amp_factor_changed_at < 7 * 24 * 60 * 60 * 1000) ? '*' : ''}
+                        {formatPercentage(probabilityPercent)}%{account.followInfo?.amp_factor_changed_at && (clientNow() - account.followInfo.amp_factor_changed_at < 7 * 24 * 60 * 60 * 1000) ? '*' : ''}
                       </button>
                       {isPopupOpen && (
                         <CurationPopup

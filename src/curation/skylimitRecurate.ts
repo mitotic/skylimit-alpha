@@ -103,19 +103,30 @@ export async function recomputeCurationDecisions(
     }
 
     // Save all updated summaries
-    // Note: savePostSummaries will update existing entries since they already exist
+    // Re-read each summary from the store to preserve any viewedAt written concurrently
     if (updatedSummaries.length > 0) {
-      // For updates, we need to force overwrite existing entries
       const database2 = await initDB()
       const transaction2 = database2.transaction(['post_summaries'], 'readwrite')
       const store = transaction2.objectStore('post_summaries')
       for (const summary of updatedSummaries) {
-        await new Promise<void>((resolve, reject) => {
-          const request = store.put(summary)
-          request.onsuccess = () => resolve()
-          request.onerror = () => reject(request.error)
+        // Re-read to get latest data (preserves viewedAt set by view tracking)
+        const fresh = await new Promise<PostSummary | null>((resolve) => {
+          const request = store.get(summary.uniqueId)
+          request.onsuccess = () => resolve(request.result || null)
+          request.onerror = () => resolve(null)
         })
+        if (fresh) {
+          fresh.curation_status = summary.curation_status
+          fresh.curation_msg = summary.curation_msg
+          store.put(fresh)
+        } else {
+          store.put(summary)
+        }
       }
+      await new Promise<void>((resolve, reject) => {
+        transaction2.oncomplete = () => resolve()
+        transaction2.onerror = () => reject(transaction2.error)
+      })
     }
 
     // After re-curation completes, assign invariant post numbers

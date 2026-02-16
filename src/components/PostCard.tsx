@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { formatDistance } from 'date-fns'
-import { clientDate } from '../utils/clientClock'
+import { clientDate, clientNow } from '../utils/clientClock'
 import { useEffect, useState, useRef } from 'react'
 import Avatar from './Avatar'
 import PostActions from './PostActions'
@@ -98,6 +98,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   // Extract curation metadata (must be defined before useEffect that uses it)
   const actualPost = post.post
   const curation = 'curation' in post ? (post as CurationFeedViewPost).curation : undefined
+  const isViewedOld = !!(curation?.viewedAt && (clientNow() - curation.viewedAt > 15 * 60 * 1000))
 
   // Get post number if counter should be shown
   useEffect(() => {
@@ -188,7 +189,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         const button = e.currentTarget as HTMLButtonElement
         if (button) {
           const buttonRect = button.getBoundingClientRect()
-          const popupHeight = 300 // Approximate popup height in pixels (increased for new content)
+          const popupHeight = 400 // Approximate popup height in pixels (accounts for debug section)
           const spaceBelow = window.innerHeight - buttonRect.bottom
           const spaceAbove = buttonRect.top
 
@@ -350,7 +351,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   ref={repostCounterButtonRef}
                   onClick={handleCounterClick}
                   className={curation
-                    ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                    ? isViewedOld
+                      ? 'text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 cursor-pointer underline'
+                      : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                     : 'text-gray-500 dark:text-gray-400 cursor-default'
                   }
                   title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -387,6 +390,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   followedAt={followInfo?.followed_at}
                   topics={followInfo?.topics || userEntry?.topics}
                   timezone={followInfo?.timezone}
+                  viewedAt={curation?.viewedAt}
                   onNavigateToSettings={() => {
                     setShowPopup(false)
                     navigate('/settings?tab=curation')
@@ -424,7 +428,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 ref={counterButtonRef}
                 onClick={handleCounterClick}
                 className={curation
-                  ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                  ? isViewedOld
+                    ? 'text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 cursor-pointer underline'
+                    : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                   : 'text-gray-500 dark:text-gray-400 cursor-default'
                 }
                 title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -462,6 +468,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 followedAt={followInfo?.followed_at}
                 topics={followInfo?.topics || userEntry?.topics}
                 timezone={followInfo?.timezone}
+                viewedAt={curation?.viewedAt}
                 onNavigateToSettings={() => {
                   setShowPopup(false)
                   navigate('/settings?tab=curation')
@@ -508,7 +515,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     ref={counterButtonRef}
                     onClick={handleCounterClick}
                     className={curation
-                      ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                      ? isViewedOld
+                        ? 'text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 cursor-pointer underline'
+                        : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                       : 'text-gray-500 dark:text-gray-400 cursor-default'
                     }
                     title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -545,6 +554,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     followedAt={followInfo?.followed_at}
                     topics={followInfo?.topics || userEntry?.topics}
                     timezone={followInfo?.timezone}
+                    viewedAt={curation?.viewedAt}
                     onNavigateToSettings={() => {
                       setShowPopup(false)
                       navigate('/settings?tab=curation')

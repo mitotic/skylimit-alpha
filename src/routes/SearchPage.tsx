@@ -9,6 +9,7 @@ import Button from '../components/Button'
 import Spinner from '../components/Spinner'
 import PostCard from '../components/PostCard'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
+import { clientNow } from '../utils/clientClock'
 
 type SearchTab = 'people' | 'posts'
 
@@ -79,7 +80,7 @@ export default function SearchPage() {
       const savedState: SavedSearchState = JSON.parse(savedStateJson)
 
       // Check idle interval
-      const timeSinceSave = Date.now() - savedState.savedAt
+      const timeSinceSave = clientNow() - savedState.savedAt
       if (timeSinceSave > SEARCH_IDLE_INTERVAL) {
         sessionStorage.removeItem(SEARCH_STATE_KEY)
         sessionStorage.removeItem(SEARCH_SCROLL_KEY)
@@ -180,7 +181,7 @@ export default function SearchPage() {
           results: r,
           postResults: pr,
           postCursor: pc,
-          savedAt: Date.now()
+          savedAt: clientNow()
         }
 
         try {

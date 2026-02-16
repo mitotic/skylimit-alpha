@@ -136,6 +136,117 @@ export async function savePostsWithCuration(
   return { curatedFeed, savedCount }
 }
 
+/**
+ * Curate feed cache entries into in-memory SecondaryEntry[] format.
+ * Does NOT write to primary cache or summaries — only creates in-memory entries.
+ * Used by idle return mode to defer primary cache writes until lookback completes.
+ *
+ * Reuses the same inline curation logic as fetchToSecondaryFeedCache.
+ */
+export async function curateEntriesToSecondary(
+  entries: FeedCacheEntryWithPost[],
+  myUsername: string,
+  myDid: string,
+): Promise<SecondaryEntry[]> {
+  // Setup curation context (same as fetchToSecondaryFeedCache)
+  const settings = await getSettings()
+  const [currentStats, currentProbs] = await getFilter() || [null, null]
+  const currentFollows = await getAllFollows()
+  const followMap: Record<string, any> = {}
+  for (const follow of currentFollows) {
+    followMap[follow.username] = follow
+  }
+  const editionTimeStrs = await getEditionTimeStrs()
+  const editionCount = editionTimeStrs.length
+  const secretKey = settings?.secretKey || 'default'
+
+  const result: SecondaryEntry[] = []
+  for (const entry of entries) {
+    const existingSummary = await getPostSummary(entry.uniqueId)
+    let summary: PostSummary
+    if (existingSummary) {
+      summary = existingSummary
+    } else {
+      const curationResult = await curateSinglePost(
+        entry.originalPost, myUsername, myDid, followMap,
+        currentStats, currentProbs, secretKey, editionCount
+      )
+      summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
+      summary.curation_status = curationResult.curation_status
+      summary.curation_msg = curationResult.curation_msg
+      if (curationResult.curation_save) {
+        summary.curation_save = curationResult.curation_save
+      }
+    }
+    result.push({ entry, summary })
+  }
+  return result
+}
+
+/**
+ * Convert SecondaryEntry[] to CurationFeedViewPost[] for display.
+ * Uses in-memory summaries (no IndexedDB reads).
+ */
+export function secondaryEntriesToCuratedFeed(
+  secondaryEntries: SecondaryEntry[]
+): CurationFeedViewPost[] {
+  return secondaryEntries.map(({ entry, summary }) => ({
+    ...entry.originalPost,
+    curation: {
+      curation_status: summary.curation_status,
+      curation_msg: summary.curation_msg,
+    }
+  }))
+}
+
+/**
+ * Filter SecondaryEntry[] for display, applying the same curation logic
+ * as lookupCurationAndFilter but using in-memory summaries.
+ * Returns CurationFeedViewPost[] sorted newest-first by postTimestamp.
+ */
+export function filterSecondaryForDisplay(
+  secondaryEntries: SecondaryEntry[],
+  curationSuspended: boolean,
+  showAllPosts: boolean,
+): CurationFeedViewPost[] {
+  const result: CurationFeedViewPost[] = []
+
+  for (const { entry, summary } of secondaryEntries) {
+    const curatedPost: CurationFeedViewPost = {
+      ...entry.originalPost,
+      curation: {
+        curation_status: summary.curation_status,
+        curation_msg: summary.curation_msg,
+      }
+    }
+
+    // Apply same filtering logic as lookupCurationAndFilter
+    if (curationSuspended) {
+      // Show all except reply_drop (Bluesky default behavior)
+      if (summary.curation_status !== 'reply_drop') {
+        result.push(curatedPost)
+      }
+    } else if (showAllPosts) {
+      result.push(curatedPost)
+    } else if (isStatusShow(summary.curation_status)) {
+      result.push(curatedPost)
+    }
+  }
+
+  // Sort newest-first by postTimestamp using a lookup map
+  const timestampMap = new Map<string, number>()
+  for (const { entry } of secondaryEntries) {
+    timestampMap.set(entry.uniqueId, entry.postTimestamp)
+  }
+  result.sort((a, b) => {
+    const aTs = timestampMap.get(getPostUniqueId(a)) ?? 0
+    const bTs = timestampMap.get(getPostUniqueId(b)) ?? 0
+    return bTs - aTs
+  })
+
+  return result
+}
+
 // Get database instance (reuse from skylimitCache)
 async function getDB(): Promise<IDBDatabase> {
   return await initDB()
@@ -2003,6 +2114,7 @@ export async function fetchToSecondaryFeedCache(
   options: {
     pageLength?: number
     onProgress?: (percent: number) => void
+    overlapTargetTimestamp?: number  // For idle_return: pre-idle cache's newest timestamp
   } = {}
 ): Promise<SecondaryFetchResult> {
   const pageLength = options.pageLength ?? DEFAULT_PAGE_LENGTH
@@ -2036,8 +2148,14 @@ export async function fetchToSecondaryFeedCache(
   // For non-initial modes, get primary cache newest timestamp for overlap detection
   let primaryNewestTimestamp: number | null = null
   if (mode !== 'initial') {
-    const metadata = await getLastFetchMetadata()
-    primaryNewestTimestamp = metadata?.newestCachedPostTimestamp ?? null
+    if (options.overlapTargetTimestamp !== undefined) {
+      // Use explicit overlap target (e.g., pre-idle cache boundary before metadata was overwritten)
+      primaryNewestTimestamp = options.overlapTargetTimestamp
+      console.log(`${label} Using explicit overlap target: ${new Date(primaryNewestTimestamp).toLocaleString()}`)
+    } else {
+      const metadata = await getLastFetchMetadata()
+      primaryNewestTimestamp = metadata?.newestCachedPostTimestamp ?? null
+    }
     if (primaryNewestTimestamp) {
       console.log(`${label} Primary newest: ${new Date(primaryNewestTimestamp).toLocaleString()}`)
     } else {
