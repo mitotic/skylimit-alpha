@@ -58,6 +58,7 @@ export default function HomePage() {
   // Paged fresh updates state
   const [nextPageReady, setNextPageReady] = useState(false) // true when full page of posts available
   const [partialPageCount, setPartialPageCount] = useState(0) // count when showing partial page (for "All new posts" button)
+  const [postsNeededForPage, setPostsNeededForPage] = useState<number | null>(null) // null = full page; number = partial page posts needed to reach next boundary
   // Multi-page tracking state (kept for logging purposes)
   const [multiPageCount, setMultiPageCount] = useState(0) // total filtered posts when 2+ pages available
   const [idleTimerTriggered, setIdleTimerTriggered] = useState(false) // true when idle time elapsed for partial page
@@ -83,6 +84,7 @@ export default function HomePage() {
   const previousPageFeedRef = useRef<CurationFeedViewPost[]>([])  // Ref for observer callback (avoids stale closure)
   const isPrefetchingRef = useRef(false)  // Ref for observer callback (avoids stale closure)
   const prevPageHadUnnumberedRef = useRef(false)  // Tracks if previous Prev Page had unnumbered posts
+  const [isPrevPagePartial, setIsPrevPagePartial] = useState(false)  // true when next Prev Page will load fewer than pageLength posts
 
   const previousPathnameRef = useRef<string>(location.pathname)
   
@@ -496,13 +498,14 @@ export default function HomePage() {
         await clearPrevPageCursor()
         // Don't continue prefetching - let loadFeed handle the fresh load
         setPreviousPageFeed([])
+        setIsPrevPagePartial(false)
         return
       }
 
       // Step 1: Try to fetch from cache first (no midnight boundary)
       console.log(`[Prefetch DEBUG] Fetching posts before ${new Date(afterTimestamp).toLocaleTimeString()} (${afterTimestamp}), effectivePageLength=${effectivePageLength}`)
       let { posts: postsForNextPage, postTimestamps: timestampsForNextPage } =
-        await getCachedFeedBefore(afterTimestamp, pageLength)
+        await getCachedFeedBefore(afterTimestamp, effectivePageLength)
 
       if (postsForNextPage.length > 0) {
         const newestTs = Math.max(...Array.from(timestampsForNextPage.values()))
@@ -530,7 +533,9 @@ export default function HomePage() {
       }
 
       // Step 2: If cache doesn't have enough posts, fetch from server
-      if (postsForNextPage.length < pageLength) {
+      // Use effectivePageLength (not pageLength) to avoid unnecessary server fetches
+      // when targetSize is small (e.g., alignment needs only 9 posts and cache has 9)
+      if (postsForNextPage.length < effectivePageLength) {
         console.log('[Prefetch] Cache exhausted or partial, checking for cursor')
 
         // Get the oldest timestamp from current posts (if any) to continue from
@@ -562,7 +567,7 @@ export default function HomePage() {
           agent,
           session.handle,
           session.did,
-          pageLength - postsForNextPage.length,
+          effectivePageLength - postsForNextPage.length,
           cursorToUse
         )
 
@@ -572,6 +577,7 @@ export default function HomePage() {
           await clearPrevPageCursor()
           addToast('Could not load older posts. Cursor expired.', 'error')
           setPreviousPageFeed([])
+          setIsPrevPagePartial(false)
           return
         }
 
@@ -693,7 +699,8 @@ export default function HomePage() {
       }
 
       // Step 3: Apply midnight boundary filter after curation
-      // If posts span multiple calendar days, keep only the older day's posts
+      // If posts span multiple calendar days, keep only the newer day's posts (firstDate)
+      // and number the older day's posts in preparation for the next Prev Page click
       if (filtered.length > 0) {
         const getLocalDateString = (post: CurationFeedViewPost) => {
           const uniqueId = getPostUniqueId(post)
@@ -705,28 +712,29 @@ export default function HomePage() {
         const lastDate = getLocalDateString(filtered[filtered.length - 1])
         if (firstDate && lastDate && firstDate !== lastDate) {
           const originalCount = filtered.length
-          // Keep OLDER day's posts (lastDate) since we're navigating backwards in time
-          filtered = filtered.filter(p => getLocalDateString(p) === lastDate)
-          console.log(`[Prefetch] Midnight filter: kept ${filtered.length}/${originalCount} posts from ${lastDate} (older day)`)
+          // Keep NEWER day's posts (firstDate) — closest to current display
+          filtered = filtered.filter(p => getLocalDateString(p) === firstDate)
+          console.log(`[Prefetch] Midnight filter: kept ${filtered.length}/${originalCount} posts from ${firstDate} (newer day)`)
 
-          // Number the newer day we're leaving behind (if unnumbered)
-          const newerDayPost = accumulatedFiltered.find(p => getLocalDateString(p) === firstDate)
-          if (newerDayPost) {
-            const nTs = accumulatedTimestamps.get(getPostUniqueId(newerDayPost)) ?? accumulatedTimestamps.get(newerDayPost.post.uri)
-            if (nTs && (newerDayPost as CurationFeedViewPost).curation?.postNumber == null) {
-              const newerDayStart = getLocalMidnight(new Date(nTs)).getTime()
-              const newerDayEnd = newerDayStart + 24 * 60 * 60 * 1000
-              console.log(`[Prefetch] Midnight trigger: numbering newer day ${firstDate}`)
-              await assignNumbersForDay(newerDayStart, newerDayEnd)
+          // Number the older day we're about to enter (if unnumbered)
+          const olderDayPost = accumulatedFiltered.find(p => getLocalDateString(p) === lastDate)
+          if (olderDayPost) {
+            const oTs = accumulatedTimestamps.get(getPostUniqueId(olderDayPost)) ?? accumulatedTimestamps.get(olderDayPost.post.uri)
+            if (oTs && (olderDayPost as CurationFeedViewPost).curation?.postNumber == null) {
+              const olderDayStart = getLocalMidnight(new Date(oTs)).getTime()
+              const olderDayEnd = olderDayStart + 24 * 60 * 60 * 1000
+              console.log(`[Prefetch] Midnight trigger: numbering older day ${lastDate}`)
+              await assignNumbersForDay(olderDayStart, olderDayEnd)
             }
           }
 
-          // Re-read numbers for the kept older-day posts
+          // Re-read numbers for the kept newer-day posts
           filtered = await lookupCurationAndFilter(filtered, clientDate(), accumulatedTimestamps, true)
         }
       }
 
       setPreviousPageFeed(filtered)
+      setIsPrevPagePartial(filtered.length > 0 && filtered.length < pageLength)
 
       // Track if this page has unnumbered posts for cross-prefetch detection
       prevPageHadUnnumberedRef.current = filtered.some(
@@ -746,6 +754,7 @@ export default function HomePage() {
     } catch (error) {
       console.warn('[Prefetch] Failed:', error)
       setPreviousPageFeed([])
+      setIsPrevPagePartial(false)
     }
   }, [agent, session, serverCursor, lookupCurationAndFilter])
 
@@ -823,6 +832,7 @@ export default function HomePage() {
           if (filteredPosts.length > 0) {
             setFeed(filteredPosts)
             setPreviousPageFeed([])  // Clear - will be populated by prefetch
+            setIsPrevPagePartial(false)
             setCursor(lastCursor)  // Keep for backward compatibility
 
             // Track newest post timestamp for new posts detection
@@ -976,6 +986,7 @@ export default function HomePage() {
       } else {
         setFeed(filteredPosts)
         setPreviousPageFeed([])  // Clear - will be populated by prefetch
+        setIsPrevPagePartial(false)
         // Track newest and oldest post timestamps for new posts detection and pagination
         // Always set from displayed posts, never from metadata
         // This ensures displayed timestamp matches what's actually displayed
@@ -1450,6 +1461,7 @@ export default function HomePage() {
       setServerCursor(undefined)
       setHasMorePosts(false)
       setPreviousPageFeed([])  // Clear pre-fetched posts to avoid stale data
+      setIsPrevPagePartial(false)
       setIsLoading(true)
       setIsInitialLoad(true)
       setInitialPrefetchDone(false)  // Reset so "Initializing..." shows during re-init
@@ -1515,6 +1527,7 @@ export default function HomePage() {
       setServerCursor(undefined)
       setHasMorePosts(false)
       setPreviousPageFeed([])
+      setIsPrevPagePartial(false)
       setIsLoading(true)
       setIsInitialLoad(true)
       setInitialPrefetchDone(false)
@@ -1721,16 +1734,36 @@ export default function HomePage() {
           setMultiPageCount(0)
         }
 
-        // Simplified button logic:
-        // - "Next Page" button: active when hasFullPage, grayed otherwise (always visible)
+        // Calculate partial page: can we reach the next page boundary with fewer than pageSize posts?
+        let postsToNextBoundary = pageSize  // default: need full page
+        let isPartialPage = false
+
+        if (!hasFullPage && feed.length > 0) {
+          const newestCurationNum = (feed[0] as CurationFeedViewPost).curation?.curationNumber
+          if (newestCurationNum && newestCurationNum > 0) {
+            const remainder = newestCurationNum % pageSize
+            if (remainder !== 0) {
+              postsToNextBoundary = pageSize - remainder
+              if (probeResult.filteredPostCount >= postsToNextBoundary) {
+                isPartialPage = true
+              }
+            }
+          }
+        }
+
+        // Button logic:
+        // - "Next Page" button: active when hasFullPage OR partial page can reach next boundary
         // - "All new posts" button: controlled by idle timer (see separate useEffect)
-        setNextPageReady(hasFullPage)
+        setNextPageReady(hasFullPage || isPartialPage)
+        setPostsNeededForPage(isPartialPage ? postsToNextBoundary : null)
         setNewPostsCount(probeResult.filteredPostCount)
         setPartialPageCount(probeResult.filteredPostCount) // Always track for idle timer
-        setShowNewPostsButton(hasFullPage) // For standard mode compatibility
+        setShowNewPostsButton(hasFullPage || isPartialPage) // For standard mode compatibility
 
         if (hasFullPage) {
           console.log(`[Paged Updates] Full page ready: ${probeResult.filteredPostCount} posts`)
+        } else if (isPartialPage) {
+          console.log(`[Paged Updates] Partial page ready: ${probeResult.filteredPostCount} posts (need ${postsToNextBoundary} to reach next boundary)`)
         } else {
           console.log(`[Paged Updates] Partial page: ${probeResult.filteredPostCount}/${pageSize} posts (idle timer will handle "All new posts" button)`)
         }
@@ -1831,8 +1864,11 @@ export default function HomePage() {
       const settings = await getSettings()
       const pageLength = settings?.feedPageLength || 25
 
+      // Capture partial page count before async operations (state may change)
+      const effectivePageLength = postsNeededForPage ?? pageLength
+
       // Paged updates: use unified secondary cache flow for contiguous caching
-      console.log('[New Posts] SINGLE PAGE: Loading via unified fetch...')
+      console.log(`[New Posts] SINGLE PAGE: Loading via unified fetch (effectivePageLength=${effectivePageLength})...`)
 
       setSyncInProgress(true)
       setSyncProgress(0)
@@ -1853,7 +1889,7 @@ export default function HomePage() {
 
         // Phase 2: Transfer oldest-first from in-memory secondary to primary until 1 page of displayable posts
         setSyncProgress(80)
-        const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'page', pageLength)
+        const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'page', effectivePageLength)
         setSyncProgress(100)
         console.log(`[New Posts] SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
           `${transferResult.displayableCount} displayable`)
@@ -1864,6 +1900,7 @@ export default function HomePage() {
         setNewPostsCount(0)
         setShowNewPostsButton(false)
         setNextPageReady(false)
+        setPostsNeededForPage(null)
         setPartialPageCount(0)
         setMultiPageCount(0)
         setIdleTimerTriggered(false)
@@ -1885,9 +1922,9 @@ export default function HomePage() {
             false  // Apply filtering
           )
 
-          // Cap new posts at pageLength
-          if (filteredPosts.length > pageLength) {
-            filteredPosts = filteredPosts.slice(0, pageLength)
+          // Cap new posts at effectivePageLength
+          if (filteredPosts.length > effectivePageLength) {
+            filteredPosts = filteredPosts.slice(0, effectivePageLength)
           }
 
           // Combine new posts with current feed AND previousPageFeed for page boundary alignment
@@ -1947,6 +1984,7 @@ export default function HomePage() {
 
           // Clear stale previousPageFeed and prefetch for the new page's oldest post
           setPreviousPageFeed([])
+          setIsPrevPagePartial(false)
           setInitialPrefetchDone(false)
           console.log(`[Next Page] Cleared stale previousPageFeed, starting prefetch from ${new Date(oldestTimestamp).toLocaleTimeString()}`)
           // Prefetch in background (no spinner, non-blocking)
@@ -1976,7 +2014,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingMore(false)
     }
-  }, [agent, session, newestDisplayedPostTimestamp, newPostsCount, lookupCurationAndFilter, isLoadingMore, feed, prefetchPrevPage])
+  }, [agent, session, newestDisplayedPostTimestamp, newPostsCount, lookupCurationAndFilter, isLoadingMore, feed, prefetchPrevPage, postsNeededForPage])
 
   // Handle "All n new posts" button click
   // Two flows: partial page (incremental) and multi-page (full re-display)
@@ -2092,6 +2130,7 @@ export default function HomePage() {
           // Replace feed with aligned posts (full re-display)
           setFeed(alignedPosts)
           setPreviousPageFeed([])
+          setIsPrevPagePartial(false)
           if (fetchResult.newestTimestamp) {
             setNewestDisplayedPostTimestamp(fetchResult.newestTimestamp)
           }
@@ -2153,7 +2192,7 @@ export default function HomePage() {
 
     // Calculate deduplication BEFORE setFeed to determine correct next prefetch timestamp
     const existingUris = new Set(feed.map(p => getPostUniqueId(p)))
-    const newPosts = previousPageFeed.filter(p => !existingUris.has(getPostUniqueId(p)))
+    let newPosts = previousPageFeed.filter(p => !existingUris.has(getPostUniqueId(p)))
     console.log(`[Prev Page] Appending ${newPosts.length} pre-fetched posts`)
     if (newPosts.length > 0) {
       const ppNewest = getFeedViewPostTimestamp(newPosts[0], feedReceivedTime).getTime()
@@ -2168,10 +2207,32 @@ export default function HomePage() {
       console.log(`[Prev Page DEBUG] Current feed oldest: ${new Date(feedOldest).toLocaleTimeString()} (#${feedOldestPost.curation?.curationNumber ?? '?'})`)
     }
 
-    // Calculate timestamp for next prefetch based on what's actually new
+    // Trim to page boundary before displaying
+    const settings = await getSettings()
+    const pageLength = settings?.feedPageLength || 25
+    if (newPosts.length > 0) {
+      const oldestPost = newPosts[newPosts.length - 1] as CurationFeedViewPost
+      const oldestCurationNumber = oldestPost.curation?.curationNumber
+      if (oldestCurationNumber && oldestCurationNumber > 0) {
+        const positionInPage = (oldestCurationNumber - 1) % pageLength
+        if (positionInPage > 0) {
+          const trimCount = positionInPage
+          if (newPosts.length > trimCount) {
+            newPosts = newPosts.slice(0, newPosts.length - trimCount)
+            const newOldest = newPosts[newPosts.length - 1] as CurationFeedViewPost
+            console.log(`[Prev Page] Trimmed ${trimCount} posts to align to boundary: #${oldestCurationNumber} → #${newOldest.curation?.curationNumber ?? '?'}`)
+          } else {
+            // Not enough posts to trim — display all; defensive targetSize will handle alignment
+            console.log(`[Prev Page] Cannot trim ${positionInPage} posts (only ${newPosts.length} available). Next prefetch will align.`)
+          }
+        }
+      }
+    }
+
+    // Calculate timestamp for next prefetch based on what's actually displayed (after trim)
     let nextPrefetchTimestamp: number
     if (newPosts.length > 0) {
-      // Use oldest of the newly appended posts
+      // Use oldest of the newly appended posts (after trim)
       nextPrefetchTimestamp = getFeedViewPostTimestamp(
         newPosts[newPosts.length - 1],
         feedReceivedTime
@@ -2195,9 +2256,7 @@ export default function HomePage() {
 
     // 2. Calculate target size for page boundary alignment (before clearing previousPageFeed)
     // Based on the oldest post AFTER this append (from newPosts), not the original feed
-    const settings = await getSettings()
     const curationSuspended = !settings || settings?.curationSuspended
-    const pageLength = settings?.feedPageLength || 25
     let targetSize: number | undefined = undefined  // undefined = use default pageLength
 
     if (!curationSuspended && newPosts.length > 0) {
@@ -2220,6 +2279,7 @@ export default function HomePage() {
 
     // 3. Clear previousPageFeed and show loading spinner
     setPreviousPageFeed([])
+    setIsPrevPagePartial(false)
     setIsPrefetching(true)
 
     // 4. Pre-fetch next page (awaited so we can update UI after)
@@ -2508,7 +2568,7 @@ export default function HomePage() {
                   ) : (
                     <>
                       <span>📄</span>
-                      Next Page
+                      Next Page{postsNeededForPage !== null ? ' *' : ''}
                     </>
                   )}
                 </button>
@@ -2609,7 +2669,7 @@ export default function HomePage() {
                 ) : (
                   <>
                     <span>📄</span>
-                    Prev Page
+                    Prev Page{isPrevPagePartial ? '*' : ''}
                   </>
                 )}
               </button>
