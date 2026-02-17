@@ -27,15 +27,28 @@ function performFullReset(preserveKeys: Record<string, string> = {}): never {
     localStorage.setItem(key, value)
   }
 
+  const redirectToHome = () => { window.location.href = '/' }
+
   const request = indexedDB.deleteDatabase('skylimit_db')
   request.onsuccess = () => {
     console.log('[Reset] Database deleted successfully')
-    window.location.href = '/'
+    redirectToHome()
   }
   request.onerror = () => {
-    console.error('[Reset] Database deletion failed')
-    window.location.href = '/'
+    console.error('[Reset] Database deletion failed, redirecting anyway')
+    redirectToHome()
   }
+  request.onblocked = () => {
+    console.warn('[Reset] Database deletion blocked (open connections), redirecting anyway')
+    redirectToHome()
+  }
+
+  // Safety net: if none of the callbacks fire within 3 seconds, redirect anyway
+  setTimeout(() => {
+    console.warn('[Reset] Timeout waiting for database deletion, redirecting')
+    redirectToHome()
+  }, 3000)
+
   // Don't render React - wait for redirect
   throw new Error('Reset in progress - halting React render')
 }
