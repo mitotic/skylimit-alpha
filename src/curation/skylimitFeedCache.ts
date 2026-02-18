@@ -2116,6 +2116,7 @@ export async function fetchToSecondaryFeedCache(
     pageLength?: number
     onProgress?: (percent: number) => void
     overlapTargetTimestamp?: number  // For idle_return: pre-idle cache's newest timestamp
+    initialCursor?: string  // Continue from a previous fetch's cursor (avoids re-fetching from newest)
   } = {}
 ): Promise<SecondaryFetchResult> {
   const pageLength = options.pageLength ?? DEFAULT_PAGE_LENGTH
@@ -2169,7 +2170,7 @@ export async function fetchToSecondaryFeedCache(
   let oldestTimestamp: number | null = null
   let newestTimestamp: number | null = null
 
-  let cursor: string | undefined = undefined
+  let cursor: string | undefined = options.initialCursor
   let lastPostTime = clientDate()
   let iterations = 0
   const maxIterations = MAX_FETCH_ITERATIONS

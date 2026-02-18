@@ -1067,6 +1067,7 @@ export default function HomePage() {
                 pageLength,
                 onProgress: (progress) => setLookbackProgress(progress),
                 ...(preIdleCacheNewest !== null ? { overlapTargetTimestamp: preIdleCacheNewest } : {}),
+                ...(newCursor ? { initialCursor: newCursor } : {}),
               }
             ).then(async (fetchResult) => {
               console.log(`[Background Lookback] Fetch complete: ${fetchResult.postsFetched} posts, stopReason=${fetchResult.stopReason}`)
