@@ -18,7 +18,10 @@ import {
   MOTD_MIN_SKYLIMIT_NUMBER,
   USER_TOPICS_KEY,
   USER_TIMEZONE_KEY,
-  extractDidFromUri
+  extractDidFromUri,
+  isStatusShow,
+  isStatusDrop,
+  SecondaryEntry
 } from './types'
 import { hmacRandom } from '../utils/hmac'
 import {
@@ -94,7 +97,8 @@ export async function curateSinglePost(
   currentStats: GlobalStats | null,
   currentProbs: UserFilter | null,
   secretKey: string,
-  editionCount: number
+  editionCount: number,
+  secondaryEntries?: SecondaryEntry[]
 ): Promise<CurationResult> {
   const summary = createPostSummary(post)
   const modStatus: CurationResult = { curation_msg: '' }
@@ -207,7 +211,8 @@ export async function curateSinglePost(
           summary.repostUri,
           summary.postTimestamp,
           summary.uniqueId,
-          intervalMs
+          intervalMs,
+          secondaryEntries
         )
 
         if (wasDisplayedWithinInterval) {
@@ -262,9 +267,39 @@ export async function curateSinglePost(
           }
         }
       } else {
-        // Original post or followed reply - standard logic
-        modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
-        if (regularDrop) dropReason = 'random (regular)'
+        // Check if this is a same-user reply (reply to own post)
+        const isSameUserReply = summary.inReplyToUri && (() => {
+          const parentDid = extractDidFromUri(summary.inReplyToUri!)
+          return parentDid === summary.accountDid
+        })()
+
+        if (isSameUserReply) {
+          // Look up parent in post summaries cache
+          const { getPostSummary } = await import('./skylimitCache')
+          const parentSummary = await getPostSummary(summary.inReplyToUri!)
+
+          const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
+
+          if (parentSummary
+              && isStatusShow(parentSummary.curation_status)
+              && (Date.now() - parentSummary.postTimestamp) >= TWENTY_FOUR_HOURS) {
+            // Parent shown and old (>24h) — keep the reply, apply normal probability
+            modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
+            if (regularDrop) dropReason = 'random (regular)'
+          } else {
+            // Drop: parent not in summaries, parent dropped, or parent shown recently
+            modStatus.curation_status = 'reply_drop'
+            dropReason = parentSummary
+              ? (isStatusDrop(parentSummary.curation_status)
+                  ? 'same-user reply (parent dropped)'
+                  : 'same-user reply (parent shown recently)')
+              : 'same-user reply'
+          }
+        } else {
+          // Original post or non-same-user followed reply - standard logic
+          modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
+          if (regularDrop) dropReason = 'random (regular)'
+        }
       }
     }
 

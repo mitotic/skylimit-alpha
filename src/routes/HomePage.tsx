@@ -25,7 +25,7 @@ import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/sk
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeout, clearClientInterval } from '../utils/clientClock'
-import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary, filterSameUserReplies } from '../hooks/homePageTypes'
+import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary } from '../hooks/homePageTypes'
 import { usePostInteractions } from '../hooks/usePostInteractions'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 
@@ -2510,9 +2510,6 @@ export default function HomePage() {
     return () => offSkyspeedCommand(handleCommand)
   }, [feed, handleLoadNewPosts, handleLoadAllNewPosts, handlePrevPage])
 
-  // Filter out immediate same-user replies
-  const filteredFeed = useMemo(() => filterSameUserReplies(feed), [feed])
-
   // Check if any prefetched posts in previousPageFeed have not been viewed
   const hasUnreadPrevPage = useMemo(() => {
     if (previousPageFeed.length === 0) return false
@@ -2630,7 +2627,7 @@ export default function HomePage() {
       {/* Tab Content */}
       {activeTab === 'curated' ? (
       <div>
-        {filteredFeed.length === 0 ? (
+        {feed.length === 0 ? (
           <div className="text-center py-12 text-gray-500 dark:text-gray-400">
             <p>No posts to show. Follow some users to see their posts here!</p>
           </div>
@@ -2697,7 +2694,7 @@ export default function HomePage() {
               </div>
             </div>
             
-            {filteredFeed.map((post, index) => (
+            {feed.map((post, index) => (
               <div
                 key={getPostUniqueId(post)}
                 ref={index === 0 ? firstPostRef : null}
@@ -2822,9 +2819,9 @@ export default function HomePage() {
           setReplyToUri(null)
           setQuotePost(null)
         }}
-        replyTo={replyToUri ? filteredFeed.find(p => p.post.uri === replyToUri)?.post ? {
+        replyTo={replyToUri ? feed.find(p => p.post.uri === replyToUri)?.post ? {
           uri: replyToUri,
-          cid: filteredFeed.find(p => p.post.uri === replyToUri)!.post.cid,
+          cid: feed.find(p => p.post.uri === replyToUri)!.post.cid,
         } : undefined : undefined}
         quotePost={quotePost || undefined}
         onPost={handlePost}

@@ -10,9 +10,9 @@ import { curateSinglePost } from './skylimitFilter'
 import { getFilter, getAllFollows } from './skylimitCache'
 import { getSettings } from './skylimitStore'
 import { getCachedPostUniqueIds, getLocalMidnight } from './skylimitFeedCache'
-import { getFeedViewPostTimestamp, getPostUniqueId } from './skylimitGeneral'
+import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
-import { FollowInfo, isStatusShow } from './types'
+import { FollowInfo, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost } from './types'
 
 // Maximum PageRaw to prevent excessive API calls
 const MAX_PAGE_RAW = 100
@@ -142,6 +142,9 @@ export async function probeForNewPosts(
     nextDayMidnight.setDate(nextDayMidnight.getDate() + 1)
     const nextDayMidnightMs = nextDayMidnight.getTime()
 
+    // In-memory secondary cache for cross-post curation context (discarded after probe)
+    const secondaryEntries: SecondaryEntry[] = []
+
     // Helper function to curate a single post and update result
     const processPost = async (post: AppBskyFeedDefs.FeedViewPost, postTimestamp: number): Promise<boolean> => {
       result.totalPostCount++
@@ -163,8 +166,29 @@ export async function probeForNewPosts(
         currentStats,
         currentProbs,
         secretKey,
-        editionCount
+        editionCount,
+        secondaryEntries
       )
+
+      // Build summary and append to secondary cache for cross-post context
+      const summary = createPostSummary(post, new Date(postTimestamp))
+      summary.curation_status = curation.curation_status
+      summary.curation_msg = curation.curation_msg
+      if (curation.curation_save) {
+        summary.curation_save = curation.curation_save
+      }
+
+      const uniqueId = getPostUniqueId(post)
+      const entry: FeedCacheEntryWithPost = {
+        uniqueId,
+        post,
+        timestamp: postTimestamp,
+        postTimestamp,
+        interval: '',
+        cachedAt: Date.now(),
+        originalPost: post,
+      }
+      secondaryEntries.push({ entry, summary })
 
       // Return true if post would be displayed (not dropped)
       if (isStatusShow(curation.curation_status)) {

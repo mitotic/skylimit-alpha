@@ -169,7 +169,8 @@ export async function curateEntriesToSecondary(
     } else {
       const curationResult = await curateSinglePost(
         entry.originalPost, myUsername, myDid, followMap,
-        currentStats, currentProbs, secretKey, editionCount
+        currentStats, currentProbs, secretKey, editionCount,
+        result
       )
       summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
       summary.curation_status = curationResult.curation_status
@@ -2238,7 +2239,8 @@ export async function fetchToSecondaryFeedCache(
           currentStats,
           currentProbs,
           secretKey,
-          editionCount
+          editionCount,
+          secondaryEntries
         )
 
         summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))

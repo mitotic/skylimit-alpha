@@ -245,7 +245,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
       ) : (
         <>
           {postText ? (
-            <div className="text-sm mb-2 whitespace-pre-wrap break-words">
+            <div className="text-sm mb-2 whitespace-pre-wrap break-words leading-[1.35] font-[450]">
               <RichText text={postText} facets={displayRecord?.facets} />
             </div>
           ) : (

@@ -2,7 +2,7 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryEntry } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 import { clientNow } from '../utils/clientClock'
 
@@ -413,7 +413,8 @@ export async function wasRepostOrOriginalDisplayedWithinInterval(
   repostUri: string,
   currentRepostTimestamp: number,
   currentRepostUniqueId: string,
-  intervalMs: number
+  intervalMs: number,
+  secondaryEntries?: SecondaryEntry[]
 ): Promise<boolean> {
   try {
     const database = await getDB()
@@ -455,6 +456,30 @@ export async function wasRepostOrOriginalDisplayedWithinInterval(
           repost.postTimestamp <= windowEnd &&
           isStatusShow(repost.curation_status)) {
         return true
+      }
+    }
+
+    // Check 3: Check in-memory secondary cache (entries curated earlier in this fetch cycle,
+    // not yet persisted to IndexedDB)
+    if (secondaryEntries && secondaryEntries.length > 0) {
+      for (const { summary } of secondaryEntries) {
+        if (summary.uniqueId === currentRepostUniqueId) {
+          continue
+        }
+        // 3a: Original post in secondary cache
+        if (summary.uniqueId === repostUri &&
+            summary.postTimestamp >= windowStart &&
+            summary.postTimestamp <= windowEnd &&
+            isStatusShow(summary.curation_status)) {
+          return true
+        }
+        // 3b: Another repost of the same post in secondary cache
+        if (summary.repostUri === repostUri &&
+            summary.postTimestamp >= windowStart &&
+            summary.postTimestamp <= windowEnd &&
+            isStatusShow(summary.curation_status)) {
+          return true
+        }
       }
     }
 
