@@ -351,9 +351,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   ref={repostCounterButtonRef}
                   onClick={handleCounterClick}
                   className={curation
-                    ? isViewedOld
-                      ? 'text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 cursor-pointer underline'
-                      : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                    ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                     : 'text-gray-500 dark:text-gray-400 cursor-default'
                   }
                   title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -361,6 +359,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 >
                   {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                 </button>
+                <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✓' : ''}</span>
               </span>
               {showPopup && curation && (
                 <CurationPopup
@@ -428,9 +427,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 ref={counterButtonRef}
                 onClick={handleCounterClick}
                 className={curation
-                  ? isViewedOld
-                    ? 'text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 cursor-pointer underline'
-                    : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                  ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                   : 'text-gray-500 dark:text-gray-400 cursor-default'
                 }
                 title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -438,6 +435,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               >
                 {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
               </button>
+              <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✓' : ''}</span>
             </div>
 
             {showPopup && curation && (
@@ -515,9 +513,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     ref={counterButtonRef}
                     onClick={handleCounterClick}
                     className={curation
-                      ? isViewedOld
-                        ? 'text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 cursor-pointer underline'
-                        : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                      ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
                       : 'text-gray-500 dark:text-gray-400 cursor-default'
                     }
                     title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -525,6 +521,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   >
                     {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                   </button>
+                  <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✓' : ''}</span>
                 </span>
                 {showPopup && curation && (
                   <CurationPopup
