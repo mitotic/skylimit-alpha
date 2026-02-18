@@ -160,7 +160,7 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
           </div>
 
           {record?.text && (
-            <div className="whitespace-pre-wrap break-words text-[17px] leading-[1.35]">
+            <div className="whitespace-pre-wrap break-words text-[1.0625rem] leading-[1.35]">
               <RichText text={record.text} facets={record.facets} />
             </div>
           )}
