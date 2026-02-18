@@ -566,7 +566,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           </div>
 
           {record?.text && (
-            <div className="mb-2 whitespace-pre-wrap break-words text-[15.5px] leading-[1.35] font-[450]">
+            <div className="mb-2 whitespace-pre-wrap break-words text-[17px] leading-[1.4] font-[420]">
               <RichText text={record.text} facets={record.facets} />
             </div>
           )}
