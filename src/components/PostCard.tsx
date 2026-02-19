@@ -330,7 +330,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   return (
     <article
       className={`${isPageBoundary ? 'border-b-4 border-blue-500 dark:border-blue-400' : 'border-b border-gray-200 dark:border-gray-700'} hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors`}
-      style={curation?.viewedAt ? {
+      style={isViewedOld ? {
         background: theme === 'dark'
           ? 'linear-gradient(to bottom, rgba(120,113,108,0.15) 0%, transparent 6%, transparent 94%, rgba(120,113,108,0.15) 100%), linear-gradient(to right, rgba(120,113,108,0.15) 0%, transparent 3%, transparent 97%, rgba(120,113,108,0.15) 100%)'
           : 'linear-gradient(to bottom, rgba(168,162,158,0.18) 0%, transparent 6%, transparent 94%, rgba(168,162,158,0.18) 100%), linear-gradient(to right, rgba(168,162,158,0.18) 0%, transparent 3%, transparent 97%, rgba(168,162,158,0.18) 100%)'
