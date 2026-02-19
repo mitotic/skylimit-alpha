@@ -12,7 +12,7 @@ import { getSettings } from './skylimitStore'
 import { getCachedPostUniqueIds, getLocalMidnight } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
-import { FollowInfo, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost } from './types'
+import { FollowInfo, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost, SecondaryRepostIndex, addToRepostIndex } from './types'
 
 // Maximum PageRaw to prevent excessive API calls
 const MAX_PAGE_RAW = 100
@@ -144,6 +144,7 @@ export async function probeForNewPosts(
 
     // In-memory secondary cache for cross-post curation context (discarded after probe)
     const secondaryEntries: SecondaryEntry[] = []
+    const repostIndex: SecondaryRepostIndex = new Map()
 
     // Helper function to curate a single post and update result
     const processPost = async (post: AppBskyFeedDefs.FeedViewPost, postTimestamp: number): Promise<boolean> => {
@@ -167,7 +168,7 @@ export async function probeForNewPosts(
         currentProbs,
         secretKey,
         editionCount,
-        secondaryEntries
+        repostIndex
       )
 
       // Build summary and append to secondary cache for cross-post context
@@ -189,6 +190,7 @@ export async function probeForNewPosts(
         originalPost: post,
       }
       secondaryEntries.push({ entry, summary })
+      addToRepostIndex(repostIndex, summary)
 
       // Return true if post would be displayed (not dropped)
       if (isStatusShow(curation.curation_status)) {

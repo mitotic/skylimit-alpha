@@ -370,6 +370,45 @@ export interface SecondaryEntry {
 }
 
 /**
+ * Index entry for efficient repost lookups in the secondary cache.
+ * Maps original post URIs to summaries that reference them.
+ */
+export interface SecondaryRepostIndexEntry {
+  uniqueId: string
+  postTimestamp: number
+  curation_status?: CurationStatus
+}
+
+/**
+ * Map from original post URI → entries that reference it.
+ * Covers both originals (keyed by uniqueId) and reposts (keyed by repostUri),
+ * since both map to the same key space (original post URIs).
+ */
+export type SecondaryRepostIndex = Map<string, SecondaryRepostIndexEntry[]>
+
+/**
+ * Add a summary to the secondary repost index.
+ * Call this after pushing to secondaryEntries.
+ */
+export function addToRepostIndex(index: SecondaryRepostIndex, summary: PostSummary): void {
+  const entry: SecondaryRepostIndexEntry = {
+    uniqueId: summary.uniqueId,
+    postTimestamp: summary.postTimestamp,
+    curation_status: summary.curation_status,
+  }
+  // Index by uniqueId (covers Check 3a: original post lookup)
+  const byId = index.get(summary.uniqueId)
+  if (byId) byId.push(entry)
+  else index.set(summary.uniqueId, [entry])
+  // Index by repostUri if present (covers Check 3b: repost lookup)
+  if (summary.repostUri) {
+    const byRepost = index.get(summary.repostUri)
+    if (byRepost) byRepost.push(entry)
+    else index.set(summary.repostUri, [entry])
+  }
+}
+
+/**
  * Result of unified fetchToSecondaryFeedCache
  */
 export interface SecondaryFetchResult {

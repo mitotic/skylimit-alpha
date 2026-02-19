@@ -2,7 +2,7 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryEntry } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryRepostIndex } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 import { clientNow } from '../utils/clientClock'
 
@@ -414,7 +414,7 @@ export async function wasRepostOrOriginalDisplayedWithinInterval(
   currentRepostTimestamp: number,
   currentRepostUniqueId: string,
   intervalMs: number,
-  secondaryEntries?: SecondaryEntry[]
+  secondaryRepostIndex?: SecondaryRepostIndex
 ): Promise<boolean> {
   try {
     const database = await getDB()
@@ -459,26 +459,20 @@ export async function wasRepostOrOriginalDisplayedWithinInterval(
       }
     }
 
-    // Check 3: Check in-memory secondary cache (entries curated earlier in this fetch cycle,
-    // not yet persisted to IndexedDB)
-    if (secondaryEntries && secondaryEntries.length > 0) {
-      for (const { summary } of secondaryEntries) {
-        if (summary.uniqueId === currentRepostUniqueId) {
-          continue
-        }
-        // 3a: Original post in secondary cache
-        if (summary.uniqueId === repostUri &&
-            summary.postTimestamp >= windowStart &&
-            summary.postTimestamp <= windowEnd &&
-            isStatusShow(summary.curation_status)) {
-          return true
-        }
-        // 3b: Another repost of the same post in secondary cache
-        if (summary.repostUri === repostUri &&
-            summary.postTimestamp >= windowStart &&
-            summary.postTimestamp <= windowEnd &&
-            isStatusShow(summary.curation_status)) {
-          return true
+    // Check 3: Check in-memory secondary cache via index (entries curated earlier in this
+    // fetch cycle, not yet persisted to IndexedDB). Uses O(1) map lookup instead of O(n) scan.
+    if (secondaryRepostIndex && secondaryRepostIndex.size > 0) {
+      const candidates = secondaryRepostIndex.get(repostUri)
+      if (candidates) {
+        for (const candidate of candidates) {
+          if (candidate.uniqueId === currentRepostUniqueId) {
+            continue
+          }
+          if (candidate.postTimestamp >= windowStart &&
+              candidate.postTimestamp <= windowEnd &&
+              isStatusShow(candidate.curation_status)) {
+            return true
+          }
         }
       }
     }

@@ -21,7 +21,7 @@ import {
   extractDidFromUri,
   isStatusShow,
   isStatusDrop,
-  SecondaryEntry
+  SecondaryRepostIndex
 } from './types'
 import { hmacRandom } from '../utils/hmac'
 import {
@@ -98,7 +98,7 @@ export async function curateSinglePost(
   currentProbs: UserFilter | null,
   secretKey: string,
   editionCount: number,
-  secondaryEntries?: SecondaryEntry[]
+  secondaryRepostIndex?: SecondaryRepostIndex
 ): Promise<CurationResult> {
   const summary = createPostSummary(post)
   const modStatus: CurationResult = { curation_msg: '' }
@@ -212,7 +212,7 @@ export async function curateSinglePost(
           summary.postTimestamp,
           summary.uniqueId,
           intervalMs,
-          secondaryEntries
+          secondaryRepostIndex
         )
 
         if (wasDisplayedWithinInterval) {

@@ -16,7 +16,7 @@ import {
   savePostSummariesForce,
 } from './skylimitCache'
 import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId, createPostSummary, getEditionTimeStrs } from './skylimitGeneral'
-import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync, FetchMode, FetchStopReason, SecondaryEntry, SecondaryFetchResult } from './types'
+import { CurationFeedViewPost, FeedCacheEntry, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync, FetchMode, FetchStopReason, SecondaryEntry, SecondaryFetchResult, SecondaryRepostIndex, addToRepostIndex } from './types'
 import { curatePosts } from './skylimitTimeline'
 import { curateSinglePost } from './skylimitFilter'
 import { getMaxNumbersForDay } from './skylimitNumbering'
@@ -161,6 +161,7 @@ export async function curateEntriesToSecondary(
   const secretKey = settings?.secretKey || 'default'
 
   const result: SecondaryEntry[] = []
+  const repostIndex: SecondaryRepostIndex = new Map()
   for (const entry of entries) {
     const existingSummary = await getPostSummary(entry.uniqueId)
     let summary: PostSummary
@@ -170,7 +171,7 @@ export async function curateEntriesToSecondary(
       const curationResult = await curateSinglePost(
         entry.originalPost, myUsername, myDid, followMap,
         currentStats, currentProbs, secretKey, editionCount,
-        result
+        repostIndex
       )
       summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
       summary.curation_status = curationResult.curation_status
@@ -180,6 +181,7 @@ export async function curateEntriesToSecondary(
       }
     }
     result.push({ entry, summary })
+    addToRepostIndex(repostIndex, summary)
   }
   return result
 }
@@ -2167,6 +2169,7 @@ export async function fetchToSecondaryFeedCache(
 
   // In-memory secondary cache
   const secondaryEntries: SecondaryEntry[] = []
+  const repostIndex: SecondaryRepostIndex = new Map()
   let oldestTimestamp: number | null = null
   let newestTimestamp: number | null = null
 
@@ -2241,7 +2244,7 @@ export async function fetchToSecondaryFeedCache(
           currentProbs,
           secretKey,
           editionCount,
-          secondaryEntries
+          repostIndex
         )
 
         summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
@@ -2252,8 +2255,9 @@ export async function fetchToSecondaryFeedCache(
         }
       }
 
-      // Append to in-memory array
+      // Append to in-memory array and update repost index
       secondaryEntries.push({ entry, summary })
+      addToRepostIndex(repostIndex, summary)
 
       // Track boundaries
       if (newestTimestamp === null || entry.postTimestamp > newestTimestamp) {
