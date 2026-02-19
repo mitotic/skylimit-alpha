@@ -121,6 +121,9 @@ export default function SettingsPage() {
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
+  const [largerText, setLargerText] = useState(() =>
+    localStorage.getItem('websky_larger_text') === 'true'
+  )
 
   // Detect unsaved changes by comparing current settings to original
   const hasUnsavedChanges = useMemo(() => {
@@ -462,6 +465,29 @@ export default function SettingsPage() {
             className="btn btn-secondary"
           >
             Switch to {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-medium">Text Size</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              {largerText ? 'Larger text for posts' : 'Default text size'}
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const newValue = !largerText
+              localStorage.setItem('websky_larger_text', newValue.toString())
+              setLargerText(newValue)
+              if (newValue) {
+                document.documentElement.classList.add('larger-text')
+              } else {
+                document.documentElement.classList.remove('larger-text')
+              }
+            }}
+            className="btn btn-secondary"
+          >
+            {largerText ? 'Default' : 'Larger'}
           </button>
         </div>
       </div>

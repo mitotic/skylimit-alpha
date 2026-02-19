@@ -146,14 +146,14 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
         <div className="font-semibold text-sm">
           {displayName || handle}
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400">
+        <div className="text-sm text-gray-500 dark:text-gray-400">
           @{handle}
         </div>
       </div>
 
       {/* Curation statistics */}
       <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isDropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
-        <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+        <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
           {/* PostCard: Raw post number */}
           {rawPostNumber !== undefined && rawPostNumber !== null && (
             <div>Raw post #{rawPostNumber}</div>
@@ -161,7 +161,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
 
           {/* Posting rate and shown rate */}
           {postingPerDay !== undefined && (
-            <div>Posting {formatCount(postingPerDay)}/day{shownPerDay !== undefined ? `, Showing ${formatCount(shownPerDay)}/day` : ''}</div>
+            <div>Posting {formatCount(postingPerDay)}/day{shownPerDay !== undefined ? `, showing ${formatCount(shownPerDay)}/day` : ''}</div>
           )}
 
           {/* Probabilities */}
@@ -182,26 +182,26 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       {/* Amp buttons */}
       {showAmpButtons && (
         <div className="p-3">
-          <div className="text-xs font-semibold mb-2">
+          <div className="text-sm font-semibold mb-2">
             Amplification Factor: {ampFactor !== undefined ? ampFactor.toFixed(1) : '1.0'}
           </div>
           <div className="flex gap-2">
             <button
               onClick={onAmpDown}
               disabled={ampLoading}
-              className="flex-1 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
+              className="flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
             >
-              Amp Down (by 30%)
+              ↓ Amp Down
             </button>
             <button
               onClick={onAmpUp}
               disabled={ampLoading}
-              className="flex-1 px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
+              className="flex-1 px-3 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
             >
-              Amp Up (by 40%)
+              ↑ Amp Up
             </button>
           </div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+          <div className="text-sm text-gray-500 dark:text-gray-400 mt-2">
             Adjust how many posts you see from this account
           </div>
         </div>
@@ -212,7 +212,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
         <div className="p-3 border-t border-gray-200 dark:border-gray-700">
           <button
             onClick={onNavigateToSettings}
-            className="w-full text-xs text-blue-600 dark:text-blue-400 hover:underline"
+            className="w-full text-sm text-blue-600 dark:text-blue-400 hover:underline"
           >
             Curation Settings
           </button>
@@ -222,8 +222,8 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       {/* Debug Info section - only shown when debugMode is enabled */}
       {debugMode && (
         <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-          <div className="text-xs font-semibold mb-2">Debug Info</div>
-          <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+          <div className="text-sm font-semibold mb-2">Debug Info</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
             {curationStatus !== undefined && (
               <div>Curation status: {curationStatus || 'none'}</div>
             )}

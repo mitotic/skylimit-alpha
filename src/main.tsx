@@ -6,6 +6,11 @@ import { SessionProvider } from './auth/SessionContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import './styles/index.css'
 
+// Apply larger text setting from localStorage
+if (localStorage.getItem('websky_larger_text') === 'true') {
+  document.documentElement.classList.add('larger-text')
+}
+
 // localStorage keys
 const SERVER_STORAGE_KEY = 'skylimit_server'
 const AUTO_LOGIN_STORAGE_KEY = 'skylimit_auto_login'

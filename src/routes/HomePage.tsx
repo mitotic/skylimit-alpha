@@ -18,6 +18,7 @@ import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
+import { markPostViewed, getUnviewedPostsInfo, countUnviewedOlderThan, hasUnviewedInSet } from '../curation/skylimitUnviewedTracker'
 import { GlobalStats, CurationFeedViewPost, SecondaryEntry, getIntervalHoursSync, isStatusShow } from '../curation/types'
 import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
@@ -28,6 +29,11 @@ import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeou
 import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary } from '../hooks/homePageTypes'
 import { usePostInteractions } from '../hooks/usePostInteractions'
 import { useScrollManagement } from '../hooks/useScrollManagement'
+
+/** Minimum dwell time (ms) a post must remain visible and stationary to count as "viewed" */
+const VIEW_DWELL_TIME_MS = 2000
+/** Debounce interval (ms) after last scroll event before considering scroll "stopped" */
+const SCROLL_STOP_DEBOUNCE_MS = 300
 
 export default function HomePage() {
   const location = useLocation()
@@ -87,6 +93,10 @@ export default function HomePage() {
   const viewedPostIdsRef = useRef<Set<string>>(new Set())  // In-session set of already-viewed post uniqueIds
   const pendingViewedUpdatesRef = useRef<Map<string, number>>(new Map())  // Batched viewedAt updates for feed state
   const viewedUpdateScheduledRef = useRef(false)  // Whether a batched feed state update is scheduled
+  const dwellTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())  // Active dwell timers per postId
+  const isScrollingRef = useRef(false)  // True while user is actively scrolling
+  const scrollStopDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)  // Debounce handle for scroll-stop detection
+  const visiblePostElementsRef = useRef<Map<string, HTMLElement>>(new Map())  // Currently-visible posts awaiting dwell
 
   const previousPathnameRef = useRef<string>(location.pathname)
   
@@ -2342,46 +2352,125 @@ export default function HomePage() {
     }
   }, [infiniteScrollingEnabled, handlePrevPage])
 
-  // IntersectionObserver for post view tracking
-  // When a post becomes at least 50% visible, record viewedAt timestamp in IndexedDB
+  // Start a dwell timer for a post that is visible and stationary.
+  // After VIEW_DWELL_TIME_MS of continuous visibility without scrolling, mark the post as viewed.
+  const startDwellTimer = useCallback((postId: string, el: HTMLElement) => {
+    // Don't start if already has a timer or already viewed
+    if (dwellTimersRef.current.has(postId)) return
+    if (viewedPostIdsRef.current.has(postId)) return
+
+    const timerId = setTimeout(() => {
+      dwellTimersRef.current.delete(postId)
+      visiblePostElementsRef.current.delete(postId)
+
+      // Guard: re-check not already viewed (race condition protection)
+      if (viewedPostIdsRef.current.has(postId)) return
+
+      // Mark as viewed: same pipeline as before (IndexedDB + batched React state)
+      viewedPostIdsRef.current.add(postId)
+      viewTrackingObserverRef.current?.unobserve(el)
+
+      const now = clientNow()
+      updatePostSummaryViewedAt(postId, now)
+      markPostViewed(postId)
+
+      pendingViewedUpdatesRef.current.set(postId, now)
+      if (!viewedUpdateScheduledRef.current) {
+        viewedUpdateScheduledRef.current = true
+        requestAnimationFrame(() => {
+          viewedUpdateScheduledRef.current = false
+          const updates = new Map(pendingViewedUpdatesRef.current)
+          pendingViewedUpdatesRef.current.clear()
+          setFeed(prev => prev.map(p => {
+            const id = getPostUniqueId(p)
+            const vt = updates.get(id)
+            if (vt && 'curation' in p) {
+              const cp = p as CurationFeedViewPost
+              // Don't overwrite existing viewedAt (first view wins)
+              if (cp.curation?.viewedAt) return p
+              return { ...cp, curation: { ...cp.curation, viewedAt: vt } } as CurationFeedViewPost
+            }
+            return p
+          }))
+        })
+      }
+    }, VIEW_DWELL_TIME_MS)
+
+    dwellTimersRef.current.set(postId, timerId)
+  }, [])
+
+  // Scroll listener for dwell-time tracking: cancel dwell timers while scrolling,
+  // restart them when scrolling stops (after SCROLL_STOP_DEBOUNCE_MS of inactivity)
+  useEffect(() => {
+    const handleScroll = () => {
+      isScrollingRef.current = true
+
+      // Cancel all active dwell timers (scrolling invalidates them)
+      for (const timerId of dwellTimersRef.current.values()) {
+        clearTimeout(timerId)
+      }
+      dwellTimersRef.current.clear()
+
+      // Reset scroll-stop debounce
+      if (scrollStopDebounceRef.current !== null) {
+        clearTimeout(scrollStopDebounceRef.current)
+      }
+      scrollStopDebounceRef.current = setTimeout(() => {
+        isScrollingRef.current = false
+        scrollStopDebounceRef.current = null
+
+        // Restart dwell timers for all currently-visible, not-yet-viewed posts
+        for (const [postId, el] of visiblePostElementsRef.current) {
+          if (viewedPostIdsRef.current.has(postId)) continue
+          startDwellTimer(postId, el)
+        }
+      }, SCROLL_STOP_DEBOUNCE_MS)
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      if (scrollStopDebounceRef.current !== null) {
+        clearTimeout(scrollStopDebounceRef.current)
+      }
+      for (const timerId of dwellTimersRef.current.values()) {
+        clearTimeout(timerId)
+      }
+      dwellTimersRef.current.clear()
+    }
+  }, [startDwellTimer])
+
+  // IntersectionObserver for post view tracking with dwell-time requirement.
+  // Posts must remain 50% visible and stationary for VIEW_DWELL_TIME_MS to be marked as viewed.
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (!entry.isIntersecting) continue
           const el = entry.target as HTMLElement
           const uniqueId = el.dataset.postId
           if (!uniqueId) continue
-          // Skip if already recorded this session
-          if (viewedPostIdsRef.current.has(uniqueId)) {
-            observer.unobserve(el)
-            continue
-          }
-          viewedPostIdsRef.current.add(uniqueId)
-          observer.unobserve(el)
-          // Fire-and-forget: save viewedAt to IndexedDB and update in-memory feed state
-          const now = clientNow()
-          updatePostSummaryViewedAt(uniqueId, now)
-          // Batch in-memory feed state updates (coalesce multiple visible posts into one setFeed)
-          pendingViewedUpdatesRef.current.set(uniqueId, now)
-          if (!viewedUpdateScheduledRef.current) {
-            viewedUpdateScheduledRef.current = true
-            requestAnimationFrame(() => {
-              viewedUpdateScheduledRef.current = false
-              const updates = new Map(pendingViewedUpdatesRef.current)
-              pendingViewedUpdatesRef.current.clear()
-              setFeed(prev => prev.map(p => {
-                const id = getPostUniqueId(p)
-                const vt = updates.get(id)
-                if (vt && 'curation' in p) {
-                  const cp = p as CurationFeedViewPost
-                  // Don't overwrite existing viewedAt (first view wins)
-                  if (cp.curation?.viewedAt) return p
-                  return { ...cp, curation: { ...cp.curation, viewedAt: vt } } as CurationFeedViewPost
-                }
-                return p
-              }))
-            })
+
+          if (entry.isIntersecting) {
+            // Post entered 50% visibility
+            if (viewedPostIdsRef.current.has(uniqueId)) {
+              observer.unobserve(el)
+              continue
+            }
+            // Track as visible; start dwell timer if not scrolling
+            visiblePostElementsRef.current.set(uniqueId, el)
+            if (!isScrollingRef.current) {
+              startDwellTimer(uniqueId, el)
+            }
+            // If scrolling, the scroll-stop handler will start the timer later
+          } else {
+            // Post left visibility: cancel any pending dwell timer
+            visiblePostElementsRef.current.delete(uniqueId)
+            const timerId = dwellTimersRef.current.get(uniqueId)
+            if (timerId !== undefined) {
+              clearTimeout(timerId)
+              dwellTimersRef.current.delete(uniqueId)
+            }
+            // Do NOT unobserve: post may re-enter visibility on scroll-back
           }
         }
       },
@@ -2391,8 +2480,9 @@ export default function HomePage() {
     return () => {
       observer.disconnect()
       viewTrackingObserverRef.current = null
+      visiblePostElementsRef.current.clear()
     }
-  }, [])
+  }, [startDwellTimer])
 
   // Observe post elements for view tracking whenever feed changes
   // Use requestAnimationFrame to ensure React has committed DOM updates before querying
@@ -2511,14 +2601,22 @@ export default function HomePage() {
     return () => offSkyspeedCommand(handleCommand)
   }, [feed, handleLoadNewPosts, handleLoadAllNewPosts, handlePrevPage])
 
-  // Check if any prefetched posts in previousPageFeed have not been viewed
-  const hasUnreadPrevPage = useMemo(() => {
-    if (previousPageFeed.length === 0) return false
-    return previousPageFeed.some(p => {
-      const curation = 'curation' in p ? (p as CurationFeedViewPost).curation : undefined
-      return !curation?.viewedAt
-    })
-  }, [previousPageFeed])
+  // Compute label for unviewed posts next to Prev Page button
+  const prevPageUnviewedLabel: string | null = useMemo(() => {
+    if (previousPageFeed.length === 0) return null
+    const { boundary } = getUnviewedPostsInfo()
+    if (boundary === 0) return null // stats not yet computed
+    if (oldestDisplayedPostTimestamp && oldestDisplayedPostTimestamp > boundary) {
+      // All displayed posts are within the 24h window — check for older unviewed posts
+      const olderCount = countUnviewedOlderThan(oldestDisplayedPostTimestamp)
+      if (olderCount > 0) {
+        return `(${olderCount} unviewed posts within last 24 hours)`
+      }
+    }
+    // Fall through: check prefetched posts for any unviewed
+    const prefetchedIds = previousPageFeed.map(p => getPostUniqueId(p))
+    return hasUnviewedInSet(prefetchedIds) ? '(unviewed posts)' : null
+  }, [previousPageFeed, oldestDisplayedPostTimestamp, feed])
 
   // Handle tab change - saves current tab's state and switches to new tab
   const handleTabChange = useCallback((newTab: HomeTab) => {
@@ -2763,7 +2861,7 @@ export default function HomePage() {
                 ) : (
                   <>
                     <span>📄</span>
-                    Prev Page{hasUnreadPrevPage ? ' (unread posts)' : ''}
+                    Prev Page{prevPageUnviewedLabel ? ` ${prevPageUnviewedLabel}` : ''}
                   </>
                 )}
               </button>

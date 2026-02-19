@@ -132,7 +132,7 @@ export default function ParentPost({ parentUri, childPost, onClick }: ParentPost
           </div>
 
           {record?.text && (
-            <div className="text-[0.9375rem] mb-1 whitespace-pre-wrap break-words line-clamp-3 leading-[1.35]">
+            <div className="mb-1 whitespace-pre-wrap break-words line-clamp-3" style={{ fontSize: 'var(--post-secondary-text-size)', lineHeight: 'var(--post-text-leading)' }}>
               <RichText text={record.text} facets={record.facets} />
             </div>
           )}

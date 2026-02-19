@@ -15,6 +15,7 @@ import { ampUp, ampDown } from '../curation/skylimitFollows'
 import { getFilter, getFollow } from '../curation/skylimitCache'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
 import { useSession } from '../auth/SessionContext'
+import { useTheme } from '../contexts/ThemeContext'
 import CurationPopup from './CurationPopup'
 import RichText from './RichText'
 
@@ -50,6 +51,7 @@ interface PostCardProps {
 export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, showCounter = false, onAmpChange, showRootPost = true, engagementStats }: PostCardProps) {
   const navigate = useNavigate()
   const { session } = useSession()
+  const { theme } = useTheme()
   const myUsername = session?.handle || ''
   const record = post.post.record as any
   const author = post.post.author
@@ -328,6 +330,11 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   return (
     <article
       className={`${isPageBoundary ? 'border-b-4 border-blue-500 dark:border-blue-400' : 'border-b border-gray-200 dark:border-gray-700'} hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors`}
+      style={curation?.viewedAt ? {
+        background: theme === 'dark'
+          ? 'linear-gradient(to bottom, rgba(120,113,108,0.15) 0%, transparent 6%, transparent 94%, rgba(120,113,108,0.15) 100%)'
+          : 'linear-gradient(to bottom, rgba(168,162,158,0.18) 0%, transparent 6%, transparent 94%, rgba(168,162,158,0.18) 100%)'
+      } : undefined}
     >
       {repostedBy && (
         <div className={`px-4 pt-4 pb-2 text-sm text-gray-500 dark:text-gray-400 flex items-center justify-between relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}>
@@ -359,7 +366,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 >
                   {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                 </button>
-                <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✓' : ''}</span>
+                <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
               </span>
               {showPopup && curation && (
                 <CurationPopup
@@ -435,7 +442,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               >
                 {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
               </button>
-              <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✓' : ''}</span>
+              <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
             </div>
 
             {showPopup && curation && (
@@ -521,7 +528,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   >
                     {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                   </button>
-                  <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✓' : ''}</span>
+                  <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
                 </span>
                 {showPopup && curation && (
                   <CurationPopup
@@ -563,7 +570,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           </div>
 
           {record?.text && (
-            <div className="mb-2 whitespace-pre-wrap break-words text-[1.0625rem] leading-[1.35]">
+            <div className="mb-2 whitespace-pre-wrap break-words" style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>
               <RichText text={record.text} facets={record.facets} />
             </div>
           )}

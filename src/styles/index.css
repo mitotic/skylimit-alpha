@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --post-text-size: 1.0625rem;
+  --post-text-leading: 1.35;
+  --post-secondary-text-size: 0.9375rem;
+}
+
+:root.larger-text {
+  --post-text-size: 1.125rem;
+  --post-text-leading: 1.30;
+  --post-secondary-text-size: 1rem;
+}
+
 @layer base {
   *, *::before, *::after {
     box-sizing: border-box;
