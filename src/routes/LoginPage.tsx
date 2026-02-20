@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { getNonStandardServerName } from '../api/atproto-client'
+import { updateSettings } from '../curation/skylimitStore'
 import Button from '../components/Button'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
@@ -12,6 +13,7 @@ export default function LoginPage() {
   const [identifier, setIdentifier] = useState(getNonStandardServerName() ? 'testuser' : '')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(true)
+  const [debugMode, setDebugMode] = useState(() => localStorage.getItem('websky_login_debug_mode') === 'true')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
@@ -37,6 +39,7 @@ export default function LoginPage() {
 
     try {
       await login(identifier.trim(), password, rememberMe)
+      await updateSettings({ debugMode })
       addToast('Login successful!', 'success')
       navigate('/')
     } catch (err) {
@@ -122,6 +125,24 @@ export default function LoginPage() {
             />
             <label htmlFor="rememberMe" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
               Remember me
+            </label>
+          </div>
+
+          <div className="flex items-center">
+            <input
+              id="debugMode"
+              type="checkbox"
+              checked={debugMode}
+              onChange={(e) => {
+                const checked = e.target.checked
+                setDebugMode(checked)
+                localStorage.setItem('websky_login_debug_mode', String(checked))
+              }}
+              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+              disabled={isLoading}
+            />
+            <label htmlFor="debugMode" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+              Debug mode
             </label>
           </div>
 

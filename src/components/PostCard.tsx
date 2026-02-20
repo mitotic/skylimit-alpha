@@ -342,7 +342,13 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             onClick={handleReposterClick}
             className="hover:underline cursor-pointer"
           >
-            🔄 Reposted by {repostedBy.displayName || repostedBy.handle}
+            <svg className="inline-block mr-1 -mt-0.5" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 1l4 4-4 4" />
+              <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+              <path d="M7 23l-4-4 4-4" />
+              <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+            </svg>
+            Reposted by {repostedBy.displayName || repostedBy.handle}
           </span>
           {showCounterDisplay && curation && (
             <>
@@ -586,6 +592,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
           <PostActions
             post={actualPost}
+            author={actualPost.author}
             onReply={onReply}
             onRepost={onRepost}
             onQuotePost={onQuotePost}

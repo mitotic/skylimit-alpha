@@ -29,6 +29,21 @@ import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeou
 import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary } from '../hooks/homePageTypes'
 import { usePostInteractions } from '../hooks/usePostInteractions'
 import { useScrollManagement } from '../hooks/useScrollManagement'
+import { usePullToRefresh } from '../hooks/usePullToRefresh'
+
+/** Options for refreshDisplayedFeed — designed for reuse across refresh triggers */
+interface RefreshDisplayedFeedOptions {
+  newestTimestamp?: number   // Override which post appears at top (default: current newestDisplayedPostTimestamp)
+  triggerProbe?: boolean     // Whether to force an immediate probe (default: true)
+  showAllNewPosts?: boolean  // Whether to set idleTimerTriggered (default: true)
+}
+
+/** Result returned by refreshDisplayedFeed for caller use */
+interface RefreshDisplayedFeedResult {
+  alignedPosts: CurationFeedViewPost[]
+  newestTimestamp: number
+  oldestTimestamp: number
+}
 
 /** Minimum dwell time (ms) a post must remain visible and stationary to count as "viewed" */
 const VIEW_DWELL_TIME_MS = 2000
@@ -75,6 +90,9 @@ export default function HomePage() {
   // Cooldown: track when we last displayed new posts to prevent button from immediately reappearing
   const lastDisplayTimeRef = useRef<number>(0)
   const DISPLAY_COOLDOWN_MS = 30000 // 30 second cooldown after displaying posts
+  // Force-probe: incrementing forceProbeTrigger re-runs the probe useEffect (cancels old interval, probes immediately)
+  const [forceProbeTrigger, setForceProbeTrigger] = useState(0)
+  const forceProbeRef = useRef(false)  // When true, probe bypasses display cooldown
   // Lookback caching state
   const [lookingBack, setLookingBack] = useState(false) // true during background lookback fetch
   const [lookbackProgress, setLookbackProgress] = useState<number | null>(null) // 0-100 progress percentage
@@ -819,63 +837,24 @@ export default function HomePage() {
       // ALWAYS try cache first (for initial load without cursor)
       // EXCEPTION: Skip cache-only path for idle return mode or initial load mode
       if (!cursor && useCache && !isIdleReturnMode && !isInitialLoadMode) {
-        const cachedPosts = await getCachedFeed(initialCacheLength)
-        if (cachedPosts.length > 0) {
-          // Get last cursor from metadata so "Prev Page" button appears
+        // Use refreshDisplayedFeed with no newestTimestamp — starts from newest displayable post in cache
+        const result = await refreshDisplayedFeed({ triggerProbe: false, showAllNewPosts: false })
+        if (result) {
+          // Cache-only load specific state
           const cachedMetadata = await getLastFetchMetadata()
-          const lastCursor = cachedMetadata?.lastCursor
+          setCursor(cachedMetadata?.lastCursor)
+          setHasMorePosts(result.oldestTimestamp !== null || cachedMetadata?.lastCursor !== undefined)
+          setIsInitialLoad(false)
+          setIsLoading(false)
+          console.log(`[Feed] Loaded ${result.alignedPosts.length} posts from cache via refreshDisplayedFeed`)
 
-          // Look up curation status and filter
-          const feedReceivedTime = clientDate()
-          let filteredPosts = await lookupCurationAndFilter(cachedPosts, feedReceivedTime)
-
-          // Align to page boundary if curation numbers are available
-          filteredPosts = alignFeedToPageBoundary(filteredPosts, pageLength)
-
-          if (filteredPosts.length > 0) {
-            setFeed(filteredPosts)
-            setPreviousPageFeed([])  // Clear - will be populated by prefetch
-            setCursor(lastCursor)  // Keep for backward compatibility
-
-            // Track newest post timestamp for new posts detection
-            const newestTimestamp = getFeedViewPostTimestamp(filteredPosts[0], feedReceivedTime).getTime()
-            setNewestDisplayedPostTimestamp(newestTimestamp)
-
-            // Track oldest post timestamp from displayed posts for pagination
-            const oldestDisplayedTimestamp = getFeedViewPostTimestamp(filteredPosts[filteredPosts.length - 1], feedReceivedTime).getTime()
-            setOldestDisplayedPostTimestamp(oldestDisplayedTimestamp)
-            console.log(`[Feed] Set oldestDisplayedPostTimestamp from displayed posts: ${new Date(oldestDisplayedTimestamp).toISOString()} (from ${filteredPosts.length} displayed posts)`)
-
-            // IMPORTANT: Update oldestCachedPostTimestamp in metadata to the oldest postTimestamp from ALL cached posts (not just filtered)
-            // This ensures we don't query for posts that were already in the initial cache batch
-            // Use the last post from cachedPosts (which are sorted newest first) as the boundary
-            const oldestCachedTimestamp = getFeedViewPostTimestamp(cachedPosts[cachedPosts.length - 1], feedReceivedTime).getTime()
-            await updateFeedCacheOldestPostTimestamp(oldestCachedTimestamp)
-            console.log(`[Feed] Updated oldestCachedPostTimestamp in metadata to oldest cached post: ${new Date(oldestCachedTimestamp).toISOString()} (from ${cachedPosts.length} cached posts, ${filteredPosts.length} displayed)`)
-
-            // Check if there are more posts available (based on oldestDisplayedPostTimestamp)
-            // Use the local variable oldestDisplayedTimestamp (not state) since state updates are async
-            // If oldestDisplayedTimestamp is set, there may be more posts in cache
-            // Also check if there's a cursor from metadata, which indicates more posts from server
-            const shouldShowLoadMore = oldestDisplayedTimestamp !== null || lastCursor !== undefined
-            setHasMorePosts(shouldShowLoadMore)
-            console.log(`[Feed] Set hasMorePosts to ${shouldShowLoadMore} (oldestDisplayedTimestamp: ${oldestDisplayedTimestamp !== null}, lastCursor: ${lastCursor !== undefined})`)
-
-            // Mark initial load as complete
-            setIsInitialLoad(false)
-
-            setIsLoading(false)
-            console.log(`[Feed] Loaded ${filteredPosts.length} posts from cache`)
-
-            // Pre-fetch next page for instant Prev Page (NO SPINNER)
-            // Use local variable since state updates are async
-            setTimeout(async () => {
-              await prefetchPrevPage(oldestDisplayedTimestamp)
-              setInitialPrefetchDone(true)
-            }, 100)
-
-            return
+          // Update oldestCachedPostTimestamp in metadata (need raw cache count for boundary)
+          const cachedPosts = await getCachedFeed(initialCacheLength)
+          if (cachedPosts.length > 0) {
+            const oldestCachedTs = getFeedViewPostTimestamp(cachedPosts[cachedPosts.length - 1], clientDate()).getTime()
+            await updateFeedCacheOldestPostTimestamp(oldestCachedTs)
           }
+          return
         }
       }
       
@@ -1138,9 +1117,8 @@ export default function HomePage() {
                       postsPerDay,
                     })
 
-                    sessionStorage.removeItem(getFeedStateKey('curated'))
                     console.log('[Curation Init] Reloading feed with curation data...')
-                    await redisplayFeed()
+                    await refreshDisplayedFeed({ triggerProbe: false, showAllNewPosts: false })
 
                     setShowCurationInitModal(true)
                     isInitialCurationRef.current = false
@@ -1153,8 +1131,7 @@ export default function HomePage() {
                   // Non-initial lookback (e.g., Reset Feed) — redisplay with numbers
                   try {
                     console.log('[Lookback] Non-initial lookback complete, redisplaying...')
-                    sessionStorage.removeItem(getFeedStateKey('curated'))
-                    await redisplayFeed()
+                    await refreshDisplayedFeed({ triggerProbe: false, showAllNewPosts: false })
                     setInitialPrefetchDone(true)
                   } catch (err) {
                     console.error('[Lookback] Post-lookback processing failed:', err)
@@ -1163,9 +1140,8 @@ export default function HomePage() {
                 }
               } else {
                 // IDLE RETURN: numbers already assigned during transfer, just redisplay
-                sessionStorage.removeItem(getFeedStateKey('curated'))
                 console.log('[Idle Return Lookback] Refreshing feed display with numbered posts...')
-                await redisplayFeed()
+                await refreshDisplayedFeed({ triggerProbe: true, showAllNewPosts: true })
                 setInitialPrefetchDone(true)
               }
             }).catch((err) => {
@@ -1177,6 +1153,13 @@ export default function HomePage() {
           } else if (skipIdleReturnLookback) {
             // Idle return with gap already filled - just assign numbers to any new posts and prefetch
             console.log('[Idle Return] Gap already filled by first page - skipping background lookback')
+
+            // Persist new posts to IndexedDB (feed_cache + post_summaries) before numbering.
+            // skipNumbering=true defers number assignment to numberUnnumberedPostsForDay below.
+            if (initialSecondaryEntries && initialSecondaryEntries.length > 0) {
+              const transferResult = await transferSecondaryToPrimary(initialSecondaryEntries, 'all', pageLength, true)
+              console.log(`[Idle Return] Persisted ${transferResult.postsTransferred} new posts to primary cache`)
+            }
 
             // Assign numbers to unnumbered summaries for yesterday and today (if any new posts were curated)
             if (entriesToSave.length > 0) {
@@ -1192,7 +1175,7 @@ export default function HomePage() {
 
                 // Refresh feed display with numbered posts
                 console.log('[Idle Return] Refreshing feed display with numbered posts...')
-                await redisplayFeed()
+                await refreshDisplayedFeed({ triggerProbe: false, showAllNewPosts: false })
               }
             }
 
@@ -1450,6 +1433,168 @@ export default function HomePage() {
       return loadFeed()
     }
   }, [agent, session, dbInitialized, loadFeed])
+
+  // Refresh the displayed feed from the primary IndexedDB cache.
+  // Triggered by pull-to-refresh (mobile) and soft-refresh interception (desktop).
+  // Designed for future reuse: after initial load curation, after idle return, multi-page load.
+  const refreshDisplayedFeed = useCallback(async (options?: RefreshDisplayedFeedOptions): Promise<RefreshDisplayedFeedResult | null> => {
+    if (!agent || !session || !dbInitialized || isLoadingMore || activeTab !== 'curated') {
+      console.log('[Refresh] Guard: skipping refresh', { agent: !!agent, session: !!session, dbInitialized, isLoadingMore, activeTab })
+      return null
+    }
+
+    const effectiveNewestTimestamp = options?.newestTimestamp ?? newestDisplayedPostTimestamp
+
+    console.log(`[Refresh] Starting refresh (newestTimestamp=${effectiveNewestTimestamp ? new Date(effectiveNewestTimestamp).toLocaleTimeString() : 'null (newest from cache)'}, triggerProbe=${options?.triggerProbe !== false}, showAllNewPosts=${options?.showAllNewPosts !== false})`)
+
+    // Step 1: Force immediate probe (if requested)
+    if (options?.triggerProbe !== false) {
+      forceProbeRef.current = true
+      setForceProbeTrigger(n => n + 1)
+    }
+
+    // Step 2: Trigger "All new posts" button visibility (if requested)
+    if (options?.showAllNewPosts !== false) {
+      setIdleTimerTriggered(true)
+    }
+
+    // Step 3: Redisplay feed from primary cache using accumulation loop
+    try {
+      const settings = await getSettings()
+      const pageLength = settings?.feedPageLength || 25
+      const feedReceivedTime = clientDate()
+
+      const MAX_NO_PROGRESS = 3
+      let accumulatedFiltered: CurationFeedViewPost[] = []
+      let consecutiveNoProgress = 0
+      // fetchBeforeTimestamp: +1 to include the post at exactly effectiveNewestTimestamp, or null for "newest from cache"
+      let fetchBeforeTimestamp: number | null = effectiveNewestTimestamp != null ? effectiveNewestTimestamp + 1 : null
+      let isFirstBatch = true
+
+      while (true) {
+        let batchPosts: CurationFeedViewPost[]
+        let batchTimestamps: Map<string, number>
+
+        if (isFirstBatch && fetchBeforeTimestamp == null) {
+          // No timestamp — start from newest in cache
+          batchPosts = await getCachedFeed(2 * pageLength)
+          batchTimestamps = new Map()  // getCachedFeed doesn't return timestamps
+        } else {
+          // Read before a specific timestamp (first batch with timestamp, or subsequent batches)
+          const result = await getCachedFeedBefore(fetchBeforeTimestamp!, 2 * pageLength)
+          batchPosts = result.posts as CurationFeedViewPost[]
+          batchTimestamps = result.postTimestamps
+        }
+        isFirstBatch = false
+
+        if (batchPosts.length === 0) {
+          console.log('[Refresh] Cache exhausted')
+          break
+        }
+
+        // Filter and apply curation
+        const filtered = await lookupCurationAndFilter(
+          batchPosts,
+          feedReceivedTime,
+          batchTimestamps.size > 0 ? batchTimestamps : undefined,
+          false  // apply filtering
+        )
+
+        // Only keep posts at or before the effective newest timestamp (skip when no upper bound)
+        const withinRange = effectiveNewestTimestamp != null
+          ? filtered.filter(p => {
+              const ts = getFeedViewPostTimestamp(p, feedReceivedTime).getTime()
+              return ts <= effectiveNewestTimestamp
+            })
+          : filtered
+
+        // Deduplicate against accumulated posts
+        const existingIds = new Set(accumulatedFiltered.map(p => getPostUniqueId(p)))
+        const newPosts = withinRange.filter(p => !existingIds.has(getPostUniqueId(p)))
+
+        if (newPosts.length === 0) {
+          consecutiveNoProgress++
+          console.log(`[Refresh] No new posts from batch of ${batchPosts.length} (stall ${consecutiveNoProgress}/${MAX_NO_PROGRESS})`)
+          if (consecutiveNoProgress >= MAX_NO_PROGRESS) {
+            console.log(`[Refresh] No progress for ${MAX_NO_PROGRESS} fetches, stopping with ${accumulatedFiltered.length} posts`)
+            break
+          }
+        } else {
+          consecutiveNoProgress = 0
+          accumulatedFiltered = [...accumulatedFiltered, ...newPosts]
+          console.log(`[Refresh] Added ${newPosts.length} posts, total: ${accumulatedFiltered.length}`)
+        }
+
+        if (accumulatedFiltered.length >= 2 * pageLength) {
+          console.log(`[Refresh] Reached target: ${accumulatedFiltered.length} posts`)
+          break
+        }
+
+        // Find oldest timestamp from this batch for next fetch
+        const oldestBatchTimestamp = Math.min(
+          ...batchPosts.map(p => {
+            const ts = batchTimestamps.size > 0
+              ? (batchTimestamps.get(getPostUniqueId(p)) ?? batchTimestamps.get(p.post.uri) ?? null)
+              : null
+            return ts ?? getFeedViewPostTimestamp(p, feedReceivedTime).getTime()
+          })
+        )
+        fetchBeforeTimestamp = oldestBatchTimestamp
+      }
+
+      if (accumulatedFiltered.length === 0) {
+        console.log('[Refresh] No displayable posts found in cache, keeping existing feed')
+        return null
+      }
+
+      // Cap at 2 * pageLength before alignment (loop can overshoot due to batch accumulation)
+      if (accumulatedFiltered.length > 2 * pageLength) {
+        accumulatedFiltered = accumulatedFiltered.slice(0, 2 * pageLength)
+      }
+
+      // Sort newest-first (should already be, but ensure consistency)
+      accumulatedFiltered.sort((a, b) => {
+        const tsA = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
+        const tsB = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
+        return tsB - tsA
+      })
+
+      // Align to page boundary
+      const alignedPosts = alignFeedToPageBoundary(accumulatedFiltered, pageLength)
+
+      // Update feed and timestamps
+      setFeed(alignedPosts)
+
+      const newNewestTimestamp = getFeedViewPostTimestamp(alignedPosts[0], feedReceivedTime).getTime()
+      const newOldestTimestamp = getFeedViewPostTimestamp(alignedPosts[alignedPosts.length - 1], feedReceivedTime).getTime()
+
+      // Always update newestDisplayedPostTimestamp — safe for existing callers
+      // (pull-to-refresh/soft-refresh value ≈ old value; cache-only/post-curation need the update)
+      setNewestDisplayedPostTimestamp(newNewestTimestamp)
+      setOldestDisplayedPostTimestamp(newOldestTimestamp)
+
+      // Update display cooldown timestamp
+      lastDisplayTimeRef.current = clientNow()
+
+      const firstPost = alignedPosts[0] as CurationFeedViewPost
+      const lastPost = alignedPosts[alignedPosts.length - 1] as CurationFeedViewPost
+      console.log(`[Refresh] Feed updated: ${alignedPosts.length} posts, newest=#${firstPost.curation?.curationNumber ?? '?'} (${new Date(newNewestTimestamp).toLocaleTimeString()}), oldest=#${lastPost.curation?.curationNumber ?? '?'} (${new Date(newOldestTimestamp).toLocaleTimeString()})`)
+
+      // Step 4: Prefetch for Prev Page
+      setPreviousPageFeed([])
+      setInitialPrefetchDone(false)
+      setTimeout(async () => {
+        await prefetchPrevPage(newOldestTimestamp)
+        setInitialPrefetchDone(true)
+      }, 100)
+
+      return { alignedPosts, newestTimestamp: newNewestTimestamp, oldestTimestamp: newOldestTimestamp }
+
+    } catch (error) {
+      console.error('[Refresh] Error during feed refresh:', error)
+      return null
+    }
+  }, [agent, session, dbInitialized, isLoadingMore, activeTab, newestDisplayedPostTimestamp, lookupCurationAndFilter, prefetchPrevPage])
 
   // Debug function to clear all caches and trigger fresh initial load
   const clearCacheAndReloadHomePage = useCallback(async () => {
@@ -1757,7 +1902,13 @@ export default function HomePage() {
         const hasMultiplePages = probeResult.hasMultiplePages
 
         // Check cooldown - don't show buttons immediately after displaying posts
-        const inCooldown = clientNow() - lastDisplayTimeRef.current < DISPLAY_COOLDOWN_MS
+        // Force-probe bypasses cooldown (e.g., triggered by pull-to-refresh)
+        const isForceProbe = forceProbeRef.current
+        if (isForceProbe) {
+          forceProbeRef.current = false
+          console.log('[Paged Updates] Force-probe: bypassing cooldown')
+        }
+        const inCooldown = !isForceProbe && clientNow() - lastDisplayTimeRef.current < DISPLAY_COOLDOWN_MS
         if (inCooldown) {
           console.log(`[Paged Updates] In cooldown (${Math.round((DISPLAY_COOLDOWN_MS - (clientNow() - lastDisplayTimeRef.current)) / 1000)}s remaining), skipping button updates`)
           return
@@ -1832,7 +1983,7 @@ export default function HomePage() {
       clearClientInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, agent, session])
+  }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, agent, session, forceProbeTrigger])
 
   // Idle timer for partial page display
   // When fullPageWaitMinutes has elapsed since newestDisplayedPostTimestamp and there are partial posts,
@@ -1867,6 +2018,32 @@ export default function HomePage() {
 
     return () => clearClientInterval(interval)
   }, [newestDisplayedPostTimestamp, isInitialLoad, partialPageCount])
+
+  // Desktop soft-refresh interceptor: Ctrl+R / Cmd+R / F5 → refreshDisplayedFeed instead of full page reload
+  useEffect(() => {
+    if (activeTab !== 'curated') return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isRefreshShortcut =
+        e.key === 'F5' ||
+        ((e.ctrlKey || e.metaKey) && e.key === 'r')
+
+      if (isRefreshShortcut) {
+        e.preventDefault()
+        console.log('[Refresh] Desktop soft-refresh intercepted')
+        refreshDisplayedFeed()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeTab, refreshDisplayedFeed])
+
+  // Pull-to-refresh for mobile touch gesture
+  const { isPulling, pullFraction } = usePullToRefresh({
+    onRefresh: refreshDisplayedFeed,
+    enabled: activeTab === 'curated' && !isLoading && !isLoadingMore,
+  })
 
   // Handle loading new posts
   // Standard mode: loads posts from cache (already curated)
@@ -1943,92 +2120,34 @@ export default function HomePage() {
         setIdleTimerTriggered(false)
         lastDisplayTimeRef.current = clientNow()
 
-        // Load transferred posts from primary cache for display
-        const feedReceivedTime = clientDate()
-        const cachedPosts = await getCachedFeedAfterPosts(
-          newestDisplayedPostTimestamp || 0,
-          transferResult.postsTransferred + 50  // margin for overlap
-        )
-
-        if (cachedPosts.length > 0) {
-          // Apply curation filtering
-          let filteredPosts = await lookupCurationAndFilter(
-            cachedPosts,
-            feedReceivedTime,
-            undefined,
-            false  // Apply filtering
-          )
-
-          // Cap new posts at effectivePageLength
-          if (filteredPosts.length > effectivePageLength) {
-            filteredPosts = filteredPosts.slice(0, effectivePageLength)
-          }
-
-          // Combine new posts with current feed AND previousPageFeed for page boundary alignment
-          // This gives enough range even when few new posts pass curation
-          const combinedForAlignment: CurationFeedViewPost[] = [...filteredPosts]
-          const seenUris = new Set(filteredPosts.map(p => p.post.uri))
-          for (const existingPost of [...feed, ...previousPageFeed]) {
-            if (!seenUris.has(existingPost.post.uri)) {
-              seenUris.add(existingPost.post.uri)
-              combinedForAlignment.push(existingPost as CurationFeedViewPost)
-            }
-          }
-          // Sort newest-first and cap at 2 * pageLength
-          combinedForAlignment.sort((a, b) => {
-            const aTime = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-            const bTime = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-            return bTime - aTime
+        // Display transferred posts from primary cache using refreshDisplayedFeed
+        if (fetchResult.newestTimestamp) {
+          const result = await refreshDisplayedFeed({
+            newestTimestamp: fetchResult.newestTimestamp,
+            triggerProbe: false,
+            showAllNewPosts: false,
           })
-          if (combinedForAlignment.length > 2 * pageLength) {
-            combinedForAlignment.splice(2 * pageLength)
+
+          // Save to sessionStorage using returned values
+          if (result) {
+            console.log(`[Next Page] Displayed ${result.alignedPosts.length} posts via refreshDisplayedFeed`)
+            const stateToSave: SavedFeedState = {
+              displayedFeed: result.alignedPosts,
+              previousPageFeed: [],
+              newestDisplayedPostTimestamp: result.newestTimestamp,
+              oldestDisplayedPostTimestamp: result.oldestTimestamp,
+              hasMorePosts: true,
+              cursor: undefined,
+              savedAt: clientNow(),
+              lowestVisiblePostTimestamp: null,
+              newPostsCount: 0,
+              showNewPostsButton: false,
+              sessionDid: session.did,
+              curationSuspended: settings?.curationSuspended || false,
+              showAllPosts: settings?.showAllPosts || false,
+            }
+            sessionStorage.setItem(getFeedStateKey('curated'), JSON.stringify(stateToSave))
           }
-          filteredPosts = alignFeedToPageBoundary(combinedForAlignment, pageLength)
-
-          console.log(`[Next Page] Displaying ${filteredPosts.length} curated posts (from ${cachedPosts.length} raw)`)
-
-          // Update feed state
-          setFeed(filteredPosts)
-
-          // Update timestamps
-          const newestTimestamp = getFeedViewPostTimestamp(filteredPosts[0], feedReceivedTime).getTime()
-          const oldestTimestamp = getFeedViewPostTimestamp(filteredPosts[filteredPosts.length - 1], feedReceivedTime).getTime()
-          setNewestDisplayedPostTimestamp(newestTimestamp)
-          setOldestDisplayedPostTimestamp(oldestTimestamp)
-
-          // DEBUG: Log displayed post range with curation numbers
-          const firstPost = filteredPosts[0] as CurationFeedViewPost
-          const lastPost = filteredPosts[filteredPosts.length - 1] as CurationFeedViewPost
-          console.log(`[Next Page DEBUG] Displayed range: newest=${new Date(newestTimestamp).toLocaleTimeString()} (#${firstPost.curation?.curationNumber ?? '?'}), oldest=${new Date(oldestTimestamp).toLocaleTimeString()} (#${lastPost.curation?.curationNumber ?? '?'}), oldestTimestamp=${oldestTimestamp} (will be used for prefetch)`)
-
-          // Save state to session storage
-          const stateToSave: SavedFeedState = {
-            displayedFeed: filteredPosts,
-            previousPageFeed: [],
-            newestDisplayedPostTimestamp: newestTimestamp,
-            oldestDisplayedPostTimestamp: oldestTimestamp,
-            hasMorePosts: true,
-            cursor: undefined,
-            savedAt: clientNow(),
-            lowestVisiblePostTimestamp: null,
-            newPostsCount: 0,
-            showNewPostsButton: false,
-            sessionDid: session.did,
-            curationSuspended: settings?.curationSuspended || false,
-            showAllPosts: settings?.showAllPosts || false
-          }
-          sessionStorage.setItem(getFeedStateKey('curated'), JSON.stringify(stateToSave))
-
-          // Clear stale previousPageFeed and prefetch for the new page's oldest post
-          setPreviousPageFeed([])
-          setInitialPrefetchDone(false)
-          console.log(`[Next Page] Cleared stale previousPageFeed, starting prefetch from ${new Date(oldestTimestamp).toLocaleTimeString()}`)
-          // Prefetch in background (no spinner, non-blocking)
-          const prefetchTimestamp = oldestTimestamp
-          setTimeout(async () => {
-            await prefetchPrevPage(prefetchTimestamp)
-            setInitialPrefetchDone(true)
-          }, 100)
         }
 
         // Scroll to top after loading new posts
@@ -2050,7 +2169,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingMore(false)
     }
-  }, [agent, session, newestDisplayedPostTimestamp, newPostsCount, lookupCurationAndFilter, isLoadingMore, feed, prefetchPrevPage, postsNeededForPage])
+  }, [agent, session, newestDisplayedPostTimestamp, isLoadingMore, refreshDisplayedFeed, postsNeededForPage, lookingBack])
 
   // Handle "All n new posts" button click
   // Two flows: partial page (incremental) and multi-page (full re-display)
@@ -2088,7 +2207,6 @@ export default function HomePage() {
       setSyncInProgress(true)
 
       try {
-        const feedReceivedTime = clientDate()
         const pageLength = settings?.feedPageLength || 25
 
         // Phase 1: Fetch all new posts to in-memory secondary cache
@@ -2125,63 +2243,20 @@ export default function HomePage() {
         setMultiPageCount(0)
         lastDisplayTimeRef.current = clientNow()
 
-        // Load 1 page of curated posts from primary cache for display
-        const cachedPosts = await getCachedFeedAfterPosts(
-          newestDisplayedPostTimestamp || 0,
-          transferResult.postsTransferred + 50
-        )
-
-        if (cachedPosts.length > 0) {
-          // Apply curation filtering
-          let filteredPosts = await lookupCurationAndFilter(
-            cachedPosts, feedReceivedTime, undefined, false
-          )
-
-          // Cap at pageLength
-          if (filteredPosts.length > pageLength) {
-            filteredPosts = filteredPosts.slice(0, pageLength)
+        // Display 1 page from primary cache using refreshDisplayedFeed
+        if (fetchResult.newestTimestamp) {
+          const result = await refreshDisplayedFeed({
+            newestTimestamp: fetchResult.newestTimestamp,
+            triggerProbe: false,
+            showAllNewPosts: false,
+          })
+          if (result) {
+            console.log(`[New Posts] MULTI-PAGE: Displayed ${result.alignedPosts.length} posts via refreshDisplayedFeed`)
+          } else {
+            addToast('No new posts to display (filtered by settings)', 'info')
           }
-
-          // Combine with current feed for page boundary alignment
-          // Skip for extended idle - old feed is too stale to mix with new posts
-          if (!isExtendedIdle) {
-            const seenUris = new Set(filteredPosts.map(p => p.post.uri))
-            for (const existingPost of [...feed, ...previousPageFeed]) {
-              if (!seenUris.has(existingPost.post.uri)) {
-                seenUris.add(existingPost.post.uri)
-                filteredPosts.push(existingPost as CurationFeedViewPost)
-              }
-            }
-            filteredPosts.sort((a, b) => {
-              const aTime = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
-              const bTime = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
-              return bTime - aTime
-            })
-            if (filteredPosts.length > 2 * pageLength) {
-              filteredPosts.splice(2 * pageLength)
-            }
-          }
-          const alignedPosts = alignFeedToPageBoundary(filteredPosts, pageLength)
-
-          // Replace feed with aligned posts (full re-display)
-          setFeed(alignedPosts)
-          setPreviousPageFeed([])
-          if (fetchResult.newestTimestamp) {
-            setNewestDisplayedPostTimestamp(fetchResult.newestTimestamp)
-          }
-          setOldestDisplayedPostTimestamp(getFeedViewPostTimestamp(alignedPosts[alignedPosts.length - 1], feedReceivedTime).getTime())
-
-          console.log(`[New Posts] MULTI-PAGE: Displayed ${alignedPosts.length} posts`)
-
-          // Prefetch for scroll-back
-          const oldestDisplayed = getFeedViewPostTimestamp(
-            alignedPosts[alignedPosts.length - 1], clientDate()
-          ).getTime()
-          setTimeout(async () => {
-            await prefetchPrevPage(oldestDisplayed)
-          }, 100)
         } else {
-          addToast('No new posts to display (filtered by settings)', 'info')
+          addToast('No new posts to display', 'info')
         }
 
         // Scroll to top
@@ -2205,7 +2280,7 @@ export default function HomePage() {
       await handleLoadNewPosts()
       setIdleTimerTriggered(false)
     }
-  }, [agent, session, isLoadingMore, multiPageCount, partialPageCount, handleLoadNewPosts])
+  }, [agent, session, isLoadingMore, multiPageCount, partialPageCount, handleLoadNewPosts, newestDisplayedPostTimestamp, refreshDisplayedFeed, lookingBack])
 
   const handlePrevPage = useCallback(async () => {
     // Guard: button shouldn't be visible if empty, but check anyway
@@ -2732,6 +2807,27 @@ export default function HomePage() {
           </div>
         ) : (
           <>
+            {/* Pull-to-refresh indicator */}
+            {isPulling && (
+              <div
+                className="flex items-center justify-center py-2 text-gray-500 dark:text-gray-400 transition-opacity"
+                style={{ opacity: pullFraction }}
+              >
+                <svg
+                  className="w-5 h-5 mr-2 animate-spin"
+                  style={{ animationDuration: pullFraction >= 1 ? '0.6s' : '1.5s' }}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span className="text-sm">
+                  {pullFraction >= 1 ? 'Release to refresh' : 'Pull to refresh'}
+                </span>
+              </div>
+            )}
+
             {/* Next Page / All New Posts buttons - two-button layout */}
             <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
               <div className="flex gap-2">

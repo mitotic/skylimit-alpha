@@ -1,10 +1,12 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import RepostMenu from './RepostMenu'
+import { getBlueSkyPostUrl } from '../curation/skylimitGeneral'
 
 interface PostActionsProps {
   post: AppBskyFeedDefs.PostView
+  author?: { handle: string }
   onReply?: (uri: string) => void
   onRepost?: (uri: string, cid: string) => void
   onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
@@ -14,6 +16,7 @@ interface PostActionsProps {
 
 export default function PostActions({
   post,
+  author,
   onReply,
   onRepost,
   onQuotePost,
@@ -22,6 +25,7 @@ export default function PostActions({
 }: PostActionsProps) {
   const navigate = useNavigate()
   const [showRepostMenu, setShowRepostMenu] = useState(false)
+  const [showCopied, setShowCopied] = useState(false)
   const repostButtonRef = useRef<HTMLButtonElement>(null)
 
   const replyCount = post.replyCount ?? 0
@@ -68,6 +72,23 @@ export default function PostActions({
     e.stopPropagation()
     onBookmark?.(post.uri, post.cid)
   }
+
+  const handleShareClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const handle = author?.handle ?? post.author?.handle
+    if (handle) {
+      const url = getBlueSkyPostUrl(post.uri, handle)
+      navigator.clipboard.writeText(url).then(() => {
+        setShowCopied(true)
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (!showCopied) return
+    const timer = setTimeout(() => setShowCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [showCopied])
 
   return (
     <div className="flex items-center gap-6 mt-2">
@@ -142,6 +163,27 @@ export default function PostActions({
           <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
         </svg>
       </button>
+
+      <div className="relative">
+        <button
+          className="flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+          onClick={handleShareClick}
+          aria-label="Copy link to post"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3" />
+            <circle cx="6" cy="12" r="3" />
+            <circle cx="18" cy="19" r="3" />
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          </svg>
+        </button>
+        {showCopied && (
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 dark:bg-gray-700 rounded shadow whitespace-nowrap">
+            Link copied!
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -89,7 +89,8 @@ export function findLowestVisiblePostTimestamp(feed: AppBskyFeedDefs.FeedViewPos
  * Trim a filtered feed array so the oldest displayed post aligns to a
  * curation page boundary (curationNumber = n * pageLength + 1).
  * Display count stays between pageLength and 2 * pageLength.
- * If the oldest post has no curation number, returns the feed unchanged.
+ * The feed is always capped at 2 * pageLength posts (keeping newest).
+ * If the oldest post has no curation number, returns the feed unchanged (but still capped).
  */
 export function alignFeedToPageBoundary(
   filteredFeed: CurationFeedViewPost[],
@@ -98,6 +99,11 @@ export function alignFeedToPageBoundary(
   // Guard: If feed is smaller than or equal to pageLength, never trim
   if (filteredFeed.length <= pageLength) {
     return filteredFeed
+  }
+
+  // Cap at 2 * pageLength (keep newest posts) — applies to all code paths below
+  if (filteredFeed.length > 2 * pageLength) {
+    filteredFeed = filteredFeed.slice(0, 2 * pageLength)
   }
 
   // Get curationNumber of the oldest post (last element)
@@ -118,16 +124,18 @@ export function alignFeedToPageBoundary(
     return filteredFeed
   }
 
-  // Need to trim `positionInPage` posts from the end to reach boundary
-  const trimmedLength = filteredFeed.length - positionInPage
+  // Trim oldest posts to reach the next page boundary going toward newer posts.
+  // positionInPage = how far into the current page the oldest post is.
+  // We need to remove (pageLength - positionInPage) posts to reach the next boundary above.
+  const trimCount = pageLength - positionInPage
+  const trimmedLength = filteredFeed.length - trimCount
 
   if (trimmedLength < pageLength) {
     // Trimming would reduce below pageLength - don't trim
     return filteredFeed
   }
 
-  // Cap at 2 * pageLength
-  const finalLength = Math.min(trimmedLength, 2 * pageLength)
+  const finalLength = trimmedLength  // Already capped at 2 * pageLength above
 
   const newOldest = filteredFeed[finalLength - 1] as CurationFeedViewPost
   console.log(`[PageBoundary] Trimmed feed from ${filteredFeed.length} to ${finalLength} posts ` +

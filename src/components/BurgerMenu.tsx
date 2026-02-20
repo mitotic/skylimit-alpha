@@ -4,6 +4,7 @@ import { useSession } from '../auth/SessionContext'
 import { getUnreadCount } from '../api/notifications'
 import { isRateLimited } from '../utils/rateLimitState'
 import { resetEverything } from '../curation/skylimitCache'
+import { getSetting } from '../curation/skylimitStore'
 import ConfirmModal from './ConfirmModal'
 
 export default function BurgerMenu() {
@@ -15,6 +16,7 @@ export default function BurgerMenu() {
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
 
+  const [debugMode, setDebugMode] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
@@ -58,6 +60,11 @@ export default function BurgerMenu() {
 
     fetchUnreadCount()
   }, [agent, session])
+
+  // Load debug mode setting from IndexedDB
+  useEffect(() => {
+    getSetting('debugMode').then(v => setDebugMode(!!v))
+  }, [location.pathname])
 
   const navItems = [
     { path: '/', label: 'Home', icon: '🏠' },
@@ -142,13 +149,15 @@ export default function BurgerMenu() {
                     <span className="font-medium">Profile</span>
                   </button>
 
-                  <button
-                    onClick={() => setShowResetAllModal(true)}
-                    className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  >
-                    <span className="text-xl">⎋</span>
-                    <span className="font-medium">Reset all</span>
-                  </button>
+                  {debugMode && (
+                    <button
+                      onClick={() => setShowResetAllModal(true)}
+                      className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                    >
+                      <span className="text-xl">⎋</span>
+                      <span className="font-medium">Reset all</span>
+                    </button>
+                  )}
                 </>
               )}
             </nav>
@@ -157,12 +166,13 @@ export default function BurgerMenu() {
       )}
 
       {/* Reset All Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showResetAllModal}
-        onClose={() => setShowResetAllModal(false)}
-        onConfirm={handleResetAll}
-        title="Reset All Data"
-        message={`WARNING: This will completely wipe all Websky data:
+      {debugMode && (
+        <ConfirmModal
+          isOpen={showResetAllModal}
+          onClose={() => setShowResetAllModal(false)}
+          onConfirm={handleResetAll}
+          title="Reset All Data"
+          message={`WARNING: This will completely wipe all Websky data:
 • All cached posts and summaries
 • All Skylimit settings
 • Follow list data
@@ -171,11 +181,12 @@ export default function BurgerMenu() {
 This is a complete reset to factory state. Use this only if the app is not working correctly.
 
 This cannot be undone.`}
-        confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
-        cancelText="Cancel"
-        isDangerous={true}
-        isLoading={isResettingAll}
-      />
+          confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
+          cancelText="Cancel"
+          isDangerous={true}
+          isLoading={isResettingAll}
+        />
+      )}
     </>
   )
 }

@@ -4,6 +4,7 @@ import { useSession } from '../auth/SessionContext'
 import { getUnreadCount } from '../api/notifications'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { resetEverything } from '../curation/skylimitCache'
+import { getSetting } from '../curation/skylimitStore'
 import ConfirmModal from './ConfirmModal'
 import { clientInterval, clearClientInterval, clientTimeout } from '../utils/clientClock'
 
@@ -16,6 +17,7 @@ export default function Navigation() {
   const [isResettingAll, setIsResettingAll] = useState(false)
 
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
+  const [debugMode, setDebugMode] = useState(false)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
   const isActive = (path: string) => {
@@ -79,6 +81,11 @@ export default function Navigation() {
   useEffect(() => {
     setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
   }, [location.pathname]) // Reload on navigation to pick up settings changes
+
+  // Load debug mode setting from IndexedDB
+  useEffect(() => {
+    getSetting('debugMode').then(v => setDebugMode(!!v))
+  }, [location.pathname])
 
   const navItems = [
     { path: '/', label: 'Home', icon: '🏠' },
@@ -159,23 +166,26 @@ export default function Navigation() {
             <span className="hidden md:inline font-medium">Profile</span>
           </button>
 
-          <button
-            onClick={() => setShowResetAllModal(true)}
-            className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            <span className="text-xl">⎋</span>
-            <span className="hidden md:inline font-medium">Reset all</span>
-          </button>
+          {debugMode && (
+            <button
+              onClick={() => setShowResetAllModal(true)}
+              className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            >
+              <span className="text-xl">⎋</span>
+              <span className="hidden md:inline font-medium">Reset all</span>
+            </button>
+          )}
         </>
       )}
 
       {/* Reset All Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showResetAllModal}
-        onClose={() => setShowResetAllModal(false)}
-        onConfirm={handleResetAll}
-        title="Reset All Data"
-        message={`WARNING: This will completely wipe all Websky data:
+      {debugMode && (
+        <ConfirmModal
+          isOpen={showResetAllModal}
+          onClose={() => setShowResetAllModal(false)}
+          onConfirm={handleResetAll}
+          title="Reset All Data"
+          message={`WARNING: This will completely wipe all Websky data:
 • All cached posts and summaries
 • All Skylimit settings
 • Follow list data
@@ -184,11 +194,12 @@ export default function Navigation() {
 This is a complete reset to factory state. Use this only if the app is not working correctly.
 
 This cannot be undone.`}
-        confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
-        cancelText="Cancel"
-        isDangerous={true}
-        isLoading={isResettingAll}
-      />
+          confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
+          cancelText="Cancel"
+          isDangerous={true}
+          isLoading={isResettingAll}
+        />
+      )}
     </div>
   )
 }
