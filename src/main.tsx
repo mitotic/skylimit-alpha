@@ -6,9 +6,21 @@ import { SessionProvider } from './auth/SessionContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import './styles/index.css'
 
-// Apply larger text setting from localStorage
-if (localStorage.getItem('websky_larger_text') === 'true') {
-  document.documentElement.classList.add('larger-text')
+// Migrate old larger-text boolean to new text-size setting
+if (localStorage.getItem('websky_larger_text') !== null) {
+  if (localStorage.getItem('websky_larger_text') === 'true') {
+    localStorage.setItem('websky_text_size', 'medium')
+  }
+  localStorage.removeItem('websky_larger_text')
+}
+
+// Apply text size setting from localStorage (default: small on desktop, medium on mobile)
+const storedTextSize = localStorage.getItem('websky_text_size')
+const textSize = storedTextSize || (window.matchMedia('(max-width: 768px)').matches ? 'medium' : 'small')
+if (textSize === 'medium') {
+  document.documentElement.classList.add('font-size-medium')
+} else if (textSize === 'large') {
+  document.documentElement.classList.add('font-size-large')
 }
 
 // localStorage keys

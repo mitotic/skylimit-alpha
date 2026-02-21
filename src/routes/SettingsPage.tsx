@@ -121,9 +121,11 @@ export default function SettingsPage() {
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
-  const [largerText, setLargerText] = useState(() =>
-    localStorage.getItem('websky_larger_text') === 'true'
-  )
+  const [textSize, setTextSize] = useState<'small' | 'medium' | 'large'>(() => {
+    const stored = localStorage.getItem('websky_text_size')
+    if (stored === 'small' || stored === 'medium' || stored === 'large') return stored
+    return window.matchMedia('(max-width: 768px)').matches ? 'medium' : 'small'
+  })
 
   // Detect unsaved changes by comparing current settings to original
   const hasUnsavedChanges = useMemo(() => {
@@ -471,24 +473,30 @@ export default function SettingsPage() {
           <div>
             <div className="font-medium">Text Size</div>
             <div className="text-sm text-gray-500 dark:text-gray-400">
-              {largerText ? 'Larger text for posts' : 'Default text size'}
+              {textSize === 'small' ? 'Small text' : textSize === 'medium' ? 'Medium text' : 'Large text'}
             </div>
           </div>
-          <button
-            onClick={() => {
-              const newValue = !largerText
-              localStorage.setItem('websky_larger_text', newValue.toString())
-              setLargerText(newValue)
-              if (newValue) {
-                document.documentElement.classList.add('larger-text')
-              } else {
-                document.documentElement.classList.remove('larger-text')
-              }
-            }}
-            className="btn btn-secondary"
-          >
-            {largerText ? 'Default' : 'Larger'}
-          </button>
+          <div className="flex gap-1">
+            {(['small', 'medium', 'large'] as const).map((size) => (
+              <button
+                key={size}
+                onClick={() => {
+                  localStorage.setItem('websky_text_size', size)
+                  setTextSize(size)
+                  document.documentElement.classList.remove('font-size-medium', 'font-size-large')
+                  if (size === 'medium') document.documentElement.classList.add('font-size-medium')
+                  else if (size === 'large') document.documentElement.classList.add('font-size-large')
+                }}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  textSize === size
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100'
+                }`}
+              >
+                {size.charAt(0).toUpperCase() + size.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

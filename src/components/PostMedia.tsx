@@ -100,7 +100,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
     const description = typeof externalData?.description === 'string' ? externalData.description : ''
     
     return (
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden w-full max-w-[500px] mx-auto">
+      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden w-full max-w-[500px]">
         {thumbUrl && (
           <img
             src={thumbUrl}
@@ -118,14 +118,14 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
             onClick={(e) => e.stopPropagation()}
           >
             {title && (
-              <div className="font-semibold text-sm mb-1">{title}</div>
+              <div className="font-semibold mb-1" style={{ fontSize: 'var(--card-title-size)', lineHeight: 'var(--post-text-leading)' }}>{title}</div>
             )}
             {description && (
-              <div className="text-xs text-gray-600 dark:text-gray-400 mb-1 line-clamp-2">
+              <div className="text-gray-600 dark:text-gray-400 mb-1 line-clamp-2" style={{ fontSize: 'var(--card-description-size)', lineHeight: 'var(--post-text-leading)' }}>
                 {description}
               </div>
             )}
-            <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{uri}</div>
+            <div className="text-gray-500 dark:text-gray-500 truncate flex items-center gap-1" style={{ fontSize: 'var(--card-uri-size)', lineHeight: 'var(--post-text-leading)' }}><svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>{(() => { try { return new URL(uri).hostname } catch { return uri } })()}</div>
           </a>
         </div>
       </div>

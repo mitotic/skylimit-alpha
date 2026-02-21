@@ -4,14 +4,27 @@
 
 :root {
   --post-text-size: 1.0625rem;
-  --post-text-leading: 1.35;
+  --post-text-leading: 1.25;
   --post-secondary-text-size: 0.9375rem;
+  --card-title-size: 1rem;
+  --card-description-size: 0.875rem;
+  --card-uri-size: 0.75rem;
 }
 
-:root.larger-text {
+:root.font-size-medium {
   --post-text-size: 1.125rem;
-  --post-text-leading: 1.30;
   --post-secondary-text-size: 1rem;
+  --card-title-size: 1.0625rem;
+  --card-description-size: 0.9375rem;
+  --card-uri-size: 0.8125rem;
+}
+
+:root.font-size-large {
+  --post-text-size: 1.1875rem;
+  --post-secondary-text-size: 1.0625rem;
+  --card-title-size: 1.125rem;
+  --card-description-size: 1rem;
+  --card-uri-size: 0.875rem;
 }
 
 @layer base {
