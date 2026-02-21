@@ -89,6 +89,20 @@ export function findLowestVisiblePostTimestamp(feed: AppBskyFeedDefs.FeedViewPos
   }
 }
 
+/** Options for refreshDisplayedFeed — designed for reuse across refresh triggers */
+export interface RefreshDisplayedFeedOptions {
+  newestTimestamp?: number   // Override which post appears at top (default: current newestDisplayedPostTimestamp)
+  triggerProbe?: boolean     // Whether to force an immediate probe (default: true)
+  showAllNewPosts?: boolean  // Whether to set idleTimerTriggered (default: true)
+}
+
+/** Result returned by refreshDisplayedFeed for caller use */
+export interface RefreshDisplayedFeedResult {
+  alignedPosts: CurationFeedViewPost[]
+  newestTimestamp: number
+  oldestTimestamp: number
+}
+
 /**
  * Trim a filtered feed array so the oldest displayed post aligns to a
  * curation page boundary (curationNumber = n * pageLength + 1).

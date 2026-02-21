@@ -7,6 +7,7 @@ interface UseScrollManagementParams {
   feedLength: number
   activeTab: HomeTab
   firstPostRef: React.RefObject<HTMLDivElement | null>
+  scrollRestoredRef?: React.MutableRefObject<boolean>  // Optional: if provided, shared with other hooks
 }
 
 export function useScrollManagement({
@@ -15,13 +16,15 @@ export function useScrollManagement({
   feedLength,
   activeTab,
   firstPostRef,
+  scrollRestoredRef: externalScrollRestoredRef,
 }: UseScrollManagementParams) {
   const [isScrolledDown, setIsScrolledDown] = useState(false)
 
   // Scroll state refs
   const isProgrammaticScrollRef = useRef(false)
   const lastScrollTopRef = useRef(0)
-  const scrollRestoredRef = useRef(false)
+  const internalScrollRestoredRef = useRef(false)
+  const scrollRestoredRef = externalScrollRestoredRef ?? internalScrollRestoredRef
   const scrollRestoreBlockedRef = useRef(false)
   const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const scrollSaveBlockedRef = useRef(false)
