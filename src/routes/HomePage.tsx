@@ -26,7 +26,7 @@ import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/sk
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import { clientNow, clientDate, clientTimeout, clientInterval, clearClientTimeout, clearClientInterval } from '../utils/clientClock'
-import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary } from '../hooks/homePageTypes'
+import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, FAST_FORWARD_CHUNK_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary } from '../hooks/homePageTypes'
 import { usePostInteractions } from '../hooks/usePostInteractions'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { usePullToRefresh } from '../hooks/usePullToRefresh'
@@ -58,6 +58,7 @@ export default function HomePage() {
   const [feed, setFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])
   const [previousPageFeed, setPreviousPageFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])  // Pre-fetched next page for instant Prev Page
   const [isPrefetching, setIsPrefetching] = useState(false)  // True while fetching next page after Prev Page
+  const [feedTopTrimmed, setFeedTopTrimmed] = useState<number | null>(null)  // Timestamp of top displayed post when newest posts were trimmed; null = not trimmed
   const [initialPrefetchDone, setInitialPrefetchDone] = useState(false)  // True after first prefetch completes (to distinguish "Initializing..." from "No more posts")
   const [cursor, setCursor] = useState<string | undefined>()  // Keep for backward compatibility
   const [hasMorePosts, setHasMorePosts] = useState(false)  // Deprecated - use previousPageFeed.length > 0
@@ -1937,36 +1938,41 @@ export default function HomePage() {
           return
         }
 
-        // Calculate partial page: can we reach the next page boundary with fewer than pageSize posts?
+        // Calculate boundary alignment: check if we need a partial page to reach the next page boundary.
+        // This must be checked regardless of hasFullPage — if the top topos isn't on a boundary,
+        // we should always align to the next boundary first, even if enough posts exist for a full page.
         let postsToNextBoundary = pageSize  // default: need full page
-        let isPartialPage = false
+        let needsBoundaryAlignment = false
 
-        if (!hasFullPage && feed.length > 0) {
+        if (feed.length > 0) {
           const newestCurationNum = (feed[0] as CurationFeedViewPost).curation?.curationNumber
           if (newestCurationNum && newestCurationNum > 0) {
             const remainder = newestCurationNum % pageSize
             if (remainder !== 0) {
               postsToNextBoundary = pageSize - remainder
               if (probeResult.filteredPostCount >= postsToNextBoundary) {
-                isPartialPage = true
+                needsBoundaryAlignment = true
               }
             }
           }
         }
 
         // Button logic:
-        // - "Next Page" button: active when hasFullPage OR partial page can reach next boundary
+        // - If we need boundary alignment, show "Next Page *" with partial count
+        // - If already on boundary and have a full page, show "Next Page"
         // - "All new posts" button: controlled by idle timer (see separate useEffect)
-        setNextPageReady(hasFullPage || isPartialPage)
+        const isReady = hasFullPage || needsBoundaryAlignment
+        const isPartialPage = needsBoundaryAlignment && postsToNextBoundary < pageSize
+        setNextPageReady(isReady)
         setPostsNeededForPage(isPartialPage ? postsToNextBoundary : null)
         setNewPostsCount(probeResult.filteredPostCount)
         setPartialPageCount(probeResult.filteredPostCount) // Always track for idle timer
-        setShowNewPostsButton(hasFullPage || isPartialPage) // For standard mode compatibility
+        setShowNewPostsButton(isReady) // For standard mode compatibility
 
-        if (hasFullPage) {
+        if (isPartialPage) {
+          console.log(`[Paged Updates] Partial page ready (boundary alignment): ${probeResult.filteredPostCount} posts (need ${postsToNextBoundary} to reach next boundary)`)
+        } else if (hasFullPage) {
           console.log(`[Paged Updates] Full page ready: ${probeResult.filteredPostCount} posts`)
-        } else if (isPartialPage) {
-          console.log(`[Paged Updates] Partial page ready: ${probeResult.filteredPostCount} posts (need ${postsToNextBoundary} to reach next boundary)`)
         } else {
           console.log(`[Paged Updates] Partial page: ${probeResult.filteredPostCount}/${pageSize} posts (idle timer will handle "All new posts" button)`)
         }
@@ -2034,6 +2040,14 @@ export default function HomePage() {
     return () => clearClientInterval(interval)
   }, [newestDisplayedPostTimestamp, isInitialLoad, partialPageCount])
 
+  // Soft-refresh handler: refreshes displayed feed and resets feedTopTrimmed
+  // When feed has been trimmed (Prev Page navigation), soft-refresh replaces the
+  // trimmed view with a fresh page starting from the newest cached post.
+  const handleSoftRefresh = useCallback(async () => {
+    await refreshDisplayedFeed()
+    setFeedTopTrimmed(null)
+  }, [refreshDisplayedFeed])
+
   // Desktop soft-refresh interceptor: Ctrl+R / Cmd+R / F5 → refreshDisplayedFeed instead of full page reload
   useEffect(() => {
     if (activeTab !== 'curated') return
@@ -2046,17 +2060,17 @@ export default function HomePage() {
       if (isRefreshShortcut) {
         e.preventDefault()
         console.log('[Refresh] Desktop soft-refresh intercepted')
-        refreshDisplayedFeed()
+        handleSoftRefresh()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTab, refreshDisplayedFeed])
+  }, [activeTab, handleSoftRefresh])
 
   // Pull-to-refresh for mobile touch gesture
   const { isPulling, pullFraction } = usePullToRefresh({
-    onRefresh: refreshDisplayedFeed,
+    onRefresh: handleSoftRefresh,
     enabled: activeTab === 'curated' && !isLoading && !isLoadingMore,
   })
 
@@ -2133,6 +2147,7 @@ export default function HomePage() {
         setPartialPageCount(0)
         setMultiPageCount(0)
         setIdleTimerTriggered(false)
+        setFeedTopTrimmed(null)
         lastDisplayTimeRef.current = clientNow()
 
         // Display transferred posts from primary cache using refreshDisplayedFeed
@@ -2256,6 +2271,7 @@ export default function HomePage() {
         setPartialPageCount(0)
         setIdleTimerTriggered(false)
         setMultiPageCount(0)
+        setFeedTopTrimmed(null)
         lastDisplayTimeRef.current = clientNow()
 
         // Display 1 page from primary cache using refreshDisplayedFeed
@@ -2351,17 +2367,59 @@ export default function HomePage() {
 
     console.log(`[Prev Page DEBUG] nextPrefetchTimestamp=${new Date(nextPrefetchTimestamp).toLocaleTimeString()} (${nextPrefetchTimestamp})`)
 
-    // Append pre-fetched posts to feed
-    setFeed(prevFeed => [...prevFeed, ...newPosts])
-
-    // Update pagination boundary
-    setOldestDisplayedPostTimestamp(nextPrefetchTimestamp)
-
-    // 2. Calculate target size for page boundary alignment (before clearing previousPageFeed)
-    // Based on the oldest post AFTER this append (from newPosts), not the original feed
+    // Get settings early — needed for both trim and page boundary alignment
     const settings = await getSettings()
     const curationSuspended = !settings || settings?.curationSuspended
     const pageLength = settings?.feedPageLength || 25
+    const maxDisplayedFeedSize = settings?.maxDisplayedFeedSize || DEFAULT_MAX_DISPLAYED_FEED_SIZE
+
+    // Append pre-fetched posts to feed, trimming from newest end if too large
+    const projectedLength = feed.length + newPosts.length
+    if (projectedLength > maxDisplayedFeedSize) {
+      // Trim from the newest end (beginning of array) in pageLength-sized chunks
+      const excess = projectedLength - maxDisplayedFeedSize
+      const pagesToTrim = Math.ceil(excess / pageLength)
+      let actualTrimCount = pagesToTrim * pageLength
+
+      // Align the top post's curation number to a FAST_FORWARD_CHUNK_SIZE boundary
+      // so each "Scroll up" click loads a clean chunk
+      const combined = [...feed, ...newPosts]
+      if (actualTrimCount < combined.length) {
+        const candidateTop = combined[actualTrimCount] as CurationFeedViewPost
+        const topCurationNumber = candidateTop.curation?.curationNumber
+        if (topCurationNumber && topCurationNumber > 0) {
+          const remainder = topCurationNumber % FAST_FORWARD_CHUNK_SIZE
+          if (remainder !== 0) {
+            // Need to trim more posts to reach the next chunk boundary
+            // e.g., if top is #155 and chunk size is 100, trim 55 more to reach #100
+            const extraTrim = remainder
+            const newTrimCount = actualTrimCount + extraTrim
+            if (newTrimCount < combined.length - pageLength) {
+              console.log(`[Prev Page] Aligning top to chunk boundary: #${topCurationNumber} → #${topCurationNumber - remainder} (trimming ${extraTrim} extra)`)
+              actualTrimCount = newTrimCount
+            }
+          }
+        }
+      }
+
+      setFeed(() => {
+        const trimmed = combined.slice(actualTrimCount)
+        console.log(`[Prev Page] Trimmed ${actualTrimCount} newest posts (${combined.length} → ${trimmed.length})`)
+        return trimmed
+      })
+      // Update newestDisplayedPostTimestamp to the new top post
+      if (actualTrimCount < combined.length) {
+        const newTopPost = combined[actualTrimCount]
+        const newTopTimestamp = getFeedViewPostTimestamp(newTopPost, feedReceivedTime).getTime()
+        setNewestDisplayedPostTimestamp(newTopTimestamp)
+        setFeedTopTrimmed(newTopTimestamp)
+      }
+    } else {
+      setFeed(prevFeed => [...prevFeed, ...newPosts])
+    }
+
+    // Update pagination boundary
+    setOldestDisplayedPostTimestamp(nextPrefetchTimestamp)
     let targetSize: number | undefined = undefined  // undefined = use default pageLength
 
     if (!curationSuspended && newPosts.length > 0) {
@@ -2390,6 +2448,109 @@ export default function HomePage() {
     await prefetchPrevPage(nextPrefetchTimestamp, targetSize)
     setIsPrefetching(false)
   }, [feed, previousPageFeed, isPrefetching, lookingBack, prefetchPrevPage])
+
+  // Fast-forward back to top: accumulate FAST_FORWARD_CHUNK_SIZE displayable posts
+  // from cache newer than feedTopTrimmed, then prepend to feed and trim from bottom
+  const handleFastForwardToTop = useCallback(async () => {
+    if (!feedTopTrimmed) return
+
+    const feedReceivedTime = clientDate()
+    const settings = await getSettings()
+    const pageLength = settings?.feedPageLength || 25
+
+    // Accumulation loop: fetch batches of raw posts, filter, until we have enough displayable posts
+    const MAX_NO_PROGRESS = 3
+    let accumulatedFiltered: CurationFeedViewPost[] = []
+    let consecutiveNoProgress = 0
+    let fetchAfterTimestamp = feedTopTrimmed
+    let cacheExhausted = false
+
+    while (accumulatedFiltered.length < FAST_FORWARD_CHUNK_SIZE) {
+      const batchPosts = await getCachedFeedAfterPosts(fetchAfterTimestamp, 2 * pageLength, true)
+
+      if (batchPosts.length === 0) {
+        console.log('[Fast Forward] Cache exhausted')
+        cacheExhausted = true
+        break
+      }
+
+      if (batchPosts.length < 2 * pageLength) {
+        cacheExhausted = true
+      }
+
+      // Filter by curation status
+      const filtered = await lookupCurationAndFilter(batchPosts, feedReceivedTime)
+
+      // Deduplicate against accumulated posts
+      const existingIds = new Set(accumulatedFiltered.map(p => getPostUniqueId(p)))
+      const newPosts = filtered.filter(p => !existingIds.has(getPostUniqueId(p)))
+
+      if (newPosts.length === 0) {
+        consecutiveNoProgress++
+        console.log(`[Fast Forward] No new displayable posts from batch of ${batchPosts.length} (stall ${consecutiveNoProgress}/${MAX_NO_PROGRESS})`)
+        if (consecutiveNoProgress >= MAX_NO_PROGRESS) break
+      } else {
+        consecutiveNoProgress = 0
+        accumulatedFiltered = [...accumulatedFiltered, ...newPosts]
+        console.log(`[Fast Forward] Added ${newPosts.length} displayable posts, total: ${accumulatedFiltered.length}`)
+      }
+
+      // Advance timestamp: batchPosts is newest-first, so index 0 is the newest in this batch
+      fetchAfterTimestamp = getFeedViewPostTimestamp(batchPosts[0], feedReceivedTime).getTime()
+
+      if (cacheExhausted) break
+    }
+
+    console.log(`[Fast Forward] Accumulated ${accumulatedFiltered.length} displayable posts (cacheExhausted=${cacheExhausted})`)
+
+    if (accumulatedFiltered.length === 0) {
+      setFeedTopTrimmed(null)
+      return
+    }
+
+    // Sort newest-first (batches were appended in ascending order, each internally newest-first)
+    accumulatedFiltered.sort((a, b) => {
+      const tsA = getFeedViewPostTimestamp(a, feedReceivedTime).getTime()
+      const tsB = getFeedViewPostTimestamp(b, feedReceivedTime).getTime()
+      return tsB - tsA
+    })
+
+    // Cap at FAST_FORWARD_CHUNK_SIZE — keep the oldest (adjacent to current feed top)
+    // After newest-first sort, the adjacent posts are at the end
+    if (accumulatedFiltered.length > FAST_FORWARD_CHUNK_SIZE) {
+      accumulatedFiltered = accumulatedFiltered.slice(-FAST_FORWARD_CHUNK_SIZE)
+    }
+
+    // Calculate how many to remove from bottom (page-aligned)
+    const removeCount = Math.ceil(FAST_FORWARD_CHUNK_SIZE / pageLength) * pageLength
+
+    // Build the new feed: prepend newer posts, trim from bottom
+    const combined = [...accumulatedFiltered, ...feed]
+    const actualRemove = Math.min(removeCount, combined.length - pageLength)
+    const trimmed = actualRemove > 0 ? combined.slice(0, combined.length - actualRemove) : combined
+    console.log(`[Fast Forward] Feed: ${feed.length} → prepend ${accumulatedFiltered.length}, remove ${combined.length - trimmed.length} from bottom → ${trimmed.length}`)
+
+    setFeed(trimmed)
+
+    // Update timestamps
+    const newNewest = getFeedViewPostTimestamp(trimmed[0], feedReceivedTime).getTime()
+    setNewestDisplayedPostTimestamp(newNewest)
+    if (trimmed.length > 0) {
+      const newOldest = getFeedViewPostTimestamp(trimmed[trimmed.length - 1], feedReceivedTime).getTime()
+      setOldestDisplayedPostTimestamp(newOldest)
+    }
+
+    // If cache exhausted, we've reached the top — clear trim state
+    // Otherwise, advance feedTopTrimmed to the new top post for next click
+    if (cacheExhausted) {
+      setFeedTopTrimmed(null)
+    } else {
+      setFeedTopTrimmed(newNewest)
+    }
+
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [feed, feedTopTrimmed, lookupCurationAndFilter])
 
   // Set up IntersectionObserver for infinite scrolling
   // Note: Uses refs (previousPageFeedRef, isPrefetchingRef) to avoid stale closures in callback
@@ -2868,9 +3029,9 @@ export default function HomePage() {
                     console.log('[Next Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady, lookingBack })
                     handleLoadNewPosts()
                   }}
-                  disabled={isLoadingMore || !nextPageReady || lookingBack}
+                  disabled={isLoadingMore || !nextPageReady || lookingBack || feedTopTrimmed !== null}
                   className={`btn inline-flex items-center gap-2 ${
-                    nextPageReady && !lookingBack
+                    nextPageReady && !lookingBack && feedTopTrimmed === null
                       ? 'btn-primary'
                       : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
                   } disabled:opacity-50`}
@@ -2913,6 +3074,22 @@ export default function HomePage() {
                         All new posts ({partialPageCount}+)
                       </>
                     )}
+                  </button>
+                )}
+
+                {/* "Back to top" fast-forward button - shown when feed was trimmed from newest end during Prev Page */}
+                {feedTopTrimmed !== null && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      handleFastForwardToTop()
+                    }}
+                    className="btn btn-primary inline-flex items-center gap-2"
+                    aria-label="Fast-forward back to newest cached posts"
+                  >
+                    <svg className="w-4 h-4 inline-block" viewBox="0 0 24 24" fill="currentColor"><polygon points="4,21 12,11 20,21" /><polygon points="4,13 12,3 20,13" /></svg>
+                    Scroll up
                   </button>
                 )}
               </div>

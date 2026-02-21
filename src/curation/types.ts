@@ -286,7 +286,7 @@ export interface SkylimitSettings {
   anonymizeUsernames: boolean
   debugMode: boolean
   feedRedisplayIdleInterval?: number // in milliseconds, default 240 minutes
-  feedPageLength?: number // number of posts per page, default 25, range 10-100
+  feedPageLength?: number // number of posts per page, default 25, values: 10, 20, 25, 50
   infiniteScrollingOption?: boolean // enable infinite scrolling, default false
   // Paged fresh updates settings
   pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 2

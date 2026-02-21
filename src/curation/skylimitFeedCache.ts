@@ -1656,21 +1656,24 @@ export async function getCachedFeedAfter(
  */
 export async function getCachedFeedAfterPosts(
   afterTimestamp: number,
-  limit: number = 50
+  limit: number = 50,
+  adjacent: boolean = false
 ): Promise<CurationFeedViewPost[]> {
   try {
     const database = await getDB()
     const transaction = database.transaction([STORE_FEED_CACHE], 'readonly')
     const store = transaction.objectStore(STORE_FEED_CACHE)
     const index = store.index('postTimestamp')
-    
+
     return new Promise((resolve, reject) => {
       // Query posts where postTimestamp > afterTimestamp (exclusive lower bound)
       const range = IDBKeyRange.lowerBound(afterTimestamp, true)
-      const request = index.openCursor(range, 'prev') // 'prev' for descending order (newest first)
-      
+      // 'prev' = newest first (default: get the N newest posts above timestamp)
+      // 'next' = oldest first (adjacent: get the N posts just above timestamp, then reverse to newest-first)
+      const request = index.openCursor(range, adjacent ? 'next' : 'prev')
+
       const results: CurationFeedViewPost[] = []
-      
+
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
         if (cursor && results.length < limit) {
@@ -1682,11 +1685,12 @@ export async function getCachedFeedAfterPosts(
           results.push(cachedPost)
           cursor.continue()
         } else {
-          // Already sorted by postTimestamp descending (newest first)
+          // Return newest-first in both modes
+          if (adjacent) results.reverse()
           resolve(results)
         }
       }
-      
+
       request.onerror = () => reject(request.error)
     })
   } catch (error) {

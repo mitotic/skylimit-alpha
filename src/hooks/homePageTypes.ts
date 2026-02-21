@@ -15,9 +15,13 @@ export const getFeedStateKey = (tab: HomeTab) =>
 export const getScrollStateKey = (tab: HomeTab) =>
   tab === 'curated' ? 'websky_home_scroll_state' : 'websky_home_editions_scroll_state'
 
-// Default maximum number of posts to keep in displayed feed (approximately 12 pages)
+// Chunk size for fast-forward back to top (after feed is trimmed from newest end)
+export const FAST_FORWARD_CHUNK_SIZE = 100
+
+// Default maximum number of posts to keep in displayed feed
+// Defined as a multiple of FAST_FORWARD_CHUNK_SIZE for alignment
 // Can be overridden via settings.maxDisplayedFeedSize
-export const DEFAULT_MAX_DISPLAYED_FEED_SIZE = 300
+export const DEFAULT_MAX_DISPLAYED_FEED_SIZE = 3 * FAST_FORWARD_CHUNK_SIZE
 
 // Saved feed state interface
 export interface SavedFeedState {

@@ -615,6 +615,27 @@ export default function SettingsPage() {
 
               <div>
                 <label className="block mb-2 font-medium">
+                  Feed Page Length (posts per page):
+                </label>
+                <div className="flex gap-1">
+                  {([10, 20, 25, 50] as const).map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => updateSetting('feedPageLength', size)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        (settings.feedPageLength || 25) === size
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100'
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block mb-2 font-medium">
                   Full Page Wait Time (minutes):
                 </label>
                 <input
@@ -765,28 +786,6 @@ export default function SettingsPage() {
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                       Time in minutes. If returning to home page within this interval, cached feed will be redisplayed instead of reloading from server.
-                    </p>
-                  </div>
-
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium mb-2">
-                      Feed Page Length (posts per page)
-                    </label>
-                    <input
-                      type="number"
-                      min="10"
-                      max="100"
-                      value={settings.feedPageLength || 25}
-                      onChange={(e) => {
-                        const value = parseInt(e.target.value, 10)
-                        if (!isNaN(value) && value >= 10 && value <= 100) {
-                          updateSetting('feedPageLength', value)
-                        }
-                      }}
-                      className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Number of posts to load per page. Initial load from cache shows twice this amount. Range: 10-100.
                     </p>
                   </div>
 
