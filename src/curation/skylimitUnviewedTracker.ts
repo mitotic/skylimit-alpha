@@ -8,6 +8,8 @@
 // Module-level singleton state
 let unviewedPosts24h: Map<string, number> = new Map()  // uniqueId → postTimestamp
 let boundary24h: number = 0  // 24-hour cutoff timestamp (client time)
+let revision = 0  // bumped on every mutation, used as React memo dependency
+const listeners: Set<(rev: number) => void> = new Set()
 
 /**
  * Replace the unviewed posts map and boundary.
@@ -16,6 +18,8 @@ let boundary24h: number = 0  // 24-hour cutoff timestamp (client time)
 export function setUnviewedPosts24hMap(map: Map<string, number>, boundary: number): void {
   unviewedPosts24h = map
   boundary24h = boundary
+  revision++
+  notify()
 }
 
 /**
@@ -23,7 +27,10 @@ export function setUnviewedPosts24hMap(map: Map<string, number>, boundary: numbe
  * Called from the dwell-time callback after VIEW_DWELL_TIME_MS.
  */
 export function markPostViewed(uniqueId: string): void {
-  unviewedPosts24h.delete(uniqueId)
+  if (unviewedPosts24h.delete(uniqueId)) {
+    revision++
+    notify()
+  }
 }
 
 /**
@@ -51,4 +58,26 @@ export function countUnviewedOlderThan(timestamp: number): number {
  */
 export function hasUnviewedInSet(uniqueIds: string[]): boolean {
   return uniqueIds.some(id => unviewedPosts24h.has(id))
+}
+
+/**
+ * Get the current revision number of the unviewed tracker.
+ * Increments on every mutation; used as a React memo dependency
+ * to trigger recomputation when the underlying data changes.
+ */
+export function getUnviewedRevision(): number {
+  return revision
+}
+
+function notify(): void {
+  for (const fn of listeners) fn(revision)
+}
+
+/**
+ * Subscribe to unviewed tracker changes.
+ * Returns an unsubscribe function.
+ */
+export function onUnviewedChange(fn: (rev: number) => void): () => void {
+  listeners.add(fn)
+  return () => { listeners.delete(fn) }
 }

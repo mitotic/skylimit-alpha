@@ -88,9 +88,9 @@ export function findLowestVisiblePostTimestamp(feed: AppBskyFeedDefs.FeedViewPos
 /**
  * Trim a filtered feed array so the oldest displayed post aligns to a
  * curation page boundary (curationNumber = n * pageLength + 1).
- * Display count stays between pageLength and 2 * pageLength.
- * The feed is always capped at 2 * pageLength posts (keeping newest).
- * If the oldest post has no curation number, returns the feed unchanged (but still capped).
+ * Only trims a few posts from the tail to reach a clean boundary.
+ * Does NOT enforce a max size — callers should use trimFeedIfNeeded() for that.
+ * If the oldest post has no curation number, returns the feed unchanged.
  */
 export function alignFeedToPageBoundary(
   filteredFeed: CurationFeedViewPost[],
@@ -99,11 +99,6 @@ export function alignFeedToPageBoundary(
   // Guard: If feed is smaller than or equal to pageLength, never trim
   if (filteredFeed.length <= pageLength) {
     return filteredFeed
-  }
-
-  // Cap at 2 * pageLength (keep newest posts) — applies to all code paths below
-  if (filteredFeed.length > 2 * pageLength) {
-    filteredFeed = filteredFeed.slice(0, 2 * pageLength)
   }
 
   // Get curationNumber of the oldest post (last element)

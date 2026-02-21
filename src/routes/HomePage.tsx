@@ -18,7 +18,7 @@ import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
-import { markPostViewed, getUnviewedPostsInfo, countUnviewedOlderThan, hasUnviewedInSet } from '../curation/skylimitUnviewedTracker'
+import { markPostViewed, getUnviewedPostsInfo, countUnviewedOlderThan, onUnviewedChange } from '../curation/skylimitUnviewedTracker'
 import { GlobalStats, CurationFeedViewPost, SecondaryEntry, getIntervalHoursSync, isStatusShow } from '../curation/types'
 import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
@@ -46,7 +46,7 @@ interface RefreshDisplayedFeedResult {
 }
 
 /** Minimum dwell time (ms) a post must remain visible and stationary to count as "viewed" */
-const VIEW_DWELL_TIME_MS = 2000
+const VIEW_DWELL_TIME_MS = 1000
 /** Debounce interval (ms) after last scroll event before considering scroll "stopped" */
 const SCROLL_STOP_DEBOUNCE_MS = 300
 
@@ -77,6 +77,8 @@ export default function HomePage() {
   const [infiniteScrollingEnabled, setInfiniteScrollingEnabled] = useState(false)
   // Paged fresh updates state
   const [nextPageReady, setNextPageReady] = useState(false) // true when full page of posts available
+  const nextPageReadyRef = useRef(false) // ref mirror for use in probe callback (avoids stale closure)
+  nextPageReadyRef.current = nextPageReady // keep ref in sync during render
   const [partialPageCount, setPartialPageCount] = useState(0) // count when showing partial page (for "All new posts" button)
   const [postsNeededForPage, setPostsNeededForPage] = useState<number | null>(null) // null = full page; number = partial page posts needed to reach next boundary
   // Multi-page tracking state (kept for logging purposes)
@@ -85,6 +87,7 @@ export default function HomePage() {
   // Secondary cache sync state (for paged updates lookback)
   const [syncInProgress, setSyncInProgress] = useState(false) // true when secondary cache is being merged
   const [syncProgress, setSyncProgress] = useState(0) // 0-100 sync progress percentage
+  const [unviewedRevision, setUnviewedRevision] = useState(0) // tracks unviewed tracker mutations for memo invalidation
   // Debug: track expected display count from probe for comparison
   const probeExpectedCountRef = useRef<number>(0)
   // Cooldown: track when we last displayed new posts to prevent button from immediately reappearing
@@ -1837,8 +1840,8 @@ export default function HomePage() {
   // Standard mode: checks feed cache for posts already fetched and curated
   // Paged updates mode: probes server without caching to preserve access to newer posts
   useEffect(() => {
-    if (!newestDisplayedPostTimestamp || !dbInitialized) {
-      // Reset count if no timestamp
+    if (!newestDisplayedPostTimestamp || !dbInitialized || !initialPrefetchDone) {
+      // Reset count if no timestamp or still initializing
       setNewPostsCount(0)
       setShowNewPostsButton(false)
       setNextPageReady(false)
@@ -1922,6 +1925,17 @@ export default function HomePage() {
           setMultiPageCount(0)
         }
 
+        // If Next Page button is already showing, don't change its partial/full designation.
+        // This prevents "Next Page *" from upgrading to "Next Page" between probes,
+        // which would change click behavior from boundary-aligned to full-page.
+        if (nextPageReadyRef.current) {
+          // Still update counts for idle timer and logging
+          setNewPostsCount(probeResult.filteredPostCount)
+          setPartialPageCount(probeResult.filteredPostCount)
+          console.log(`[Paged Updates] Next Page already ready, skipping button state update (${probeResult.filteredPostCount} posts available)`)
+          return
+        }
+
         // Calculate partial page: can we reach the next page boundary with fewer than pageSize posts?
         let postsToNextBoundary = pageSize  // default: need full page
         let isPartialPage = false
@@ -1983,7 +1997,7 @@ export default function HomePage() {
       clearClientInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, agent, session, forceProbeTrigger])
+  }, [newestDisplayedPostTimestamp, dbInitialized, isInitialLoad, initialPrefetchDone, agent, session, forceProbeTrigger])
 
   // Idle timer for partial page display
   // When fullPageWaitMinutes has elapsed since newestDisplayedPostTimestamp and there are partial posts,
@@ -2676,22 +2690,26 @@ export default function HomePage() {
     return () => offSkyspeedCommand(handleCommand)
   }, [feed, handleLoadNewPosts, handleLoadAllNewPosts, handlePrevPage])
 
+  // Subscribe to unviewed tracker mutations so the memo below recomputes
+  useEffect(() => {
+    return onUnviewedChange((rev) => setUnviewedRevision(rev))
+  }, [])
+
   // Compute label for unviewed posts next to Prev Page button
+  // Shows above/below split relative to the oldest displayed post timestamp
   const prevPageUnviewedLabel: string | null = useMemo(() => {
     if (previousPageFeed.length === 0) return null
-    const { boundary } = getUnviewedPostsInfo()
+    const { count: totalUnviewed, boundary } = getUnviewedPostsInfo()
     if (boundary === 0) return null // stats not yet computed
-    if (oldestDisplayedPostTimestamp && oldestDisplayedPostTimestamp > boundary) {
-      // All displayed posts are within the 24h window — check for older unviewed posts
-      const olderCount = countUnviewedOlderThan(oldestDisplayedPostTimestamp)
-      if (olderCount > 0) {
-        return `(${olderCount} unviewed posts within last 24 hours)`
-      }
+    if (totalUnviewed === 0) return null
+    if (!oldestDisplayedPostTimestamp) {
+      return `(${totalUnviewed} unviewed posts below within last 24 hours)`
     }
-    // Fall through: check prefetched posts for any unviewed
-    const prefetchedIds = previousPageFeed.map(p => getPostUniqueId(p))
-    return hasUnviewedInSet(prefetchedIds) ? '(unviewed posts)' : null
-  }, [previousPageFeed, oldestDisplayedPostTimestamp, feed])
+    const below = countUnviewedOlderThan(oldestDisplayedPostTimestamp)
+    // const above = totalUnviewed - below  // computed but not displayed for now
+    if (below === 0) return null
+    return `(${below} unviewed posts below within last 24 hours)`
+  }, [previousPageFeed, oldestDisplayedPostTimestamp, feed, unviewedRevision])
 
   // Handle tab change - saves current tab's state and switches to new tab
   const handleTabChange = useCallback((newTab: HomeTab) => {
@@ -2747,37 +2765,44 @@ export default function HomePage() {
     <div className="pb-20 md:pb-0 relative">
       <RateLimitIndicator status={rateLimitStatus} />
       
-      {/* Skylimit Summary Header */}
-      {skylimitStats && (
+      {/* Skylimit Summary Header - initialization indicator or normal summary */}
+      {(!initialPrefetchDone || skylimitStats) && (
         <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-2 flex items-center">
-          <div className="flex items-center gap-4 text-sm">
-            <a
-              href="https://github.com/mitotic/skylimit-alpha#readme"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-              title="About Skylimit"
-            >
-              About Skylimit
-            </a>
-            {getNonStandardServerName() && (
-              <span className="text-orange-500 dark:text-orange-400 font-medium">
-                {getNonStandardServerName()}
-              </span>
-            )}
-            <AcceleratedClock />
-            <div className="text-gray-600 dark:text-gray-400">
-              <span className="font-semibold">{skylimitStats.post_daily.toFixed(0)}</span> posts/day received
-            </div>
-            <div className="text-gray-400 dark:text-gray-500">→</div>
-            <div className="text-gray-600 dark:text-gray-400">
-              {curationSuspended ? (
-                <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>
-              ) : (
-                <><span className="font-semibold">~{skylimitStats.shown_daily.toFixed(0)}</span> displayed</>
+          {skylimitStats ? (
+            <div className="flex items-center gap-4 text-sm">
+              <a
+                href="https://github.com/mitotic/skylimit-alpha#readme"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                title="About Skylimit"
+              >
+                About Skylimit
+              </a>
+              {getNonStandardServerName() && (
+                <span className="text-orange-500 dark:text-orange-400 font-medium">
+                  {getNonStandardServerName()}
+                </span>
               )}
+              <AcceleratedClock />
+              <div className="text-gray-600 dark:text-gray-400">
+                <span className="font-semibold">{skylimitStats.post_daily.toFixed(0)}</span> posts/day received
+              </div>
+              <div className="text-gray-400 dark:text-gray-500">→</div>
+              <div className="text-gray-600 dark:text-gray-400">
+                {curationSuspended ? (
+                  <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>
+                ) : (
+                  <><span className="font-semibold">~{skylimitStats.shown_daily.toFixed(0)}</span> displayed</>
+                )}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+              <Spinner size="sm" />
+              <span>Initializing...{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -2828,7 +2853,8 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* Next Page / All New Posts buttons - two-button layout */}
+            {/* Next Page / All New Posts buttons - hidden during initialization */}
+            {initialPrefetchDone && (
             <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
               <div className="flex gap-2">
                 {/* "Next Page" button - always visible, grayed out when inactive or during lookback */}
@@ -2840,7 +2866,7 @@ export default function HomePage() {
                     handleLoadNewPosts()
                   }}
                   disabled={isLoadingMore || !nextPageReady || lookingBack}
-                  className={`flex-1 btn flex items-center justify-center gap-2 ${
+                  className={`btn inline-flex items-center gap-2 ${
                     nextPageReady && !lookingBack
                       ? 'btn-primary'
                       : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
@@ -2854,7 +2880,7 @@ export default function HomePage() {
                     </>
                   ) : (
                     <>
-                      <span>📄</span>
+                      <span>▲</span>
                       Next Page{postsNeededForPage !== null ? ' *' : ''}
                     </>
                   )}
@@ -2880,15 +2906,16 @@ export default function HomePage() {
                       </>
                     ) : (
                       <>
-                        <span>📬</span>
-                        All new posts ({partialPageCount})
+                        <span>↑</span>
+                        All new posts ({partialPageCount}+)
                       </>
                     )}
                   </button>
                 )}
               </div>
             </div>
-            
+            )}
+
             {feed.map((post, index) => (
               <div
                 key={getPostUniqueId(post)}
@@ -2935,37 +2962,44 @@ export default function HomePage() {
 
         {/* Bottom of feed UI - spinner/button/no-more-posts */}
         {!infiniteScrollingEnabled && !lookingBack && (
-          <div className="p-4 text-center">
+          <div className="p-4 flex items-center gap-3">
             {isPrefetching ? (
               // State 1: After clicking Prev Page, prefetching next page - show spinner
-              <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
+              <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
                 <Spinner size="sm" />
                 <span>Loading...</span>
               </div>
             ) : previousPageFeed.length > 0 ? (
-              // State 2: More posts available - show Prev Page button
-              <button
-                onClick={handlePrevPage}
-                disabled={syncInProgress}
-                className="btn btn-primary inline-flex items-center justify-center gap-2"
-              >
-                {syncInProgress ? (
-                  <>
-                    <Spinner size="sm" />
-                    Synchronizing... {syncProgress}%
-                  </>
-                ) : (
-                  <>
-                    <span>📄</span>
-                    Prev Page{prevPageUnviewedLabel ? ` ${prevPageUnviewedLabel}` : ''}
-                  </>
+              // State 2: More posts available - show Prev Page button + unviewed label
+              <>
+                <button
+                  onClick={handlePrevPage}
+                  disabled={syncInProgress}
+                  className="btn btn-primary inline-flex items-center gap-2"
+                >
+                  {syncInProgress ? (
+                    <>
+                      <Spinner size="sm" />
+                      Synchronizing... {syncProgress}%
+                    </>
+                  ) : (
+                    <>
+                      <span>▼</span>
+                      Prev Page
+                    </>
+                  )}
+                </button>
+                {prevPageUnviewedLabel && (
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    {prevPageUnviewedLabel}
+                  </span>
                 )}
-              </button>
+              </>
             ) : !isLoading && feed.length > 0 ? (
               // State 3: Initializing or No more posts
               !initialPrefetchDone ? (
                 // Still initializing (prefetch not complete yet)
-                <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
+                <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
                   <Spinner size="sm" />
                   <span>Initializing...</span>
                 </div>
