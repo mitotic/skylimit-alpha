@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
@@ -52,6 +52,7 @@ const SCROLL_STOP_DEBOUNCE_MS = 300
 
 export default function HomePage() {
   const location = useLocation()
+  const navigate = useNavigate()
   const { agent, session } = useSession()
   const { rateLimitStatus, setRateLimitStatus } = useRateLimit()
   const [feed, setFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])
@@ -2769,7 +2770,7 @@ export default function HomePage() {
       {(!initialPrefetchDone || skylimitStats) && (
         <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-2 flex items-center">
           {skylimitStats ? (
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-4 text-sm w-full">
               <a
                 href="https://github.com/mitotic/skylimit-alpha#readme"
                 target="_blank"
@@ -2779,22 +2780,24 @@ export default function HomePage() {
               >
                 About Skylimit
               </a>
-              {getNonStandardServerName() && (
-                <span className="text-orange-500 dark:text-orange-400 font-medium">
-                  {getNonStandardServerName()}
-                </span>
-              )}
-              <AcceleratedClock />
-              <div className="text-gray-600 dark:text-gray-400">
-                <span className="font-semibold">{skylimitStats.post_daily.toFixed(0)}</span> posts/day received
-              </div>
-              <div className="text-gray-400 dark:text-gray-500">→</div>
-              <div className="text-gray-600 dark:text-gray-400">
-                {curationSuspended ? (
-                  <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>
-                ) : (
-                  <><span className="font-semibold">~{skylimitStats.shown_daily.toFixed(0)}</span> displayed</>
+              <div className="flex items-center gap-4 ml-auto">
+                {getNonStandardServerName() && (
+                  <span className="text-orange-500 dark:text-orange-400 font-medium">
+                    {getNonStandardServerName()}
+                  </span>
                 )}
+                <AcceleratedClock />
+                <div className="text-gray-600 dark:text-gray-400">
+                  <span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=following')}>{skylimitStats.post_daily.toFixed(0)}</span> posts/day received
+                </div>
+                <div className="text-gray-500 dark:text-gray-400 text-base font-bold mx-[-4px]">→</div>
+                <div className="text-gray-600 dark:text-gray-400">
+                  {curationSuspended ? (
+                    <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>
+                  ) : (
+                    <><span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=curation')}>~{skylimitStats.shown_daily.toFixed(0)}</span> displayed</>
+                  )}
+                </div>
               </div>
             </div>
           ) : (
@@ -2906,7 +2909,7 @@ export default function HomePage() {
                       </>
                     ) : (
                       <>
-                        <span>↑</span>
+                        <svg className="w-4 h-4 inline-block" viewBox="0 0 24 24" fill="currentColor"><polygon points="4,21 12,11 20,21" /><polygon points="4,13 12,3 20,13" /></svg>
                         All new posts ({partialPageCount}+)
                       </>
                     )}
