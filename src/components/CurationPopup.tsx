@@ -14,6 +14,7 @@ export interface CurationPopupProps {
   rawPostNumber?: number | null        // PostCard only
   postingPerDay?: number               // Total posts/day (all types)
   originalsPerDay?: number             // Original posts/day (Debug Info)
+  priorityPerDay?: number              // Priority posts/day (Debug Info)
   repostsPerDay?: number               // Reposts/day (Debug Info)
   followedRepliesPerDay?: number       // Replies to followees/day (Debug Info)
   unfollowedRepliesPerDay?: number     // Replies to non-followees/day (Debug Info)
@@ -52,6 +53,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   postingPerDay,
   shownPerDay,
   originalsPerDay,
+  priorityPerDay,
   repostsPerDay,
   followedRepliesPerDay,
   unfollowedRepliesPerDay,
@@ -169,7 +171,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             <div>Regular show probability: {(regularProb * 100).toFixed(1)}%</div>
           )}
           {priorityProb !== undefined && (
-            <div>Priority show probability: {(priorityProb * 100).toFixed(1)}%</div>
+            <div>{priorityPerDay === 0 ? 'No priority posts' : `Priority show probability: ${(priorityProb * 100).toFixed(1)}%`}</div>
           )}
 
           {/* Fallback message */}
@@ -189,14 +191,14 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             <button
               onClick={onAmpDown}
               disabled={ampLoading}
-              className="flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded disabled:opacity-50"
+              className="flex-1 px-3 py-2 text-sm bg-red-700 hover:bg-red-800 text-white rounded disabled:opacity-50"
             >
               ↓ Amp Down
             </button>
             <button
               onClick={onAmpUp}
               disabled={ampLoading}
-              className="flex-1 px-3 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded disabled:opacity-50"
+              className="flex-1 px-3 py-2 text-sm bg-green-700 hover:bg-green-800 text-white rounded disabled:opacity-50"
             >
               ↑ Amp Up
             </button>
@@ -229,6 +231,9 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             )}
             {(originalsPerDay !== undefined || repostsPerDay !== undefined) && (
               <div>Originals {(originalsPerDay ?? 0).toFixed(1)}/day, Reposts {(repostsPerDay ?? 0).toFixed(1)}/day</div>
+            )}
+            {priorityPerDay !== undefined && (
+              <div>Priority {priorityPerDay.toFixed(1)}/day</div>
             )}
             {(followedRepliesPerDay !== undefined || unfollowedRepliesPerDay !== undefined) && (
               <div>Replies (followed: {(followedRepliesPerDay ?? 0).toFixed(1)}/day, unfollowed: {(unfollowedRepliesPerDay ?? 0).toFixed(1)}/day)</div>

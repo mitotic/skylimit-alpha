@@ -387,6 +387,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
                   shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
                   originalsPerDay={userEntry?.original_daily}
+                  priorityPerDay={userEntry?.priority_daily}
                   repostsPerDay={userEntry?.repost_daily}
                   followedRepliesPerDay={userEntry?.followed_reply_daily}
                   unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}

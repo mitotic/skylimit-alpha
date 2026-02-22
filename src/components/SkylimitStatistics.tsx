@@ -247,6 +247,7 @@ export default function SkylimitStatistics() {
   const formatCurationStats = (userEntry: UserEntry, followInfo?: FollowInfo): {
     postingCount: number
     originalsPerDay: number
+    priorityPerDay: number
     repostsPerDay: number
     followedRepliesPerDay: number
     unfollowedRepliesPerDay: number
@@ -256,6 +257,7 @@ export default function SkylimitStatistics() {
   } => {
     const postingCount = Math.round(countTotalPostsForUser(userEntry))
     const originalsPerDay = userEntry.original_daily
+    const priorityPerDay = userEntry.priority_daily
     const repostsPerDay = userEntry.repost_daily
     const followedRepliesPerDay = userEntry.followed_reply_daily
     const unfollowedRepliesPerDay = userEntry.unfollowed_reply_daily
@@ -263,7 +265,7 @@ export default function SkylimitStatistics() {
     const priorityProb = userEntry.priority_prob * 100
     const ampFactor = followInfo?.amp_factor ?? userEntry.amp_factor ?? null
 
-    return { postingCount, originalsPerDay, repostsPerDay, followedRepliesPerDay, unfollowedRepliesPerDay, regularProb, priorityProb, ampFactor }
+    return { postingCount, originalsPerDay, priorityPerDay, repostsPerDay, followedRepliesPerDay, unfollowedRepliesPerDay, regularProb, priorityProb, ampFactor }
   }
 
   const handleAmpUp = async (username: string) => {
@@ -610,6 +612,7 @@ export default function SkylimitStatistics() {
                           postingPerDay={curationStats.postingCount}
                           shownPerDay={curationStats.postingCount * (account.displayProbability / 100)}
                           originalsPerDay={curationStats.originalsPerDay}
+                          priorityPerDay={curationStats.priorityPerDay}
                           repostsPerDay={curationStats.repostsPerDay}
                           followedRepliesPerDay={curationStats.followedRepliesPerDay}
                           unfollowedRepliesPerDay={curationStats.unfollowedRepliesPerDay}

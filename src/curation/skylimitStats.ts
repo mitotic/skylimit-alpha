@@ -24,10 +24,11 @@ import {
 import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral, getIntervalString } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
+import { getLocalMidnight } from './feedCacheCore'
 // countTotalPosts is defined in this file
 import { hmacHex } from '../utils/hmac'
-import { clientNow } from '../utils/clientClock'
-import { setUnviewedPosts24hMap } from './skylimitUnviewedTracker'
+import { clientDate } from '../utils/clientClock'
+import { setUnviewedPostsTodayMap } from './skylimitUnviewedTracker'
 
 // Prototype for PostStats - tracks repost counts during interval processing
 const POST_STATS_PROTO: PostStats = { repost_count: 0, followed_repost_count: 0, repostCount: 0 }
@@ -91,15 +92,15 @@ export async function computePostStats(
     return null
   }
 
-  // Build unviewed posts map for last 24 hours (using client time for boundary)
-  const now24hBoundary = clientNow() - 24 * 60 * 60 * 1000
+  // Build unviewed posts map for today (since midnight of current calendar day)
+  const todayMidnight = getLocalMidnight(clientDate()).getTime()
   const unviewedMap = new Map<string, number>()
   for (const summary of allSummaries) {
-    if (!summary.viewedAt && isStatusShow(summary.curation_status) && summary.postTimestamp > now24hBoundary) {
+    if (!summary.viewedAt && isStatusShow(summary.curation_status) && summary.postTimestamp > todayMidnight) {
       unviewedMap.set(summary.uniqueId, summary.postTimestamp)
     }
   }
-  setUnviewedPosts24hMap(unviewedMap, now24hBoundary)
+  setUnviewedPostsTodayMap(unviewedMap, todayMidnight)
 
   // Group summaries by computed interval for the complete intervals algorithm
   const summariesByInterval = new Map<string, PostSummary[]>()

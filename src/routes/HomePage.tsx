@@ -769,11 +769,11 @@ export default function HomePage() {
     if (boundary === 0) return null
     if (totalUnviewed === 0) return null
     if (!oldestDisplayedPostTimestamp) {
-      return `(${totalUnviewed} unviewed posts below within last 24 hours)`
+      return `(${totalUnviewed} unviewed posts below remaining today)`
     }
     const below = countUnviewedOlderThan(oldestDisplayedPostTimestamp)
     if (below === 0) return null
-    return `(${below} unviewed posts below within last 24 hours)`
+    return `(${below} unviewed posts below remaining today)`
   }, [previousPageFeed, oldestDisplayedPostTimestamp, feed, unviewedRevision, showViewedStatus])
 
   // Handle tab change
@@ -872,7 +872,7 @@ export default function HomePage() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-2 text-sm text-red-500 dark:text-red-400">
               <Spinner size="sm" />
               <span>Initializing...{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}</span>
             </div>
