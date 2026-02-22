@@ -769,11 +769,11 @@ export default function HomePage() {
     if (boundary === 0) return null
     if (totalUnviewed === 0) return null
     if (!oldestDisplayedPostTimestamp) {
-      return `(${totalUnviewed} unread below, for today)`
+      return `${totalUnviewed} unread posts below, for today`
     }
     const below = countUnviewedOlderThan(oldestDisplayedPostTimestamp)
     if (below === 0) return null
-    return `(${below} unread below, for today)`
+    return `${below} unread posts below, for today`
   }, [previousPageFeed, oldestDisplayedPostTimestamp, feed, unviewedRevision, showViewedStatus])
 
   // Handle tab change
