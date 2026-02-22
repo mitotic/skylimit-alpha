@@ -168,7 +168,7 @@ export default function SavedPage() {
   return (
     <div className="max-w-2xl mx-auto">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-        <h1 className="text-xl font-bold text-gray-900 dark:text-white">Saved Posts</h1>
+        <h1 className="text-2xl font-bold">Saved Posts</h1>
       </div>
 
       {feed.length === 0 ? (

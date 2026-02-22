@@ -360,6 +360,10 @@ export default function SearchPage() {
   return (
     <div className="pb-20 md:pb-0">
       <div className="sticky top-0 z-30 bg-white dark:bg-gray-900">
+        {/* Header */}
+        <div className="p-4 pb-0">
+          <h1 className="text-2xl font-bold">Search</h1>
+        </div>
         <div className="px-4 py-3">
           <input
             type="text"

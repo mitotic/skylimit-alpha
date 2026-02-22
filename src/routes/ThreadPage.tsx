@@ -786,6 +786,10 @@ export default function ThreadPage() {
 
   return (
     <div className="pb-20 md:pb-0">
+      {/* Header */}
+      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+        <h1 className="text-2xl font-bold">Thread</h1>
+      </div>
       {/* Parent chain view - shows context above the clicked post */}
       {(parentChain.length > 0 || isLoadingParents) && (
         <ParentChainView
