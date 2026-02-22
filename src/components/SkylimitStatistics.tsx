@@ -359,9 +359,9 @@ export default function SkylimitStatistics() {
   // Get sort indicator for column header
   const getSortIndicator = (field: SortField): JSX.Element => {
     if (sortField !== field) {
-      return <span className="text-gray-400 dark:text-gray-500 ml-1">↓</span>
+      return <span className="text-gray-400 dark:text-gray-500 ml-1 inline-flex align-middle"><svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></span>
     }
-    return <span className="text-green-600 dark:text-green-400 ml-1 font-bold">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+    return <span className="text-green-600 dark:text-green-400 ml-1 inline-flex align-middle font-bold">{sortDirection === 'asc' ? <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg> : <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>}</span>
   }
 
   if (loading) {
