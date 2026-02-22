@@ -4,7 +4,7 @@ import type { BskyAgent } from '@atproto/api'
 import { getHomeFeed } from '../api/feed'
 import { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
+import { initDB, closeDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
@@ -227,6 +227,7 @@ export function useFeedPipeline({
 
     return () => {
       if (cleanup) cleanup()
+      closeDB()
     }
   }, [agent, session])
 

@@ -19,15 +19,35 @@ export const STORE_PARENT_POSTS = 'parent_posts'
 export const STORE_FEED_CACHE_SECONDARY = 'feed_cache_secondary'
 
 let db: IDBDatabase | null = null
+let pendingInit: Promise<IDBDatabase> | null = null
 
 /**
- * Initialize IndexedDB
+ * Initialize IndexedDB.
+ * Deduplicates concurrent calls: if an init is already in progress,
+ * all callers share the same promise instead of opening multiple connections.
  */
 export async function initDB(): Promise<IDBDatabase> {
   if (db) return db
+  if (pendingInit) return pendingInit
 
+  pendingInit = openDB().finally(() => { pendingInit = null })
+  return pendingInit
+}
+
+function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    const TIMEOUT_MS = 10000
+    let settled = false
+
     const request = indexedDB.open(DB_NAME, DB_VERSION)
+
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        console.warn(`[InitDB] Timed out after ${TIMEOUT_MS}ms waiting for IndexedDB open`)
+        reject(new Error('IndexedDB open timed out'))
+      }
+    }, TIMEOUT_MS)
 
     // IMPORTANT: onupgradeneeded must be assigned first, before onerror/onsuccess
     // IndexedDB fires onupgradeneeded synchronously during version upgrades,
@@ -100,12 +120,39 @@ export async function initDB(): Promise<IDBDatabase> {
       }
     }
 
-    request.onerror = () => reject(request.error)
+    request.onblocked = () => {
+      console.warn('[InitDB] Open blocked by another connection')
+    }
+
+    request.onerror = () => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timeout)
+        reject(request.error)
+      }
+    }
     request.onsuccess = () => {
-      db = request.result
-      resolve(db)
+      if (!settled) {
+        settled = true
+        clearTimeout(timeout)
+        db = request.result
+        resolve(request.result)
+      }
     }
   })
+}
+
+/**
+ * Close the database connection and reset the module-level reference.
+ * Used by React effect cleanup to prevent open connections from blocking
+ * subsequent initDB() calls (especially in StrictMode).
+ */
+export function closeDB(): void {
+  if (db) {
+    db.close()
+    db = null
+  }
+  pendingInit = null
 }
 
 /**

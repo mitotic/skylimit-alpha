@@ -94,13 +94,14 @@ export default function HomePage() {
     syncInProgress, setSyncInProgress,
     syncProgress, setSyncProgress,
     infiniteScrollingEnabled,
-    loadFeedRef,
     previousPageFeedRef,
     isPrefetchingRef,
     lastDisplayTimeRef,
     refreshDisplayedFeed,
     prefetchPrevPage,
     lookupCurationAndFilter,
+    forceProbeRef,
+    setForceProbeTrigger,
   } = pipeline
 
   const {
@@ -109,7 +110,7 @@ export default function HomePage() {
     quotePost, setQuotePost,
     handleLike, handleBookmark, handleRepost,
     handleQuotePost, handleReply, handlePost, handleAmpChange,
-  } = usePostInteractions({ agent, feed, setFeed, loadFeedRef, addToast })
+  } = usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger })
 
   const {
     isScrolledDown,

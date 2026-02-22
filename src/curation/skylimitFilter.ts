@@ -105,6 +105,7 @@ export async function curateSinglePost(
 
   // Always show own posts
   if (summary.username === myUsername || summary.username === summary.orig_username) {
+    modStatus.curation_status = 'self_show'
     return modStatus
   }
 
@@ -282,7 +283,7 @@ export async function curateSinglePost(
 
           if (parentSummary
               && isStatusShow(parentSummary.curation_status)
-              && (Date.now() - parentSummary.postTimestamp) >= TWENTY_FOUR_HOURS) {
+              && (clientNow() - parentSummary.postTimestamp) >= TWENTY_FOUR_HOURS) {
             // Parent shown and old (>24h) — keep the reply, apply normal probability
             modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
             if (regularDrop) dropReason = 'random (regular)'

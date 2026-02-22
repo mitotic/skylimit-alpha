@@ -22,6 +22,7 @@ export type CurationStatus =
   | 'edition_drop'     // Post saved for edition digest
   | 'untracked_show'   // User not tracked - shown by default
   | 'temp_show'        // Temporary show during initial lookback (before stats computed)
+  | 'self_show'        // User's own post - always shown
 
 /**
  * Check if a curation status indicates the post should be shown

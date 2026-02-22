@@ -2,18 +2,17 @@ import { useState, useCallback } from 'react'
 import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
-import { clearFeedCache, clearPrevPageCursor } from '../curation/skylimitFeedCache'
-import { getFeedStateKey } from './homePageTypes'
 
 interface UsePostInteractionsParams {
   agent: BskyAgent | null
   feed: AppBskyFeedDefs.FeedViewPost[]
   setFeed: React.Dispatch<React.SetStateAction<AppBskyFeedDefs.FeedViewPost[]>>
-  loadFeedRef: React.MutableRefObject<((cursor?: string, useCache?: boolean) => Promise<void>) | null>
   addToast: (message: string, type: 'success' | 'error' | 'info') => void
+  forceProbeRef: React.MutableRefObject<boolean>
+  setForceProbeTrigger: React.Dispatch<React.SetStateAction<number>>
 }
 
-export function usePostInteractions({ agent, feed, setFeed, loadFeedRef, addToast }: UsePostInteractionsParams) {
+export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger }: UsePostInteractionsParams) {
   const [showCompose, setShowCompose] = useState(false)
   const [replyToUri, setReplyToUri] = useState<string | null>(null)
   const [quotePost, setQuotePost] = useState<AppBskyFeedDefs.PostView | null>(null)
@@ -76,11 +75,22 @@ export function usePostInteractions({ agent, feed, setFeed, loadFeedRef, addToas
         }))
       }
     } catch (error) {
-      // Revert optimistic update by reloading
-      loadFeedRef.current?.(undefined, false)
+      // Revert optimistic count update
+      setFeed(prev => prev.map(p => {
+        if (p.post.uri === uri) {
+          return {
+            ...p,
+            post: {
+              ...p.post,
+              likeCount: (p.post.likeCount || 0) + (isLiked ? 1 : -1),
+            },
+          }
+        }
+        return p
+      }))
       addToast(error instanceof Error ? error.message : 'Failed to update like', 'error')
     }
-  }, [agent, feed, setFeed, loadFeedRef, addToast])
+  }, [agent, feed, setFeed, addToast])
 
   const handleBookmark = useCallback(async (uri: string, cid: string) => {
     if (!agent) return
@@ -186,11 +196,22 @@ export function usePostInteractions({ agent, feed, setFeed, loadFeedRef, addToas
         }))
       }
     } catch (error) {
-      // Revert optimistic update by reloading
-      loadFeedRef.current?.(undefined, false)
+      // Revert optimistic count update
+      setFeed(prev => prev.map(p => {
+        if (p.post.uri === uri) {
+          return {
+            ...p,
+            post: {
+              ...p.post,
+              repostCount: (p.post.repostCount || 0) + (isReposted ? 1 : -1),
+            },
+          }
+        }
+        return p
+      }))
       addToast(error instanceof Error ? error.message : 'Failed to update repost', 'error')
     }
-  }, [agent, feed, setFeed, loadFeedRef, addToast])
+  }, [agent, feed, setFeed, addToast])
 
   const handleQuotePost = useCallback((post: AppBskyFeedDefs.PostView) => {
     setQuotePost(post)
@@ -230,20 +251,16 @@ export function usePostInteractions({ agent, feed, setFeed, loadFeedRef, addToas
       })
       addToast('Post created!', 'success')
     }
-    // Clear cache and reload feed
-    await clearFeedCache()
-    await clearPrevPageCursor()
-    sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
-    loadFeedRef.current?.(undefined, false)
-  }, [agent, loadFeedRef, addToast])
+    // Trigger probe to pick up the new post through paged updates
+    forceProbeRef.current = true
+    setForceProbeTrigger(n => n + 1)
+  }, [agent, forceProbeRef, setForceProbeTrigger, addToast])
 
   const handleAmpChange = useCallback(async () => {
-    // Clear cache and reload feed when amp factor changes
-    await clearFeedCache()
-    await clearPrevPageCursor()
-    sessionStorage.removeItem(getFeedStateKey('curated')) // Clear saved state
-    loadFeedRef.current?.(undefined, false)
-  }, [loadFeedRef])
+    // Amp factor changes only affect future curation probabilities.
+    // The displayed feed, cached posts, and summaries are unaffected.
+    // PostCard.refreshAfterAmpChange already updates the popup's local state.
+  }, [])
 
   return {
     showCompose,

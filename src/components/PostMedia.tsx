@@ -28,7 +28,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
 
     return (
       <>
-        <div className={`grid gap-2 rounded-lg overflow-hidden w-full max-w-[500px] mx-auto ${
+        <div className={`grid gap-2 rounded-lg overflow-hidden w-full max-w-[500px] ${
           images.length === 1 ? 'grid-cols-1' :
           images.length === 2 ? 'grid-cols-2' :
           images.length === 3 ? 'grid-cols-2' :

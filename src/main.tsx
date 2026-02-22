@@ -46,23 +46,50 @@ function performFullReset(preserveKeys: Record<string, string> = {}): never {
 
   const redirectToHome = () => { window.location.href = '/' }
 
-  const request = indexedDB.deleteDatabase('skylimit_db')
+  // Clear all object stores instead of deleting the database.
+  // deleteDatabase causes persistent blocking issues: the open() call on the
+  // next page load gets blocked indefinitely if the deletion hasn't fully completed.
+  const DB_NAME = 'skylimit_db'
+  const request = indexedDB.open(DB_NAME)
   request.onsuccess = () => {
-    console.log('[Reset] Database deleted successfully')
-    redirectToHome()
+    const database = request.result
+    const storeNames = Array.from(database.objectStoreNames)
+    if (storeNames.length === 0) {
+      console.log('[Reset] No stores to clear, redirecting')
+      database.close()
+      redirectToHome()
+      return
+    }
+    const tx = database.transaction(storeNames, 'readwrite')
+    let cleared = 0
+    for (const name of storeNames) {
+      const clearReq = tx.objectStore(name).clear()
+      clearReq.onsuccess = () => {
+        cleared++
+        if (cleared === storeNames.length) {
+          console.log(`[Reset] Cleared ${cleared} object stores`)
+        }
+      }
+    }
+    tx.oncomplete = () => {
+      console.log('[Reset] All stores cleared successfully')
+      database.close()
+      redirectToHome()
+    }
+    tx.onerror = () => {
+      console.error('[Reset] Failed to clear stores, redirecting anyway')
+      database.close()
+      redirectToHome()
+    }
   }
   request.onerror = () => {
-    console.error('[Reset] Database deletion failed, redirecting anyway')
-    redirectToHome()
-  }
-  request.onblocked = () => {
-    console.warn('[Reset] Database deletion blocked (open connections), redirecting anyway')
+    console.error('[Reset] Failed to open database for clearing, redirecting anyway')
     redirectToHome()
   }
 
   // Safety net: if none of the callbacks fire within 3 seconds, redirect anyway
   setTimeout(() => {
-    console.warn('[Reset] Timeout waiting for database deletion, redirecting')
+    console.warn('[Reset] Timeout waiting for store clearing, redirecting')
     redirectToHome()
   }, 3000)
 
