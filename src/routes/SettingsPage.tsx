@@ -580,7 +580,17 @@ export default function SettingsPage() {
                   onChange={(e) => updateSetting('showTime', e.target.checked)}
                   className="w-5 h-5"
                 />
-                <span>Display post timestamp (hh:mm) in home feed</span>
+                <span>Show post timestamp in home feed (hh:mm)</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={settings.showViewedStatus !== false}
+                  onChange={(e) => updateSetting('showViewedStatus', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Show viewed status of posts (checkmark &amp; shading)</span>
               </label>
 
               <label className="flex items-center space-x-3">
@@ -590,7 +600,7 @@ export default function SettingsPage() {
                   onChange={(e) => updateSetting('showAllPosts', e.target.checked)}
                   className="w-5 h-5"
                 />
-                <span>Show dropped posts (as grayed out)</span>
+                <span>Show dropped posts (grayed out)</span>
               </label>
 
               <label className="flex items-center space-x-3">

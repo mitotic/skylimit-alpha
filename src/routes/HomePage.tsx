@@ -37,6 +37,7 @@ export default function HomePage() {
   const previousPathnameRef = useRef<string>(location.pathname)
   const scrollRestoredRef = useRef(false)
   const [unviewedRevision, setUnviewedRevision] = useState(0)
+  const [showViewedStatus, setShowViewedStatus] = useState(true)
 
   // Tab state - initialize from sessionStorage
   const getInitialTab = (): HomeTab => {
@@ -239,6 +240,7 @@ export default function HomePage() {
     try {
       setIsLoadingMore(true)
       const settings = await getSettings()
+      setShowViewedStatus(settings?.showViewedStatus !== false)
       const pageLength = settings?.feedPageLength || 25
 
       const effectivePageLength = postsNeededForPage ?? pageLength
@@ -754,8 +756,14 @@ export default function HomePage() {
     return onUnviewedChange((rev) => setUnviewedRevision(rev))
   }, [])
 
+  // Load showViewedStatus setting on mount
+  useEffect(() => {
+    getSettings().then(s => setShowViewedStatus(s?.showViewedStatus !== false))
+  }, [])
+
   // Compute label for unviewed posts next to Prev Page button
   const prevPageUnviewedLabel: string | null = useMemo(() => {
+    if (!showViewedStatus) return null
     if (previousPageFeed.length === 0) return null
     const { count: totalUnviewed, boundary } = getUnviewedPostsInfo()
     if (boundary === 0) return null
@@ -766,7 +774,7 @@ export default function HomePage() {
     const below = countUnviewedOlderThan(oldestDisplayedPostTimestamp)
     if (below === 0) return null
     return `(${below} unviewed posts below within last 24 hours)`
-  }, [previousPageFeed, oldestDisplayedPostTimestamp, feed, unviewedRevision])
+  }, [previousPageFeed, oldestDisplayedPostTimestamp, feed, unviewedRevision, showViewedStatus])
 
   // Handle tab change
   const handleTabChange = useCallback((newTab: HomeTab) => {
@@ -841,7 +849,19 @@ export default function HomePage() {
                 <div className="text-gray-600 dark:text-gray-400">
                   <span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=following')}>{skylimitStats.post_daily.toFixed(0)}</span> posts/day received
                 </div>
-                <div className="text-gray-500 dark:text-gray-400 text-base font-bold mx-[-4px]">→</div>
+                <div className="text-gray-500 dark:text-gray-400 mx-[-4px] flex items-center">
+                  <svg
+                    className="w-5 h-4 sm:w-4 sm:h-4"
+                    viewBox="0 0 20 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="2" y1="8" x2="16" y2="8" className="[stroke-width:3] sm:[stroke-width:2]" />
+                    <polyline points="11,3 17,8 11,13" className="[stroke-width:3] sm:[stroke-width:2]" />
+                  </svg>
+                </div>
                 <div className="text-gray-600 dark:text-gray-400">
                   {curationSuspended ? (
                     <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>

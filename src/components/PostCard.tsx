@@ -64,6 +64,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [loading, setLoading] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [showTime, setShowTime] = useState(false)
+  const [showViewedStatus, setShowViewedStatus] = useState(true)
   const [showAllPosts, setShowAllPosts] = useState(false)
   const [curationSuspended, setCurationSuspended] = useState(false)
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
@@ -100,7 +101,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   // Extract curation metadata (must be defined before useEffect that uses it)
   const actualPost = post.post
   const curation = 'curation' in post ? (post as CurationFeedViewPost).curation : undefined
-  const isViewedOld = !!(curation?.viewedAt && (clientNow() - curation.viewedAt > 15 * 60 * 1000))
+  const isViewedOld = showViewedStatus && !!(curation?.viewedAt && (clientNow() - curation.viewedAt > 15 * 60 * 1000))
 
   // Get post number if counter should be shown
   useEffect(() => {
@@ -111,6 +112,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           // Track showAllPosts and curationSuspended for styling (grayed out posts)
           setShowAllPosts(settings?.showAllPosts || false)
           setCurationSuspended(settings?.curationSuspended || false)
+          setShowViewedStatus(settings?.showViewedStatus !== false)
           // Load click to Bluesky setting from localStorage
           setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
           // Get page length for page boundary indicator
@@ -509,8 +511,12 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             >
               @{author.handle}
             </span>
-            <span className="text-gray-500 dark:text-gray-400">·</span>
-            <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">{timeAgo}</span>
+            {(!showTime || isReposted) && (
+              <>
+                <span className="text-gray-500 dark:text-gray-400">·</span>
+                <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">{timeAgo}</span>
+              </>
+            )}
             {/* Counter for replies - show on same line as author name */}
             {isReply && showCounterDisplay && !isReposted && (
               <>

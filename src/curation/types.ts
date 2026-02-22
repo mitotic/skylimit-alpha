@@ -304,6 +304,7 @@ export interface SkylimitSettings {
   minFolloweeDayCount?: number // minimum followee day count to prevent inflated posting rates, default 1
   // Reply handling settings
   hideUnfollowedReplies?: boolean // Hide all replies to non-followees, default false
+  showViewedStatus?: boolean // Show viewed-post visual indicators (checkmark, gradient, unviewed count), default true
 }
 
 /**

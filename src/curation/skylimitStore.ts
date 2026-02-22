@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   curationIntervalHours: 2, // curation interval in hours, must be factor of 24 (1, 2, 3, 4, 6, 8, 12)
   minFolloweeDayCount: 1, // minimum followee day count (debug setting)
   hideUnfollowedReplies: false, // hide all replies to non-followees, default false
+  showViewedStatus: true, // show viewed-post visual indicators, default true
   repostDisplayIntervalHours: REPOST_DISPLAY_INTERVAL_DEFAULT, // hide reposts shown within this interval
 }
 
