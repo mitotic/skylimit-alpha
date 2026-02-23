@@ -241,6 +241,35 @@ export async function getAllPostSummaries(): Promise<PostSummary[]> {
 }
 
 /**
+ * Clear postNumber and curationNumber from all post summaries.
+ * Used when timezone changes to allow re-numbering with new day boundaries.
+ */
+export async function clearAllNumbering(): Promise<void> {
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+  const allSummaries: PostSummary[] = await new Promise((resolve, reject) => {
+    const request = store.getAll()
+    request.onsuccess = () => resolve(request.result || [])
+    request.onerror = () => reject(request.error)
+  })
+
+  for (const summary of allSummaries) {
+    summary.postNumber = null
+    summary.curationNumber = null
+    store.put(summary)
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+
+  console.log(`[Cache] Cleared numbering from ${allSummaries.length} summaries`)
+}
+
+/**
  * Check if post summaries cache is empty
  */
 export async function isPostSummariesCacheEmpty(): Promise<boolean> {

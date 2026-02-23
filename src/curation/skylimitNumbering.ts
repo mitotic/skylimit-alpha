@@ -10,12 +10,25 @@
 import { getAllPostSummaries, getPostSummariesInRange, initDB } from './skylimitCache'
 import { getLocalMidnight } from './skylimitFeedCache'
 import { PostSummary, isStatusDrop, isStatusShow } from './types'
+import { getSettings } from './skylimitStore'
 
 /**
- * Get date string in local timezone (YYYY-MM-DD) for a given timestamp
+ * Get date string in local timezone (YYYY-MM-DD) for a given timestamp.
+ * When timezone is provided, formats the date in that timezone.
  */
-function getDateString(timestamp: number): string {
+function getDateString(timestamp: number, timezone?: string): string {
   const date = new Date(timestamp)
+  if (timezone) {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    })
+    const parts = formatter.formatToParts(date)
+    const year = parts.find(p => p.type === 'year')!.value
+    const month = parts.find(p => p.type === 'month')!.value
+    const day = parts.find(p => p.type === 'day')!.value
+    return `${year}-${month}-${day}`
+  }
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
@@ -118,6 +131,10 @@ export async function assignAllNumbers(): Promise<void> {
     return
   }
 
+  // Get stored timezone for consistent day boundaries
+  const settings = await getSettings()
+  const timezone = settings.timezone
+
   // Find the date range
   let oldestTimestamp = Infinity
   let newestTimestamp = 0
@@ -130,17 +147,16 @@ export async function assignAllNumbers(): Promise<void> {
   const startDate = new Date(oldestTimestamp)
   const endDate = new Date(newestTimestamp)
 
-  let currentDay = getLocalMidnight(startDate)
-  const finalDay = getLocalMidnight(endDate)
+  let currentDay = getLocalMidnight(startDate, timezone)
+  const finalDay = getLocalMidnight(endDate, timezone)
 
-  console.log(`[Numbering] Assigning numbers from ${getDateString(currentDay.getTime())} to ${getDateString(finalDay.getTime())}`)
+  console.log(`[Numbering] Assigning numbers from ${getDateString(currentDay.getTime(), timezone)} to ${getDateString(finalDay.getTime(), timezone)}`)
 
   let totalPosts = 0
   let totalShown = 0
 
   while (currentDay <= finalDay) {
-    const nextDay = new Date(currentDay)
-    nextDay.setDate(nextDay.getDate() + 1)
+    const nextDay = new Date(currentDay.getTime() + 24 * 60 * 60 * 1000)
 
     const { postCount, shownCount } = await assignNumbersForDay(currentDay.getTime(), nextDay.getTime())
     totalPosts += postCount

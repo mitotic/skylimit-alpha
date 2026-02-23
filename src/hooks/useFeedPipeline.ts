@@ -427,7 +427,7 @@ export function useFeedPipeline({
       const lookbackDays = settings?.lookbackDays || 1
 
       const newestCachedTimestamp = await getNewestCachedPostTimestamp()
-      if (!isCacheWithinLookback(newestCachedTimestamp, lookbackDays)) {
+      if (!isCacheWithinLookback(newestCachedTimestamp, lookbackDays, settings?.timezone)) {
         console.log('[Prefetch] Cache is stale, clearing and reloading')
         await clearFeedCache()
         await clearPrevPageCursor()
@@ -452,7 +452,7 @@ export function useFeedPipeline({
         const newestId = getPostUniqueId(newestFetched)
         const newestSummary = await getPostSummary(newestId)
         if (newestSummary?.postNumber != null && newestSummary.postNumber > 0) {
-          const fetchDayStart = getLocalMidnight(new Date(afterTimestamp)).getTime()
+          const fetchDayStart = getLocalMidnight(new Date(afterTimestamp), settings?.timezone).getTime()
           const fetchDayEnd = fetchDayStart + 24 * 60 * 60 * 1000
           const preNumbered = await numberUnnumberedPostsForDay(fetchDayStart, fetchDayEnd, '[Prefetch]')
           if (preNumbered > 0) {
@@ -598,7 +598,7 @@ export function useFeedPipeline({
             const nextId = getPostUniqueId(filtered[i + 1])
             const nextTs = accumulatedTimestamps.get(nextId) ?? accumulatedTimestamps.get(filtered[i + 1].post.uri)
             if (nextTs) {
-              const dayStart = getLocalMidnight(new Date(nextTs)).getTime()
+              const dayStart = getLocalMidnight(new Date(nextTs), settings?.timezone).getTime()
               const dayEnd = dayStart + 24 * 60 * 60 * 1000
               console.log(`[Prefetch] Mid-day numbering trigger at post #${nextNum}`)
               await numberUnnumberedPostsForDay(dayStart, dayEnd, '[Prefetch]')
@@ -615,7 +615,7 @@ export function useFeedPipeline({
           const uniqueId = getPostUniqueId(post)
           const timestamp = accumulatedTimestamps.get(uniqueId) ?? accumulatedTimestamps.get(post.post.uri)
           if (!timestamp) return ''
-          return new Date(timestamp).toLocaleDateString()
+          return new Date(timestamp).toLocaleDateString('en-US', settings?.timezone ? { timeZone: settings.timezone } : undefined)
         }
         const firstDate = getLocalDateString(filtered[0])
         const lastDate = getLocalDateString(filtered[filtered.length - 1])
@@ -628,7 +628,7 @@ export function useFeedPipeline({
           if (newerDayPost) {
             const nTs = accumulatedTimestamps.get(getPostUniqueId(newerDayPost)) ?? accumulatedTimestamps.get(newerDayPost.post.uri)
             if (nTs && (newerDayPost as CurationFeedViewPost).curation?.postNumber == null) {
-              const newerDayStart = getLocalMidnight(new Date(nTs)).getTime()
+              const newerDayStart = getLocalMidnight(new Date(nTs), settings?.timezone).getTime()
               const newerDayEnd = newerDayStart + 24 * 60 * 60 * 1000
               console.log(`[Prefetch] Midnight trigger: numbering newer day ${firstDate}`)
               await assignNumbersForDay(newerDayStart, newerDayEnd)
@@ -980,7 +980,8 @@ export function useFeedPipeline({
             }
 
             if (entriesToSave.length > 0) {
-              const todayMidnight = getLocalMidnight(clientDate()).getTime()
+              const idleReturnSettings = await getSettings()
+              const todayMidnight = getLocalMidnight(clientDate(), idleReturnSettings?.timezone).getTime()
               const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
               const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
               const numberedYesterday = await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, '[Idle Return] (yesterday)')
@@ -1614,9 +1615,11 @@ export function useFeedPipeline({
         if (hasMultiplePages) {
           setMultiPageCount(probeResult.filteredPostCount)
           console.log(`[Paged Updates] Multi-page detected: ${probeResult.filteredPostCount} posts (${probeResult.pageCount} pages)`)
-        } else {
-          setMultiPageCount(0)
         }
+        // Don't reset multiPageCount to 0 — once multi-page is detected,
+        // keep it sticky until an explicit load action resets it.
+        // This prevents flip-flop when probe filteredPostCount fluctuates
+        // around the pageSize threshold due to probabilistic curation.
 
         if (nextPageReadyRef.current) {
           setNewPostsCount(probeResult.filteredPostCount)

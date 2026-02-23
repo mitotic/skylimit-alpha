@@ -9,13 +9,15 @@ import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal from '../components/CurationInitModal'
-import { getSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
+import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
+import { getBrowserTimezone, timezonesAreDifferent } from '../utils/timezoneUtils'
 import { fetchToSecondaryFeedCache, transferSecondaryToPrimary, getCachedFeedAfterPosts } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost } from '../curation/types'
 import { countUnviewedOlderThan, getUnviewedPostsInfo, onUnviewedChange } from '../curation/skylimitUnviewedTracker'
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
+import InstallHelp from '../components/InstallHelp'
 import { clientNow, clientDate } from '../utils/clientClock'
 import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, FAST_FORWARD_CHUNK_SIZE, SavedFeedState, findLowestVisiblePostTimestamp } from '../hooks/homePageTypes'
 import { usePostInteractions } from '../hooks/usePostInteractions'
@@ -38,6 +40,9 @@ export default function HomePage() {
   const scrollRestoredRef = useRef(false)
   const [unviewedRevision, setUnviewedRevision] = useState(0)
   const [showViewedStatus, setShowViewedStatus] = useState(true)
+  const [storedTimezone, setStoredTimezone] = useState<string | null>(null)
+  const [timezoneMismatch, setTimezoneMismatch] = useState(false)
+  const [timezoneBannerDismissed, setTimezoneBannerDismissed] = useState(false)
 
   // Tab state - initialize from sessionStorage
   const getInitialTab = (): HomeTab => {
@@ -134,6 +139,29 @@ export default function HomePage() {
   useEffect(() => {
     sessionStorage.setItem(HOME_TAB_STATE_KEY, activeTab)
   }, [activeTab])
+
+  // Timezone change detection: check on load and initialize if needed
+  useEffect(() => {
+    const checkTimezone = async () => {
+      const settings = await getSettings()
+      const browserTz = getBrowserTimezone()
+
+      if (!settings.timezone) {
+        // First time: initialize stored timezone from browser
+        await updateSettings({ timezone: browserTz, lastBrowserTimezone: browserTz })
+        setStoredTimezone(browserTz)
+      } else {
+        setStoredTimezone(settings.timezone)
+        // Compare browser timezone against what it was when user last saved settings
+        // This way, intentionally choosing a different timezone won't trigger the banner
+        const lastBrowserTz = settings.lastBrowserTimezone || settings.timezone
+        if (timezonesAreDifferent(lastBrowserTz, browserTz)) {
+          setTimezoneMismatch(true)
+        }
+      }
+    }
+    checkTimezone()
+  }, [])
 
   // Save feed state when navigating away from home page
   useEffect(() => {
@@ -345,7 +373,7 @@ export default function HomePage() {
     const timeSinceTopPost = newestDisplayedPostTimestamp ? clientNow() - newestDisplayedPostTimestamp : 0
     const isExtendedIdle = newestDisplayedPostTimestamp !== null && timeSinceTopPost > idleThreshold
 
-    const isMultiPage = multiPageCount >= 50 || isExtendedIdle
+    const isMultiPage = multiPageCount > 0 || isExtendedIdle
 
     if (isExtendedIdle) {
       console.log(`[New Posts] Extended idle detected: ${Math.round(timeSinceTopPost / 60000)} min exceeds ${Math.round(idleThreshold / 60000)} min threshold`)
@@ -830,6 +858,7 @@ export default function HomePage() {
         <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-2 flex items-center">
           {skylimitStats ? (
             <div className="flex items-center gap-4 text-sm w-full">
+              <span className="font-semibold text-gray-800 dark:text-gray-200">Skylimit:</span>
               <a
                 href="https://github.com/mitotic/skylimit-alpha#readme"
                 target="_blank"
@@ -837,8 +866,9 @@ export default function HomePage() {
                 className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
                 title="About Skylimit"
               >
-                About Skylimit
+                About
               </a>
+              <InstallHelp />
               <div className="flex items-center gap-4 ml-auto">
                 {getNonStandardServerName() && (
                   <span className="text-orange-500 dark:text-orange-400 font-medium">
@@ -880,6 +910,45 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Timezone mismatch banner */}
+      {timezoneMismatch && !timezoneBannerDismissed && storedTimezone && (
+        <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-3 mx-2 mb-2 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-yellow-800 dark:text-yellow-200">
+              Timezone changed: {storedTimezone} &rarr; {getBrowserTimezone()}
+            </span>
+            <div className="flex gap-2 ml-2">
+              <button
+                onClick={async () => {
+                  const browserTz = getBrowserTimezone()
+                  await updateSettings({ timezone: browserTz, lastBrowserTimezone: browserTz })
+                  const { clearAllNumbering } = await import('../curation/skylimitCache')
+                  await clearAllNumbering()
+                  const { assignAllNumbers } = await import('../curation/skylimitNumbering')
+                  await assignAllNumbers()
+                  setStoredTimezone(browserTz)
+                  setTimezoneMismatch(false)
+                  addToast(`Timezone updated to ${browserTz}. Posts re-numbered.`, 'success')
+                }}
+                className="px-2 py-1 bg-yellow-600 text-white rounded text-xs hover:bg-yellow-700"
+              >
+                Update
+              </button>
+              <button
+                onClick={async () => {
+                  // Acknowledge the browser timezone change without changing curation timezone
+                  await updateSettings({ lastBrowserTimezone: getBrowserTimezone() })
+                  setTimezoneBannerDismissed(true)
+                }}
+                className="px-2 py-1 bg-gray-300 dark:bg-gray-600 rounded text-xs hover:bg-gray-400 dark:hover:bg-gray-500"
+              >
+                Keep {storedTimezone.split('/').pop()}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tab Bar */}
       <div className="flex border-b border-gray-200 dark:border-gray-700">
         {(['curated', 'editions'] as HomeTab[]).map((tab) => (
@@ -892,7 +961,16 @@ export default function HomePage() {
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
-            {tab === 'curated' ? 'Curated Follow' : 'Periodic Editions'}
+            {tab === 'curated' ? (
+              <>
+                Curated Follow
+                {timezoneMismatch && timezoneBannerDismissed && storedTimezone && (
+                  <span className="ml-1 text-xs text-gray-400 dark:text-gray-500">
+                    ({storedTimezone.split('/').pop()})
+                  </span>
+                )}
+              </>
+            ) : 'Periodic Editions'}
           </button>
         ))}
       </div>
@@ -960,18 +1038,45 @@ export default function HomePage() {
                   )}
                 </button>
 
-                {/* "All n new posts" button - shown when idle timer triggered and posts available, hidden during lookback */}
-                {idleTimerTriggered && partialPageCount > 0 && !lookingBack && (
+                {/* "New posts" button - partial (single-page) load, hidden when trimmed */}
+                {idleTimerTriggered && partialPageCount > 0 && !lookingBack && multiPageCount === 0 && feedTopTrimmed === null && (
                   <button
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      console.log('[All New Posts] Button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
+                      console.log('[New Posts] Partial button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
+                      handleLoadAllNewPosts()
+                    }}
+                    disabled={isLoadingMore || lookingBack}
+                    className="ml-auto btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
+                    aria-label={`Load ${partialPageCount} new posts`}
+                  >
+                    {isLoadingMore ? (
+                      <>
+                        <Spinner size="sm" />
+                        Loading...
+                      </>
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+                        New posts ({partialPageCount}+)
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* "All new posts" button - multi-page full refresh, shown even when trimmed */}
+                {idleTimerTriggered && partialPageCount > 0 && !lookingBack && multiPageCount > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      console.log('[All New Posts] Multi-page button clicked', { multiPageCount, idleTimerTriggered, newPostsCount })
                       handleLoadAllNewPosts()
                     }}
                     disabled={isLoadingMore || lookingBack}
                     className="flex-1 btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
-                    aria-label={`Load all ${partialPageCount} new posts`}
+                    aria-label={`Load all ${multiPageCount} new posts`}
                   >
                     {isLoadingMore ? (
                       <>
@@ -981,7 +1086,7 @@ export default function HomePage() {
                     ) : (
                       <>
                         <svg className="w-4 h-4 inline-block" viewBox="0 0 24 24" fill="currentColor"><polygon points="4,21 12,11 20,21" /><polygon points="4,13 12,3 20,13" /></svg>
-                        All new posts ({partialPageCount}+)
+                        All new posts ({multiPageCount}+)
                       </>
                     )}
                   </button>

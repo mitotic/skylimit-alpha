@@ -24,6 +24,9 @@ export interface CurationPopupProps {
   curationMsg?: string                 // Fallback message
   isDropped?: boolean                  // For background styling
 
+  // Guaranteed posts
+  skylimitNumber?: number             // Default skylimit number (daily views guaranteed per followee)
+
   // Amp buttons
   showAmpButtons: boolean
   ampFactor?: number                  // Current amplification factor (0.125-8.0)
@@ -61,6 +64,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   priorityProb,
   curationMsg,
   isDropped,
+  skylimitNumber,
   showAmpButtons,
   ampFactor,
   onAmpUp,
@@ -144,7 +148,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       onClick={(e) => e.stopPropagation()}
     >
       {/* Header */}
-      <div className="p-3 border-b border-gray-200 dark:border-gray-700">
+      <div className="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 leading-snug">
         <div className="font-semibold text-sm">
           {displayName || handle}
         </div>
@@ -154,8 +158,8 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       </div>
 
       {/* Curation statistics */}
-      <div className={`p-3 border-b border-gray-200 dark:border-gray-700 ${isDropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
-        <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+      <div className={`px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 ${isDropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
+        <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
           {/* PostCard: Raw post number */}
           {rawPostNumber !== undefined && rawPostNumber !== null && (
             <div>Raw post #{rawPostNumber}</div>
@@ -183,27 +187,32 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
 
       {/* Amp buttons */}
       {showAmpButtons && (
-        <div className="p-3">
-          <div className="text-sm font-semibold mb-2">
+        <div className="px-3 py-1.5 leading-snug">
+          {skylimitNumber !== undefined && ampFactor !== undefined && (
+            <div className="text-sm font-semibold">
+              Guaranteed posts shown: {(skylimitNumber * ampFactor).toFixed(1)}/day
+            </div>
+          )}
+          <div className="text-sm font-semibold mb-1">
             Amplification Factor: {ampFactor !== undefined ? ampFactor.toFixed(1) : '1.0'}
           </div>
           <div className="flex gap-2">
             <button
               onClick={onAmpDown}
               disabled={ampLoading}
-              className="flex-1 px-3 py-2 text-sm bg-red-700 hover:bg-red-800 text-white rounded disabled:opacity-50"
+              className="flex-1 px-3 py-1.5 text-sm bg-red-700 hover:bg-red-800 text-white rounded disabled:opacity-50"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg> Amp Down
             </button>
             <button
               onClick={onAmpUp}
               disabled={ampLoading}
-              className="flex-1 px-3 py-2 text-sm bg-green-700 hover:bg-green-800 text-white rounded disabled:opacity-50"
+              className="flex-1 px-3 py-1.5 text-sm bg-green-700 hover:bg-green-800 text-white rounded disabled:opacity-50"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg> Amp Up
             </button>
           </div>
-          <div className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+          <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Adjust how many posts you see from this account
           </div>
         </div>
@@ -211,7 +220,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
 
       {/* Curation Settings link - only show when curationStatus is available (PostCard context) */}
       {onNavigateToSettings && curationStatus !== undefined && (
-        <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+        <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700">
           <button
             onClick={onNavigateToSettings}
             className="w-full text-sm text-blue-600 dark:text-blue-400 hover:underline"
@@ -223,9 +232,9 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
 
       {/* Debug Info section - only shown when debugMode is enabled */}
       {debugMode && (
-        <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-          <div className="text-sm font-semibold mb-2">Debug Info</div>
-          <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+        <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+          <div className="text-sm font-semibold">Debug Info</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
             {curationStatus !== undefined && (
               <div>Curation status: {curationStatus || 'none'}</div>
             )}

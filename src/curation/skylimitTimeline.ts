@@ -9,6 +9,7 @@ import { createPostSummary } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { scheduleCleanup } from './skylimitCleanup'
 import { clientDate } from '../utils/clientClock'
+import { getTimeInTimezone } from '../utils/timezoneUtils'
 import { CurationFeedViewPost, PostSummary, FeedCacheEntryWithPost, CurationResult } from './types'
 
 /**
@@ -135,9 +136,12 @@ export async function insertEditionPosts(
     return posts
   }
   
-  // Check if it's time to show an edition
+  // Check if it's time to show an edition (using stored timezone)
   const now = editionTime || clientDate()
-  const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  const settings = await getSettings()
+  const nowTime = settings?.timezone
+    ? getTimeInTimezone(now, settings.timezone)
+    : `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   
   if (!editionTimeStrs.includes(nowTime)) {
     return posts

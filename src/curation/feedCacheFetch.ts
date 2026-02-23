@@ -193,18 +193,18 @@ export async function fillGapToMidnight(
   myDid: string,
   pageLength: number = DEFAULT_PAGE_LENGTH
 ): Promise<number> {
+  // Get interval settings for cache entries
+  const settings = await getSettings()
+
   // Use local midnight of the day containing fromTimestamp as the stop boundary
   const targetDate = new Date(fromTimestamp)
-  const localMidnight = getLocalMidnight(targetDate).getTime()
+  const localMidnight = getLocalMidnight(targetDate, settings.timezone).getTime()
 
   // If fromTimestamp is already at or before midnight, no gap fill needed
   if (fromTimestamp <= localMidnight) {
     console.log('[Gap Fill] Already at or past midnight boundary, skipping')
     return 0
   }
-
-  // Get interval settings for cache entries
-  const settings = await getSettings()
   const intervalHours = getIntervalHoursSync(settings)
 
   console.log(`[Gap Fill] Filling gap from ${new Date(fromTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
@@ -658,11 +658,9 @@ export async function fetchToSecondaryFeedCache(
 
   // Calculate midnight boundary: yesterday's midnight per clientDate()
   const today = clientDate()
-  const yesterday = new Date(today)
-  yesterday.setDate(yesterday.getDate() - 1)
-  yesterday.setHours(0, 0, 0, 0)
-  const midnightBoundary = yesterday.getTime()
-  console.log(`${label} Midnight boundary: ${yesterday.toLocaleString()}`)
+  const todayMidnight = getLocalMidnight(today, settings?.timezone)
+  const midnightBoundary = todayMidnight.getTime() - 24 * 60 * 60 * 1000
+  console.log(`${label} Midnight boundary: ${new Date(midnightBoundary).toLocaleString()}`)
 
   // For non-initial modes, get primary cache newest timestamp for overlap detection
   let primaryNewestTimestamp: number | null = null
@@ -867,8 +865,10 @@ export async function transferSecondaryToPrimary(
   const sorted = [...secondaryEntries].sort((a, b) => a.entry.postTimestamp - b.entry.postTimestamp)
 
   // Initialize numbering from the day of the oldest entry (unless skipping)
+  const settings = await getSettings()
+  const timezone = settings.timezone
   const oldestTimestamp = sorted[0].entry.postTimestamp
-  let currentDayStart = getLocalMidnight(new Date(oldestTimestamp)).getTime()
+  let currentDayStart = getLocalMidnight(new Date(oldestTimestamp), timezone).getTime()
   let currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
   let postNumber = 0
   let curationNumber = 0
@@ -909,7 +909,7 @@ export async function transferSecondaryToPrimary(
     } else {
       // Check if day boundary crossed — update numbering context
       if (entry.postTimestamp >= currentDayEnd) {
-        currentDayStart = getLocalMidnight(new Date(entry.postTimestamp)).getTime()
+        currentDayStart = getLocalMidnight(new Date(entry.postTimestamp), timezone).getTime()
         currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
         const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
         postNumber = dayNumbers.maxPostNumber

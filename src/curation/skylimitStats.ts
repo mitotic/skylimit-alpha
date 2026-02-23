@@ -93,7 +93,7 @@ export async function computePostStats(
   }
 
   // Build unviewed posts map for today (since midnight of current calendar day)
-  const todayMidnight = getLocalMidnight(clientDate()).getTime()
+  const todayMidnight = getLocalMidnight(clientDate(), settings.timezone).getTime()
   const unviewedMap = new Map<string, number>()
   for (const summary of allSummaries) {
     if (!summary.viewedAt && isStatusShow(summary.curation_status) && summary.postTimestamp > todayMidnight) {

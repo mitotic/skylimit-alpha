@@ -305,6 +305,8 @@ export interface SkylimitSettings {
   // Reply handling settings
   hideUnfollowedReplies?: boolean // Hide all replies to non-followees, default false
   showViewedStatus?: boolean // Show viewed-post visual indicators (checkmark, gradient, unviewed count), default true
+  timezone?: string // Stored timezone for consistent day boundaries (e.g., "America/New_York")
+  lastBrowserTimezone?: string // Browser timezone when user last saved/confirmed timezone setting
 }
 
 /**

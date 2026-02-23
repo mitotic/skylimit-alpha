@@ -138,9 +138,8 @@ export async function probeForNewPosts(
     // Calculate "next day" midnight boundary based on newest displayed post
     // "Today" = the day of newestDisplayedTimestamp, not actual current time
     const displayedDate = new Date(newestDisplayedTimestamp)
-    const nextDayMidnight = getLocalMidnight(displayedDate)
-    nextDayMidnight.setDate(nextDayMidnight.getDate() + 1)
-    const nextDayMidnightMs = nextDayMidnight.getTime()
+    const displayedDayMidnight = getLocalMidnight(displayedDate, settings?.timezone)
+    const nextDayMidnightMs = displayedDayMidnight.getTime() + 24 * 60 * 60 * 1000
 
     // In-memory secondary cache for cross-post curation context (discarded after probe)
     const secondaryEntries: SecondaryEntry[] = []
@@ -241,8 +240,8 @@ export async function probeForNewPosts(
         result.oldestProbeTimestamp < Number.MAX_SAFE_INTEGER) {
       const newestDate = new Date(result.newestProbeTimestamp)
       const oldestDate = new Date(result.oldestProbeTimestamp)
-      const newestMidnight = getLocalMidnight(newestDate).getTime()
-      const oldestMidnight = getLocalMidnight(oldestDate).getTime()
+      const newestMidnight = getLocalMidnight(newestDate, settings?.timezone).getTime()
+      const oldestMidnight = getLocalMidnight(oldestDate, settings?.timezone).getTime()
       if (newestMidnight !== oldestMidnight) {
         console.warn(`[Probe] WARNING: Probed posts span midnight boundary! ` +
           `Newest: ${newestDate.toLocaleString()}, Oldest: ${oldestDate.toLocaleString()}`)
@@ -252,7 +251,7 @@ export async function probeForNewPosts(
     // Check page availability
     const pageSize = settings?.feedPageLength || 25
     result.hasFullPage = result.filteredPostCount >= pageSize
-    result.hasMultiplePages = result.filteredPostCount >= pageSize * 2
+    result.hasMultiplePages = result.filteredPostCount > pageSize
     result.pageCount = Math.floor(result.filteredPostCount / pageSize)
 
   } catch (error) {

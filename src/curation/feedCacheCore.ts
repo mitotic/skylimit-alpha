@@ -12,6 +12,7 @@ import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId 
 import { FeedCacheEntry, FeedCacheEntryWithPost, CurationFeedViewPost, getIntervalHoursSync } from './types'
 import { getSettings } from './skylimitStore'
 import { clientNow, clientDate } from '../utils/clientClock'
+import { getMidnightInTimezone } from '../utils/timezoneUtils'
 
 // Get database instance (reuse from skylimitCache)
 async function getDB(): Promise<IDBDatabase> {
@@ -391,8 +392,14 @@ export async function updateFeedCacheOldestPostTimestamp(
 
 /**
  * Get local midnight for a given date (00:00:00 in user's timezone)
+ * When timezone is provided, uses Intl-based computation for consistent day boundaries.
+ * Falls back to browser locale when timezone is not provided.
  */
-export function getLocalMidnight(date: Date = clientDate()): Date {
+export function getLocalMidnight(date: Date = clientDate(), timezone?: string): Date {
+  if (timezone) {
+    return getMidnightInTimezone(date, timezone)
+  }
+  // Fallback: browser locale (backward compatible)
   const midnight = new Date(date)
   midnight.setHours(0, 0, 0, 0)
   return midnight
@@ -406,15 +413,18 @@ export function getLocalMidnight(date: Date = clientDate()): Date {
  * @param lookbackDays - Number of days to look back (from settings)
  * @returns true if timestamp is within lookback period, false if stale or null
  */
-export function isCacheWithinLookback(timestamp: number | null, lookbackDays: number): boolean {
+export function isCacheWithinLookback(timestamp: number | null, lookbackDays: number, timezone?: string): boolean {
   if (timestamp === null) return false
 
   const today = clientDate()
 
   // Get calendar day boundary: start of the lookback day
-  const lookbackBoundary = new Date(today)
+  const todayMidnight = getLocalMidnight(today, timezone)
+  const lookbackBoundary = new Date(todayMidnight)
   lookbackBoundary.setDate(lookbackBoundary.getDate() - lookbackDays)
-  lookbackBoundary.setHours(0, 0, 0, 0)  // Start of the lookback day
+  // When using timezone-aware midnight, the boundary is already at 00:00 in the target timezone
+  // When not using timezone, getLocalMidnight already set hours to 0,0,0,0
+  // Either way, subtracting days gives us the correct lookback boundary
 
   return timestamp >= lookbackBoundary.getTime()
 }
@@ -642,9 +652,9 @@ export async function getPrevPageCursorStatus(): Promise<{
  * @param lookbackDays - Number of days to look back (default 1)
  * @returns Date representing the lookback boundary
  */
-export function getLookbackBoundary(lookbackDays: number = 1): Date {
-  const boundary = clientDate()
-  boundary.setHours(0, 0, 0, 0)  // Set to midnight today
+export function getLookbackBoundary(lookbackDays: number = 1, timezone?: string): Date {
+  const todayMidnight = getLocalMidnight(clientDate(), timezone)
+  const boundary = new Date(todayMidnight)
   boundary.setDate(boundary.getDate() - lookbackDays)
   return boundary
 }
@@ -677,7 +687,8 @@ export async function shouldUseCacheOnLoad(lookbackDays: number = 1): Promise<bo
   const metadata = await getLastFetchMetadata()
   if (!metadata) return false  // No cache, start fresh
 
-  const lookbackBoundary = getLookbackBoundary(lookbackDays)
+  const settings = await getSettings()
+  const lookbackBoundary = getLookbackBoundary(lookbackDays, settings.timezone)
   const lookbackBoundaryMs = lookbackBoundary.getTime()
 
   // Check if newest cached post is within the lookback window
@@ -1434,9 +1445,10 @@ export async function isPrimaryCacheStale(): Promise<boolean> {
     const now = clientDate()
 
     // Calculate start of day-before-yesterday (2 calendar days ago at midnight)
-    const twoDaysAgo = new Date(now)
-    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2)
-    twoDaysAgo.setHours(0, 0, 0, 0)
+    // Use settings timezone if available for consistent day boundaries
+    const settings = await getSettings()
+    const todayMidnight = getLocalMidnight(now, settings.timezone)
+    const twoDaysAgo = new Date(todayMidnight.getTime() - 2 * 24 * 60 * 60 * 1000)
 
     const isStale = newest < twoDaysAgo
     if (isStale) {

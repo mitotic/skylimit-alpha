@@ -2,13 +2,14 @@
  * Settings Page - Combined Basic and Curation Settings with Tabs
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, type ReactNode } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
+import { getBrowserTimezone } from '../utils/timezoneUtils'
 import Button from '../components/Button'
 import SkylimitStatistics from '../components/SkylimitStatistics'
 import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange } from '../curation/skylimitCache'
@@ -57,6 +58,23 @@ function computeTimeRanges(
 
   ranges.push({ startTime: rangeStart, endTime: rangePrev, postCount: count })
   return ranges.reverse()
+}
+
+function DisclosureSection({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 w-full text-left"
+      >
+        <span className={`inline-block transition-transform text-xs ${open ? 'rotate-90' : ''}`}>&#9654;</span>
+        <h2 className="text-xl font-semibold">{title}</h2>
+      </button>
+      {open && <div className="mt-4">{children}</div>}
+    </section>
+  )
 }
 
 export default function SettingsPage() {
@@ -328,12 +346,29 @@ export default function SettingsPage() {
 
     setSaving(true)
     try {
-      await updateSettings(settings)
+      const timezoneChanged = originalSettings?.timezone !== settings.timezone
+
+      // When timezone is saved, record current browser timezone so HomePage
+      // can detect genuine browser timezone changes vs intentional selections
+      const settingsToSave = timezoneChanged
+        ? { ...settings, lastBrowserTimezone: getBrowserTimezone() }
+        : settings
+      await updateSettings(settingsToSave)
+
+      // If timezone changed, clear numbering and re-assign
+      if (timezoneChanged && settings.timezone) {
+        console.log(`[Settings] Timezone changed to ${settings.timezone}, re-numbering posts...`)
+        const { clearAllNumbering } = await import('../curation/skylimitCache')
+        await clearAllNumbering()
+        const { assignAllNumbers } = await import('../curation/skylimitNumbering')
+        await assignAllNumbers()
+        console.log('[Settings] Post re-numbering complete')
+      }
 
       // Mark settings as saved (no longer dirty)
       setOriginalSettings(structuredClone(settings))
 
-      alert('Settings saved!')
+      alert(timezoneChanged ? 'Settings saved! Posts re-numbered for new timezone.' : 'Settings saved!')
     } catch (error) {
       console.error('Failed to save settings:', error)
       alert('Failed to save settings')
@@ -569,9 +604,7 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <section>
-            <h2 className="text-xl font-semibold mb-4">Advanced Settings</h2>
-
+          <DisclosureSection title="Advanced Settings">
             <div className="space-y-4">
               <label className="flex items-center space-x-3">
                 <input
@@ -717,12 +750,51 @@ export default function SettingsPage() {
                   Secret key for deterministic post selection (keep same across devices)
                 </p>
               </div>
+
+              <div>
+                <label className="block mb-2 font-medium">
+                  Timezone for day boundaries:
+                </label>
+                <select
+                  value={settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone}
+                  onChange={(e) => updateSetting('timezone', e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                >
+                  {(() => {
+                    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+                    const commonTimezones = [
+                      'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+                      'America/Anchorage', 'Pacific/Honolulu', 'America/Phoenix',
+                      'America/Toronto', 'America/Vancouver',
+                      'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow',
+                      'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata', 'Asia/Dubai',
+                      'Australia/Sydney', 'Australia/Perth',
+                      'Pacific/Auckland',
+                      'UTC',
+                    ]
+                    const tzSet = new Set(commonTimezones)
+                    if (!tzSet.has(browserTz)) {
+                      commonTimezones.unshift(browserTz)
+                    }
+                    const storedTz = settings.timezone
+                    if (storedTz && !tzSet.has(storedTz)) {
+                      commonTimezones.unshift(storedTz)
+                    }
+                    return commonTimezones.map(tz => (
+                      <option key={tz} value={tz}>
+                        {tz}{tz === browserTz ? ' (browser)' : ''}
+                      </option>
+                    ))
+                  })()}
+                </select>
+                <p className="text-sm text-gray-500 mt-1">
+                  Controls day boundaries for post numbering and curation. Changing this will re-number posts.
+                </p>
+              </div>
             </div>
-          </section>
+          </DisclosureSection>
 
-          <section>
-            <h2 className="text-xl font-semibold mb-4">Experimental Settings</h2>
-
+          <DisclosureSection title="Experimental Settings">
             <div className="space-y-4">
               <div>
                 <label className="block mb-2 font-medium">
@@ -762,7 +834,11 @@ export default function SettingsPage() {
                 />
                 <span>Anonymize usernames (for screenshots)</span>
               </label>
+            </div>
+          </DisclosureSection>
 
+          <DisclosureSection title="Debug Settings">
+            <div className="space-y-4">
               <label className="flex items-center space-x-3">
                 <input
                   type="checkbox"
@@ -770,140 +846,137 @@ export default function SettingsPage() {
                   onChange={(e) => updateSetting('debugMode', e.target.checked)}
                   className="w-5 h-5"
                 />
-                <span>Skylimit Debug Mode (enables additional UI features)</span>
+                <span>Debug mode (enables additional UI features)</span>
               </label>
 
-              {settings.debugMode && (
-                <div className="mt-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
-                  <h3 className="text-lg font-semibold mb-4">Debug: Feed Redisplay Settings</h3>
+              <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <h3 className="text-lg font-semibold mb-4">Feed Redisplay Settings</h3>
 
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium mb-2">
-                      Feed Redisplay Idle Interval (minutes)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="480"
-                      value={settings.feedRedisplayIdleInterval ? settings.feedRedisplayIdleInterval / (60 * 1000) : FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT}
-                      onChange={(e) => {
-                        const minutes = parseInt(e.target.value, 10)
-                        if (!isNaN(minutes) && minutes > 0) {
-                          updateSetting('feedRedisplayIdleInterval', minutes * 60 * 1000)
-                        }
-                      }}
-                      className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Time in minutes. If returning to home page within this interval, cached feed will be redisplayed instead of reloading from server.
-                    </p>
-                  </div>
-
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium mb-2">
-                      Max Displayed Feed Size
-                    </label>
-                    <input
-                      type="number"
-                      min="50"
-                      max="500"
-                      value={settings.maxDisplayedFeedSize || 300}
-                      onChange={(e) => {
-                        const value = parseInt(e.target.value, 10)
-                        if (!isNaN(value) && value >= 50 && value <= 500) {
-                          updateSetting('maxDisplayedFeedSize', value)
-                        }
-                      }}
-                      className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Maximum number of posts to keep in displayed feed. Older posts are trimmed during navigation. Range: 50-500.
-                    </p>
-                  </div>
-
-                  <h3 className="text-lg font-semibold mb-4 mt-6">Paged Fresh Updates</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                    Delay viewing new posts so popularity metrics have time to accumulate, enabling better curation.
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">
+                    Feed Redisplay Idle Interval (minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="480"
+                    value={settings.feedRedisplayIdleInterval ? settings.feedRedisplayIdleInterval / (60 * 1000) : FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT}
+                    onChange={(e) => {
+                      const minutes = parseInt(e.target.value, 10)
+                      if (!isNaN(minutes) && minutes > 0) {
+                        updateSetting('feedRedisplayIdleInterval', minutes * 60 * 1000)
+                      }
+                    }}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Time in minutes. If returning to home page within this interval, cached feed will be redisplayed instead of reloading from server.
                   </p>
-
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium mb-2">
-                      Variability Factor
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="3"
-                      step="0.1"
-                      value={settings.pagedUpdatesVarFactor ?? PAGED_UPDATES_DEFAULTS.varFactor}
-                      onChange={(e) => {
-                        const value = parseFloat(e.target.value)
-                        if (!isNaN(value) && value >= 1 && value <= 3) {
-                          updateSetting('pagedUpdatesVarFactor', value)
-                        }
-                      }}
-                      className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                    />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Multiplier for raw posts to fetch (accounts for filtering variability). Higher = more reliable page fill. Range: 1-3.
-                    </p>
-                  </div>
-
-                  <h3 className="text-lg font-semibold mb-4 mt-6">Curation Interval</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                    Time period used for grouping posts in statistics calculations.
-                  </p>
-
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium mb-2">
-                      Curation Interval (hours)
-                    </label>
-                    <select
-                      value={settings.curationIntervalHours ?? 2}
-                      onChange={(e) => {
-                        const value = parseInt(e.target.value, 10)
-                        updateSetting('curationIntervalHours', value)
-                      }}
-                      className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                    >
-                      <option value={1}>1 hour</option>
-                      <option value={2}>2 hours</option>
-                      <option value={3}>3 hours</option>
-                      <option value={4}>4 hours</option>
-                      <option value={6}>6 hours</option>
-                      <option value={8}>8 hours</option>
-                      <option value={12}>12 hours</option>
-                    </select>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Length of curation intervals. Default: 2 hours. Must be a factor of 24 (1-12). Changing this affects statistics calculations.
-                    </p>
-                  </div>
-
-                  {/* Reply Handling Debug Setting */}
-                  <h3 className="text-lg font-semibold mb-4 mt-6">Reply Handling</h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                    Control how replies to non-followees are handled in your feed.
-                  </p>
-
-                  <div className="mb-4">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={settings.hideUnfollowedReplies ?? false}
-                        onChange={(e) => updateSetting('hideUnfollowedReplies', e.target.checked)}
-                        className="w-5 h-5"
-                      />
-                      <span>Hide replies to non-followees</span>
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-8">
-                      When enabled, all replies to non-followees are hidden. When disabled,
-                      replies from &quot;quiet posters&quot; (those with 100% show probability) are shown.
-                    </p>
-                  </div>
                 </div>
-              )}
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">
+                    Max Displayed Feed Size
+                  </label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="500"
+                    value={settings.maxDisplayedFeedSize || 300}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value, 10)
+                      if (!isNaN(value) && value >= 50 && value <= 500) {
+                        updateSetting('maxDisplayedFeedSize', value)
+                      }
+                    }}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Maximum number of posts to keep in displayed feed. Older posts are trimmed during navigation. Range: 50-500.
+                  </p>
+                </div>
+
+                <h3 className="text-lg font-semibold mb-4 mt-6">Paged Fresh Updates</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Delay viewing new posts so popularity metrics have time to accumulate, enabling better curation.
+                </p>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">
+                    Variability Factor
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="3"
+                    step="0.1"
+                    value={settings.pagedUpdatesVarFactor ?? PAGED_UPDATES_DEFAULTS.varFactor}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value)
+                      if (!isNaN(value) && value >= 1 && value <= 3) {
+                        updateSetting('pagedUpdatesVarFactor', value)
+                      }
+                    }}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Multiplier for raw posts to fetch (accounts for filtering variability). Higher = more reliable page fill. Range: 1-3.
+                  </p>
+                </div>
+
+                <h3 className="text-lg font-semibold mb-4 mt-6">Curation Interval</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Time period used for grouping posts in statistics calculations.
+                </p>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">
+                    Curation Interval (hours)
+                  </label>
+                  <select
+                    value={settings.curationIntervalHours ?? 2}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value, 10)
+                      updateSetting('curationIntervalHours', value)
+                    }}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  >
+                    <option value={1}>1 hour</option>
+                    <option value={2}>2 hours</option>
+                    <option value={3}>3 hours</option>
+                    <option value={4}>4 hours</option>
+                    <option value={6}>6 hours</option>
+                    <option value={8}>8 hours</option>
+                    <option value={12}>12 hours</option>
+                  </select>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Length of curation intervals. Default: 2 hours. Must be a factor of 24 (1-12). Changing this affects statistics calculations.
+                  </p>
+                </div>
+
+                <h3 className="text-lg font-semibold mb-4 mt-6">Reply Handling</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Control how replies to non-followees are handled in your feed.
+                </p>
+
+                <div className="mb-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.hideUnfollowedReplies ?? false}
+                      onChange={(e) => updateSetting('hideUnfollowedReplies', e.target.checked)}
+                      className="w-5 h-5"
+                    />
+                    <span>Hide replies to non-followees</span>
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-8">
+                    When enabled, all replies to non-followees are hidden. When disabled,
+                    replies from &quot;quiet posters&quot; (those with 100% show probability) are shown.
+                  </p>
+                </div>
+              </div>
             </div>
-          </section>
+          </DisclosureSection>
 
           <div className="flex justify-start pt-4 border-t">
             <Button
@@ -917,8 +990,8 @@ export default function SettingsPage() {
         </form>
 
         {/* Data Management */}
-        <section className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
-          <h2 className="text-xl font-semibold mb-4">Data Management</h2>
+        <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
+        <DisclosureSection title="Data Management">
 
           {/* Cache Statistics - only show if debug mode is enabled */}
           {settings.debugMode && (
@@ -1087,46 +1160,47 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+        </DisclosureSection>
+        </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setShowResetFeedModal(true)}
-              disabled={isResettingFeed}
-              className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-            >
-              Reset feed
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setShowResetCurationModal(true)}
-              disabled={isResettingCuration}
-              className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
-            >
-              Reset curation
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setShowClearSettingsModal(true)}
-              disabled={isClearingSettings}
-              className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
-            >
-              Reset Skylimit settings
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setShowResetAllModal(true)}
-              disabled={isResettingAll}
-              className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full"
-            >
-              Reset all
-            </Button>
-          </div>
-        </section>
+        <div className="flex flex-wrap gap-3 mt-6">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowResetFeedModal(true)}
+            disabled={isResettingFeed}
+            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+          >
+            Reset feed
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowResetCurationModal(true)}
+            disabled={isResettingCuration}
+            className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
+          >
+            Reset curation
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowClearSettingsModal(true)}
+            disabled={isClearingSettings}
+            className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
+          >
+            Reset Skylimit settings
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowResetAllModal(true)}
+            disabled={isResettingAll}
+            className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full"
+          >
+            Reset all
+          </Button>
+        </div>
 
         {/* Reset Feed Confirmation Modal */}
         <ConfirmModal

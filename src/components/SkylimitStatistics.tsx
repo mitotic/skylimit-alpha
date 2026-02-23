@@ -41,6 +41,7 @@ export default function SkylimitStatistics() {
   const [filterTimestamp, setFilterTimestamp] = useState<number | null>(null)
   const [followedTags, setFollowedTags] = useState<string[]>([])
   const [curationTimezone, setCurationTimezone] = useState<string>('')
+  const [storedTimezone, setStoredTimezone] = useState<string>('')
   const [viewsPerDay, setViewsPerDay] = useState<number>(0)
   const [showPopup, setShowPopup] = useState<string | null>(null) // username of account to show popup for
   const [popupPosition, setPopupPosition] = useState<'above' | 'below'>('below') // Position of popup relative to cell
@@ -65,6 +66,7 @@ export default function SkylimitStatistics() {
       setAnonymize(settings?.anonymizeUsernames || false)
       setViewsPerDay(settings?.viewsPerDay || 0)
       setDebugMode(settings?.debugMode || false)
+      setStoredTimezone(settings?.timezone || '')
       
       // Get statistics with timestamp
       const filterResult = await getFilterWithTimestamp()
@@ -386,85 +388,88 @@ export default function SkylimitStatistics() {
       <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
         <h3 className="text-lg font-semibold mb-3">Summary Statistics</h3>
         <div className="space-y-1 text-sm">
-          {filterTimestamp && (
-            <div>
-              <em>
-                Updated: {new Date(filterTimestamp).toLocaleString()} {Intl.DateTimeFormat().resolvedOptions().timeZone}
-              </em>
-            </div>
-          )}
-          {curationTimezone && (
-            <div>
-              <em>Curation timezone: {curationTimezone}</em>
-            </div>
-          )}
           {stats && (
             <>
               <div>
-                <strong>Expected average daily views = {viewsPerDay}</strong>
+                Expected average daily views = {viewsPerDay}
               </div>
               <div>
-                <strong>
-                  Default Skylimit Number={stats.skylimit_number.toFixed(1)} (daily views guaranteed per followee)
-                </strong>
+                <strong>Skylimit number={stats.skylimit_number.toFixed(1)}</strong> [daily views guaranteed per normal followee (amp=1)]
               </div>
-              {followedTags.length > 0 && (
+              {filterTimestamp && (
                 <div>
-                  <strong>Following tags: #{followedTags.join(', #')}</strong>
+                  <em>
+                    Updated: {new Date(filterTimestamp).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)} {storedTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone}
+                  </em>
                 </div>
               )}
-              {/* Posts/day breakdown with original, replies, and reposts */}
-              <div>
-                Analyzed {stats.post_daily.toFixed(0)} posts/day
-                {stats.original_daily !== undefined && (
-                  <> ({stats.original_daily.toFixed(0)} original, {stats.followed_reply_daily?.toFixed(0) ?? 0} followed replies, {stats.unfollowed_reply_daily?.toFixed(0) ?? 0} unfollowed replies, {stats.reposts_daily?.toFixed(0) ?? 0} reposts)</>
-                )}
-                {' '}by {Object.keys(userFilter || {}).length} followees over{' '}
-                {stats.complete_intervals_days !== undefined && stats.complete_intervals_days > 0 ? (
-                  <>a non-contiguous period of {stats.day_total.toFixed(2)} days ({stats.intervals_complete} complete {stats.interval_length_hours}-hour intervals)</>
-                ) : (
-                  <>last {stats.day_total.toFixed(2)} days</>
-                )}
-                {stats.days_of_data !== undefined && <> within the last {stats.days_of_data} days</>}.
-              </div>
-              {/* Interval diagnostics with complete/incomplete breakdown */}
-              {stats.intervals_expected !== undefined && stats.intervals_processed !== undefined && (
-                <div>
-                  Intervals: {stats.intervals_processed} of {stats.intervals_expected} expected ({((stats.intervals_processed / stats.intervals_expected) * 100).toFixed(1)}% coverage)
-                  {stats.intervals_complete !== undefined && stats.intervals_incomplete !== undefined && (
-                    <> ({stats.intervals_complete} complete, {stats.intervals_incomplete} incomplete)</>
+              <details>
+                <summary className="cursor-pointer text-blue-500">Details</summary>
+                <div className="mt-1 space-y-1">
+                  {curationTimezone && (
+                    <div>
+                      <em>Curation timezone: {curationTimezone}</em>
+                    </div>
+                  )}
+                  {followedTags.length > 0 && (
+                    <div>
+                      Following tags: #{followedTags.join(', #')}
+                    </div>
+                  )}
+                  {/* Posts/day breakdown with original, replies, and reposts */}
+                  <div>
+                    Analyzed {stats.post_daily.toFixed(0)} posts/day
+                    {stats.original_daily !== undefined && (
+                      <> ({stats.original_daily.toFixed(0)} original, {stats.followed_reply_daily?.toFixed(0) ?? 0} followed replies, {stats.unfollowed_reply_daily?.toFixed(0) ?? 0} unfollowed replies, {stats.reposts_daily?.toFixed(0) ?? 0} reposts)</>
+                    )}
+                    {' '}by {Object.keys(userFilter || {}).length} followees over{' '}
+                    {stats.complete_intervals_days !== undefined && stats.complete_intervals_days > 0 ? (
+                      <>a non-contiguous period of {stats.day_total.toFixed(2)} days ({stats.intervals_complete} complete {stats.interval_length_hours}-hour intervals)</>
+                    ) : (
+                      <>last {stats.day_total.toFixed(2)} days</>
+                    )}
+                    {stats.days_of_data !== undefined && <> within the last {stats.days_of_data} days</>}.
+                  </div>
+                  {/* Interval diagnostics with complete/incomplete breakdown */}
+                  {stats.intervals_expected !== undefined && stats.intervals_processed !== undefined && (
+                    <div>
+                      Intervals: {stats.intervals_processed} of {stats.intervals_expected} expected ({((stats.intervals_processed / stats.intervals_expected) * 100).toFixed(1)}% coverage)
+                      {stats.intervals_complete !== undefined && stats.intervals_incomplete !== undefined && (
+                        <> ({stats.intervals_complete} complete, {stats.intervals_incomplete} incomplete)</>
+                      )}
+                    </div>
+                  )}
+                  {stats.posts_per_interval_avg !== undefined && (
+                    <div>
+                      Posts/interval: avg {stats.posts_per_interval_avg.toFixed(1)}
+                      {stats.posts_per_interval_max !== undefined && <>, max {stats.posts_per_interval_max}</>}
+                    </div>
+                  )}
+                  {stats.intervals_sparse !== undefined && stats.intervals_sparse > 0 && stats.posts_per_interval_avg !== undefined && (
+                    <div className="text-yellow-600 dark:text-yellow-400">
+                      Warning: {stats.intervals_sparse} intervals have &lt; {(stats.posts_per_interval_avg * 0.1).toFixed(0)} posts
+                    </div>
+                  )}
+                  {/* Cache vs accumulated diagnostics */}
+                  {stats.summaries_total !== undefined && (
+                    <div>
+                      Summaries (complete intervals): {stats.summaries_total} total, {stats.summaries_accumulated ?? 0} processed
+                    </div>
+                  )}
+                  {/* Total cached summaries (all intervals) */}
+                  {stats.summaries_total_cached !== undefined && (
+                    <div>
+                      Summaries: total {stats.summaries_total_cached}, dropped {stats.summaries_dropped_cached ?? 0} ({stats.summaries_total_cached > 0 ? ((stats.summaries_dropped_cached ?? 0) / stats.summaries_total_cached * 100).toFixed(1) : 0}%)
+                    </div>
+                  )}
+                  {/* Summaries cache timestamps */}
+                  {stats.summaries_oldest_time && stats.summaries_newest_time && (
+                    <div>
+                      Summaries time range: {new Date(stats.summaries_oldest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)} - {new Date(stats.summaries_newest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)}
+                    </div>
                   )}
                 </div>
-              )}
-              {stats.posts_per_interval_avg !== undefined && (
-                <div>
-                  Posts/interval: avg {stats.posts_per_interval_avg.toFixed(1)}
-                  {stats.posts_per_interval_max !== undefined && <>, max {stats.posts_per_interval_max}</>}
-                </div>
-              )}
-              {stats.intervals_sparse !== undefined && stats.intervals_sparse > 0 && stats.posts_per_interval_avg !== undefined && (
-                <div className="text-yellow-600 dark:text-yellow-400">
-                  Warning: {stats.intervals_sparse} intervals have &lt; {(stats.posts_per_interval_avg * 0.1).toFixed(0)} posts
-                </div>
-              )}
-              {/* Cache vs accumulated diagnostics */}
-              {stats.summaries_total !== undefined && (
-                <div>
-                  Summaries (complete intervals): {stats.summaries_total} total, {stats.summaries_accumulated ?? 0} processed
-                </div>
-              )}
-              {/* Total cached summaries (all intervals) */}
-              {stats.summaries_total_cached !== undefined && (
-                <div>
-                  Summaries: total {stats.summaries_total_cached}, dropped {stats.summaries_dropped_cached ?? 0} ({stats.summaries_total_cached > 0 ? ((stats.summaries_dropped_cached ?? 0) / stats.summaries_total_cached * 100).toFixed(1) : 0}%)
-                </div>
-              )}
-              {/* Summaries cache timestamps */}
-              {stats.summaries_oldest_time && stats.summaries_newest_time && (
-                <div>
-                  Summaries time range: {new Date(stats.summaries_oldest_time).toLocaleString()} - {new Date(stats.summaries_newest_time).toLocaleString()}
-                </div>
-              )}
+              </details>
             </>
           )}
         </div>
@@ -618,6 +623,7 @@ export default function SkylimitStatistics() {
                           unfollowedRepliesPerDay={curationStats.unfollowedRepliesPerDay}
                           regularProb={curationStats.regularProb / 100}
                           priorityProb={curationStats.priorityProb / 100}
+                          skylimitNumber={stats?.skylimit_number}
                           showAmpButtons={!account.isHashtag}
                           ampFactor={curationStats.ampFactor ?? undefined}
                           onAmpUp={() => handleAmpUp(account.username)}

@@ -11,6 +11,7 @@ import { getCurationNumber, getPostNumberFromSummary } from '../curation/skylimi
 import { getSettings } from '../curation/skylimitStore'
 import { getFeedViewPostTimestamp, isRepost, getBlueSkyPostUrl, getBlueSkyProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo } from '../curation/types'
+import { getTimeInTimezone, getBrowserTimezone, timezonesAreDifferent, getTimezoneAbbreviation } from '../utils/timezoneUtils'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 import { getFilter, getFollow } from '../curation/skylimitCache'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
@@ -69,10 +70,12 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [curationSuspended, setCurationSuspended] = useState(false)
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
+  const [settingsTimezone, setSettingsTimezone] = useState<string>('')
   // Popup data for curation info
   const [rawPostNumber, setRawPostNumber] = useState<number | null>(null)
   const [userEntry, setUserEntry] = useState<UserEntry | null>(null)
   const [followInfo, setFollowInfo] = useState<FollowInfo | null>(null)
+  const [skylimitNumber, setSkylimitNumber] = useState<number | undefined>(undefined)
   const popupRef = useRef<HTMLDivElement>(null)
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
@@ -115,6 +118,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           setShowViewedStatus(settings?.showViewedStatus !== false)
           // Load click to Bluesky setting from localStorage
           setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
+          setSettingsTimezone(settings?.timezone || getBrowserTimezone())
           // Get page length for page boundary indicator
           setFeedPageLength(settings?.feedPageLength || 25)
           // Show counter unless curation is suspended
@@ -222,9 +226,10 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           // Get user filter data for probabilities
           const filterResult = await getFilter()
           if (filterResult) {
-            const [, userFilterData] = filterResult
+            const [globalStats, userFilterData] = filterResult
             const entry = userFilterData[ampUsername]
             setUserEntry(entry || null)
+            setSkylimitNumber(globalStats.skylimit_number)
           }
 
           // Get follow info for followed_at, topics, timezone
@@ -250,8 +255,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     setFollowInfo(follow)
     const filterResult = await getFilter()
     if (filterResult) {
-      const [, userFilterData] = filterResult
+      const [globalStats, userFilterData] = filterResult
       setUserEntry(userFilterData[ampUsername] || null)
+      setSkylimitNumber(globalStats.skylimit_number)
     }
     if (onAmpChange) {
       onAmpChange()
@@ -358,7 +364,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 {/* Time display - controlled by showTime setting */}
                 {showTime && (
                   <span className="text-gray-500 dark:text-gray-400">
-                    {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
+                    {getTimeInTimezone(postedAt, settingsTimezone)}{settingsTimezone && timezonesAreDifferent(settingsTimezone, getBrowserTimezone()) ? ` ${getTimezoneAbbreviation(settingsTimezone)}` : ''}
                   </span>
                 )}
                 {/* Counter number - clickable with blue color */}
@@ -395,6 +401,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   priorityProb={userEntry?.priority_prob}
                   curationMsg={curation.curation_msg}
                   isDropped={isStatusDrop(curation.curation_status)}
+                  skylimitNumber={skylimitNumber}
                   showAmpButtons={true}
                   ampFactor={followInfo?.amp_factor ?? userEntry?.amp_factor}
                   onAmpUp={handleAmpUp}
@@ -435,7 +442,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               {/* Time display - controlled by showTime setting */}
               {showTime && (
                 <span className="text-gray-500 dark:text-gray-400">
-                  {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
+                  {getTimeInTimezone(postedAt, settingsTimezone)}{settingsTimezone && timezonesAreDifferent(settingsTimezone, getBrowserTimezone()) ? ` ${getTimezoneAbbreviation(settingsTimezone)}` : ''}
                 </span>
               )}
               {/* Counter number - clickable with blue color */}
@@ -472,6 +479,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 priorityProb={userEntry?.priority_prob}
                 curationMsg={curation.curation_msg}
                 isDropped={isStatusDrop(curation.curation_status)}
+                skylimitNumber={skylimitNumber}
                 showAmpButtons={true}
                 ampFactor={followInfo?.amp_factor ?? userEntry?.amp_factor}
                 onAmpUp={handleAmpUp}
@@ -525,7 +533,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   {/* Time display - controlled by showTime setting */}
                   {showTime && (
                     <span className="text-gray-500 dark:text-gray-400">
-                      {String(postedAt.getHours()).padStart(2, '0')}:{String(postedAt.getMinutes()).padStart(2, '0')}
+                      {getTimeInTimezone(postedAt, settingsTimezone)}{settingsTimezone && timezonesAreDifferent(settingsTimezone, getBrowserTimezone()) ? ` ${getTimezoneAbbreviation(settingsTimezone)}` : ''}
                     </span>
                   )}
                   {/* Counter number - clickable with blue color */}
@@ -561,6 +569,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     priorityProb={userEntry?.priority_prob}
                     curationMsg={curation.curation_msg}
                     isDropped={isStatusDrop(curation.curation_status)}
+                    skylimitNumber={skylimitNumber}
                     showAmpButtons={true}
                     ampFactor={followInfo?.amp_factor ?? userEntry?.amp_factor}
                     onAmpUp={handleAmpUp}
