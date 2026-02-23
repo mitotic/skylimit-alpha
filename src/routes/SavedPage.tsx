@@ -168,7 +168,15 @@ export default function SavedPage() {
   return (
     <div className="max-w-2xl mx-auto">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-        <h1 className="text-2xl font-bold">Saved Posts</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Saved Posts</h1>
+          <a
+            href="https://bsky.app/saved"
+            className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+          >
+            View on Bluesky ↗
+          </a>
+        </div>
       </div>
 
       {feed.length === 0 ? (

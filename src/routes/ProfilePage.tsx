@@ -6,19 +6,20 @@ import { getProfile } from '../api/profile'
 import { getAuthorFeed, getActorLikes } from '../api/feed'
 import { follow, unfollow } from '../api/social'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
-import { getPostUniqueId } from '../curation/skylimitGeneral'
+import { getPostUniqueId, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
 import Avatar from '../components/Avatar'
 import Button from '../components/Button'
 import PostCard from '../components/PostCard'
 import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
+import ConfirmModal from '../components/ConfirmModal'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 
 type Tab = 'posts' | 'replies' | 'likes'
 
 export default function ProfilePage() {
   const { actor } = useParams<{ actor: string }>()
-  const { agent, session } = useSession()
+  const { agent, session, logout } = useSession()
   const [profile, setProfile] = useState<any>(null)
   const [feed, setFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])
   const [cursor, setCursor] = useState<string | undefined>()
@@ -28,6 +29,7 @@ export default function ProfilePage() {
   const [showCompose, setShowCompose] = useState(false)
   const [quotePost, setQuotePost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
   const isMountedRef = useRef(true)
   const currentActorRef = useRef<string | undefined>(actor)
 
@@ -395,7 +397,14 @@ export default function ProfilePage() {
                 className="border-4 border-white dark:border-gray-900"
               />
             </div>
-            {!isOwnProfile && (
+            {isOwnProfile ? (
+              <Button
+                variant="secondary"
+                onClick={() => setShowLogoutModal(true)}
+              >
+                Logout
+              </Button>
+            ) : (
               <Button
                 variant={profile.viewer?.following ? "secondary" : "primary"}
                 onClick={handleFollow}
@@ -405,7 +414,15 @@ export default function ProfilePage() {
             )}
           </div>
           <div className="mt-4">
-            <h1 className="text-2xl font-bold">{profile.displayName || profile.handle}</h1>
+            <div className="flex items-center justify-between">
+              <h1 className="text-2xl font-bold">{profile.displayName || profile.handle}</h1>
+              <a
+                href={getBlueSkyProfileUrl(profile.handle)}
+                className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+              >
+                View on Bluesky ↗
+              </a>
+            </div>
             <p className="text-gray-500 dark:text-gray-400">@{profile.handle}</p>
             {profile.description && (
               <p className="mt-2 whitespace-pre-wrap">{profile.description}</p>
@@ -497,6 +514,14 @@ export default function ProfilePage() {
         }}
         quotePost={quotePost || undefined}
         onPost={handlePost}
+      />
+
+      <ConfirmModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={logout}
+        title="Logout"
+        message="Are you sure you want to logout?"
       />
 
       <ToastContainer toasts={toasts} onRemove={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />

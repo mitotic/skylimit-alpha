@@ -9,6 +9,7 @@ import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal from '../components/CurationInitModal'
+import Modal from '../components/Modal'
 import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { getBrowserTimezone, timezonesAreDifferent } from '../utils/timezoneUtils'
 import { fetchToSecondaryFeedCache, transferSecondaryToPrimary, getCachedFeedAfterPosts } from '../curation/skylimitFeedCache'
@@ -43,6 +44,8 @@ export default function HomePage() {
   const [storedTimezone, setStoredTimezone] = useState<string | null>(null)
   const [timezoneMismatch, setTimezoneMismatch] = useState(false)
   const [timezoneBannerDismissed, setTimezoneBannerDismissed] = useState(false)
+  const [showIntroMessage, setShowIntroMessage] = useState(() => !localStorage.getItem('skylimit_intro_shown'))
+  const [showIntroModal, setShowIntroModal] = useState(false)
 
   // Tab state - initialize from sessionStorage
   const getInitialTab = (): HomeTab => {
@@ -899,6 +902,13 @@ export default function HomePage() {
                     <><span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=curation')}>~{skylimitStats.shown_daily.toFixed(0)}</span> displayed</>
                   )}
                 </div>
+                <button
+                  onClick={() => setShowIntroModal(true)}
+                  className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 text-xs font-bold hover:bg-blue-200 dark:hover:bg-blue-800 flex items-center justify-center flex-shrink-0"
+                  title="About Skylimit"
+                >
+                  ?
+                </button>
               </div>
             </div>
           ) : (
@@ -907,6 +917,32 @@ export default function HomePage() {
               <span>Initializing...{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Intro message for first-time users */}
+      {showIntroMessage && (
+        <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-3 mx-2 mb-2 text-base">
+          <div className="flex items-start justify-between gap-2">
+            <div className="text-blue-800 dark:text-blue-200">
+              <p>Skylimit is a curating client for Bluesky.</p>
+              <ul className="list-disc list-inside mt-1 space-y-1">
+                <li>Use <em>Settings/Curation</em> to limit the average number of posts shown per day.</li>
+                <li>Posts are numbered, starting at midnight. Click on the post number to adjust whether you want to see more (or fewer) posts from that poster.</li>
+                <li>You can see posting and curation statistics for all those you follow in <em>Settings/Following</em>.</li>
+              </ul>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.setItem('skylimit_intro_shown', 'true')
+                setShowIntroMessage(false)
+              }}
+              className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200 font-bold text-lg leading-none flex-shrink-0"
+              aria-label="Dismiss intro message"
+            >
+              &times;
+            </button>
+          </div>
         </div>
       )}
 
@@ -1258,6 +1294,17 @@ export default function HomePage() {
         onClose={() => setShowCurationInitModal(false)}
         stats={curationInitStats}
       />
+
+      <Modal isOpen={showIntroModal} onClose={() => setShowIntroModal(false)} title="About Skylimit" size="md">
+        <div className="text-gray-700 dark:text-gray-300 text-base leading-relaxed">
+          <p>Skylimit is a curating client for Bluesky.</p>
+          <ul className="list-disc list-inside mt-1 space-y-1">
+            <li>Use <em>Settings/Curation</em> to limit the average number of posts shown per day.</li>
+            <li>Posts are numbered, starting at midnight. Click on the post number to adjust whether you want to see more (or fewer) posts from that poster.</li>
+            <li>You can see posting and curation statistics for all those you follow in <em>Settings/Following</em>.</li>
+          </ul>
+        </div>
+      </Modal>
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread, fetchParentChain } from '../api/feed'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
+import { getBlueSkyPostUrl } from '../curation/skylimitGeneral'
 import PostCard from '../components/PostCard'
 import ParentChainView from '../components/ParentChainView'
 import Compose from '../components/Compose'
@@ -788,7 +789,17 @@ export default function ThreadPage() {
     <div className="pb-20 md:pb-0">
       {/* Header */}
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-        <h1 className="text-2xl font-bold">Thread</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Thread</h1>
+          {thread && (
+            <a
+              href={getBlueSkyPostUrl(thread.post.uri, thread.post.author.handle)}
+              className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+            >
+              View on Bluesky ↗
+            </a>
+          )}
+        </div>
       </div>
       {/* Parent chain view - shows context above the clicked post */}
       {(parentChain.length > 0 || isLoadingParents) && (

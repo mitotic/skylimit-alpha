@@ -336,7 +336,15 @@ export default function NotificationsPage() {
     <div className="pb-20 md:pb-0">
       {/* Header */}
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-        <h1 className="text-2xl font-bold">Notifications</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Notifications</h1>
+          <a
+            href="https://bsky.app/notifications"
+            className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+          >
+            View on Bluesky ↗
+          </a>
+        </div>
       </div>
       <RateLimitIndicator status={rateLimitStatus} />
 

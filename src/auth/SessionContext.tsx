@@ -277,7 +277,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 export function useSession() {
   const context = useContext(SessionContext)
   if (context === undefined) {
-    throw new Error('useSession must be used within a SessionProvider')
+    // This can happen when the browser restores the page from bfcache
+    // (back-forward cache) after navigating to an external site.
+    // The frozen React tree has stale context references. Force a
+    // clean reload instead of crashing.
+    window.location.reload()
+    // Return a dummy value so React doesn't throw before reload kicks in
+    return { session: null, agent: null, isLoading: true, login: async () => {}, logout: () => {} } as SessionContextType
   }
   return context
 }

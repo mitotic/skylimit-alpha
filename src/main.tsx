@@ -239,6 +239,15 @@ if (window.location.search) {
   window.history.replaceState({}, '', window.location.pathname)
 }
 
+// Force reload when restored from back-forward cache (bfcache).
+// SPAs with React context can break when the browser restores a frozen
+// page snapshot, since context object references may no longer match.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    window.location.reload()
+  }
+})
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>

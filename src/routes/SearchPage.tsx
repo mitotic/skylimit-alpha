@@ -362,7 +362,15 @@ export default function SearchPage() {
       <div className="sticky top-0 z-30 bg-white dark:bg-gray-900">
         {/* Header */}
         <div className="p-4 pb-0">
-          <h1 className="text-2xl font-bold">Search</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">Search</h1>
+            <a
+              href="https://bsky.app/search"
+              className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+            >
+              View on Bluesky ↗
+            </a>
+          </div>
         </div>
         <div className="px-4 py-3">
           <input

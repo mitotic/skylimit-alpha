@@ -89,10 +89,23 @@ export default function Navigation() {
 
   const navItems = [
     { path: '/', label: 'Home', icon: '🏠' },
-    { path: '/search', label: 'Search', icon: '🔍' },
-    { path: '/saved', label: 'Saved', icon: '🏷️' },
-    { path: '/settings?tab=basic', label: 'Settings', icon: '⚙️' },
   ]
+
+  const handleSearchClick = () => {
+    if (clickToBlueSky) {
+      window.location.href = 'https://bsky.app/search'
+    } else {
+      navigate('/search')
+    }
+  }
+
+  const handleSavedClick = () => {
+    if (clickToBlueSky) {
+      window.location.href = 'https://bsky.app/saved'
+    } else {
+      navigate('/saved')
+    }
+  }
 
   const handleProfileClick = () => {
     if (session) {
@@ -134,6 +147,32 @@ export default function Navigation() {
         </Link>
       ))}
 
+      {/* Search - uses button for Click to Bluesky support */}
+      <button
+        onClick={handleSearchClick}
+        className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
+          isActive('/search')
+            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+            : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+        }`}
+      >
+        <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>🔍</span>
+        <span className="hidden md:inline font-medium">Search</span>
+      </button>
+
+      {/* Saved - uses button for Click to Bluesky support */}
+      <button
+        onClick={handleSavedClick}
+        className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
+          isActive('/saved')
+            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+            : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+        }`}
+      >
+        <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>🏷️</span>
+        <span className="hidden md:inline font-medium">Saved</span>
+      </button>
+
       {/* Notifications - uses button for Click to Bluesky support */}
       <button
         onClick={handleNotificationsClick}
@@ -165,6 +204,18 @@ export default function Navigation() {
             <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>👤</span>
             <span className="hidden md:inline font-medium">Profile</span>
           </button>
+
+          <Link
+            to="/settings?tab=basic"
+            className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
+              isActive('/settings')
+                ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+            }`}
+          >
+            <span className="text-xl">⚙️</span>
+            <span className="hidden md:inline font-medium">Settings</span>
+          </Link>
 
           {debugMode && (
             <button
