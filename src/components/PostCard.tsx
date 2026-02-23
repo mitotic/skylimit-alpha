@@ -389,7 +389,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   handle={popupAuthor.handle}
                   popupPosition={popupPosition}
                   anchorRect={popupAnchorRect || undefined}
-                  rawPostNumber={rawPostNumber}
+                  postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                   postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
                   shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
                   originalsPerDay={userEntry?.original_daily}
@@ -412,7 +412,6 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   followedAt={followInfo?.followed_at}
                   topics={followInfo?.topics || userEntry?.topics}
                   timezone={followInfo?.timezone}
-                  viewedAt={curation?.viewedAt}
                   onNavigateToSettings={() => {
                     setShowPopup(false)
                     navigate('/settings?tab=curation')
@@ -468,7 +467,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 handle={popupAuthor.handle}
                 popupPosition={popupPosition}
                 anchorRect={popupAnchorRect || undefined}
-                rawPostNumber={rawPostNumber}
+                postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                 postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
                 shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
                 originalsPerDay={userEntry?.original_daily}
@@ -491,7 +490,6 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 followedAt={followInfo?.followed_at}
                 topics={followInfo?.topics || userEntry?.topics}
                 timezone={followInfo?.timezone}
-                viewedAt={curation?.viewedAt}
                 onNavigateToSettings={() => {
                   setShowPopup(false)
                   navigate('/settings?tab=curation')
@@ -509,22 +507,24 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 relative min-w-0 flex-wrap">
-            <span
-              onClick={handleAuthorClick}
-              className="font-semibold hover:underline cursor-pointer truncate max-w-[40%] sm:max-w-none"
-            >
-              {author.displayName || author.handle}
-            </span>
-            <span
-              onClick={handleAuthorClick}
-              className="text-gray-500 dark:text-gray-400 hover:underline cursor-pointer truncate max-w-[30%] sm:max-w-none hidden sm:inline"
-            >
-              @{author.handle}
+          <div className={`flex items-center gap-2 mb-1 relative min-w-0${showCounterDisplay && !isReposted && !isReply ? ' pr-28' : ''}`}>
+            <span className="truncate min-w-0">
+              <span
+                onClick={handleAuthorClick}
+                className="font-semibold hover:underline cursor-pointer"
+              >
+                {author.displayName || author.handle}
+              </span>
+              <span
+                onClick={handleAuthorClick}
+                className="text-gray-500 dark:text-gray-400 hover:underline cursor-pointer hidden sm:inline ml-2"
+              >
+                @{author.handle}
+              </span>
             </span>
             {(!showTime || isReposted) && (
               <>
-                <span className="text-gray-500 dark:text-gray-400">·</span>
+                <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">·</span>
                 <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">{timeAgo}</span>
               </>
             )}
@@ -560,7 +560,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     handle={popupAuthor.handle}
                     popupPosition={popupPosition}
                     anchorRect={popupAnchorRect || undefined}
-                    rawPostNumber={rawPostNumber}
+                    postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                     postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
                     shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
                     originalsPerDay={userEntry?.original_daily}
@@ -583,7 +583,6 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     followedAt={followInfo?.followed_at}
                     topics={followInfo?.topics || userEntry?.topics}
                     timezone={followInfo?.timezone}
-                    viewedAt={curation?.viewedAt}
                     onNavigateToSettings={() => {
                       setShowPopup(false)
                       navigate('/settings?tab=curation')

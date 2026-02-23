@@ -11,7 +11,7 @@ export interface CurationPopupProps {
   anchorRect?: DOMRect                 // Bounding rect of the trigger element for fixed positioning
 
   // Curation stats (optional - different data for PostCard vs SkylimitStatistics)
-  rawPostNumber?: number | null        // PostCard only
+  postProperties?: { rawPostNumber?: number | null; viewedAt?: number } | null  // PostCard only
   postingPerDay?: number               // Total posts/day (all types)
   originalsPerDay?: number             // Original posts/day (Debug Info)
   priorityPerDay?: number              // Priority posts/day (Debug Info)
@@ -40,8 +40,6 @@ export interface CurationPopupProps {
   followedAt?: string
   topics?: string
   timezone?: string
-  viewedAt?: number                    // Client time timestamp when post was first viewed
-
   // Actions
   onNavigateToSettings?: () => void    // Optional - show "Curation Settings" link if provided
   onClose?: () => void                 // Called when backdrop is tapped (mobile dismiss)
@@ -52,7 +50,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   handle,
   popupPosition,
   anchorRect,
-  rawPostNumber,
+  postProperties,
   postingPerDay,
   shownPerDay,
   originalsPerDay,
@@ -75,7 +73,6 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   followedAt,
   topics,
   timezone,
-  viewedAt,
   onNavigateToSettings,
   onClose,
 }, ref) => {
@@ -149,8 +146,13 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
     >
       {/* Header */}
       <div className="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 leading-snug">
-        <div className="font-semibold text-sm">
-          {displayName || handle}
+        <div className="flex items-center justify-between">
+          <div className="font-semibold text-sm">
+            {displayName || handle}
+          </div>
+          {postProperties?.rawPostNumber != null && (
+            <div className="text-sm text-gray-500 dark:text-gray-400">Raw #{postProperties.rawPostNumber}</div>
+          )}
         </div>
         <div className="text-sm text-gray-500 dark:text-gray-400">
           @{handle}
@@ -160,11 +162,6 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       {/* Curation statistics */}
       <div className={`px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 ${isDropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
         <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
-          {/* PostCard: Raw post number */}
-          {rawPostNumber !== undefined && rawPostNumber !== null && (
-            <div>Raw post #{rawPostNumber}</div>
-          )}
-
           {/* Posting rate and shown rate */}
           {postingPerDay !== undefined && (
             <div>Posting {formatCount(postingPerDay)}/day{shownPerDay !== undefined ? `, showing ${formatCount(shownPerDay)}/day` : ''}</div>
@@ -256,9 +253,11 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             {timezone && (
               <div>Timezone: {timezone}</div>
             )}
-            <div>Viewed at: {viewedAt
-              ? `${new Date(viewedAt).toLocaleDateString()}, ${String(new Date(viewedAt).getHours()).padStart(2, '0')}:${String(new Date(viewedAt).getMinutes()).padStart(2, '0')}`
-              : '—'}</div>
+            {postProperties !== undefined && postProperties !== null && (
+              <div>Viewed at: {postProperties.viewedAt
+                ? `${new Date(postProperties.viewedAt).toLocaleDateString()}, ${String(new Date(postProperties.viewedAt).getHours()).padStart(2, '0')}:${String(new Date(postProperties.viewedAt).getMinutes()).padStart(2, '0')}`
+                : '—'}</div>
+            )}
           </div>
         </div>
       )}
