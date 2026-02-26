@@ -3,7 +3,7 @@
  */
 
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
-import { PostSummary, EditionLayout } from './types'
+import { PostSummary } from './types'
 import { clientNow, clientDate } from '../utils/clientClock'
 
 /**
@@ -50,65 +50,19 @@ export function getHashtags(post: AppBskyFeedDefs.PostView, lowerCase: boolean =
 }
 
 /**
- * Parse edition layout from text configuration
- */
-export function parseEditionLayout(layoutText: string): EditionLayout {
-  const layout: EditionLayout = {}
-  const lines = layoutText.split('\n').map(l => l.trim()).filter(l => l)
-  
-  let currentSection = ''
-  let userIndex = 0
-
-  for (const line of lines) {
-    // Check if this is a section name (not starting with @ or #)
-    if (!line.startsWith('@') && !line.startsWith('#')) {
-      currentSection = line
-      userIndex = 0
-      continue
-    }
-    
-    // Parse account entries
-    const entries = line.split(/\s+/).filter(e => e)
-    for (const entry of entries) {
-      if (entry.startsWith('@')) {
-        // Account entry: @user.bsky.social or @user.bsky.social#hashtag
-        const [account, tag] = entry.split('#')
-        const username = account.substring(1)
-
-        layout[username] = {
-          section: currentSection || '*default',
-          tag: tag || undefined,
-          index: userIndex++,
-        }
-      }
-    }
-  }
-  
-  return layout
-}
-
-/**
- * Get edition layout from settings
- */
-export async function getEditionLayout(): Promise<EditionLayout> {
-  // Load from settings
-  const { getSettings } = await import('./skylimitStore')
-  const settings = await getSettings()
-  if (settings.editionLayout) {
-    return parseEditionLayout(settings.editionLayout)
-  }
-  return {}
-}
-
-/**
- * Get edition time strings from settings
+ * Get edition time strings from settings.
  */
 export async function getEditionTimeStrs(): Promise<string[]> {
-  // Load from settings
   const { getSettings } = await import('./skylimitStore')
   const settings = await getSettings()
-  if (settings.editionTimes) {
-    return settings.editionTimes.split(',').map(t => t.trim()).filter(t => t)
+
+  if (settings.editionLayout) {
+    const { getParsedEditions } = await import('./skylimitEditions')
+    const parsed = await getParsedEditions()
+    return parsed.editions
+      .filter(e => e.editionNumber > 0)
+      .map(e => e.time)
+      .filter(t => t)
   }
   return []
 }

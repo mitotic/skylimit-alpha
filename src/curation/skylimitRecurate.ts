@@ -69,6 +69,12 @@ export async function recomputeCurationDecisions(
 
     // Process all summaries
     for (const summary of allSummaries) {
+      // Skip synthetic edition posts — they should not be re-curated
+      if (summary.edition_status === 'synthetic') {
+        skippedCount++
+        continue
+      }
+
       // Try to find the post in feed cache
       const cacheEntry = feedCacheMap.get(summary.uniqueId)
 
@@ -97,6 +103,9 @@ export async function recomputeCurationDecisions(
         // Update curation status in summary
         summary.curation_status = curation.curation_status
         summary.curation_msg = curation.curation_msg
+        if (curation.edition_tag) summary.edition_tag = curation.edition_tag
+        if (curation.edition_pattern) summary.edition_pattern = curation.edition_pattern
+        if (curation.edition_status) summary.edition_status = curation.edition_status
         updatedSummaries.push(summary)
         updatedCount++
       }

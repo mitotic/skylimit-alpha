@@ -8,10 +8,19 @@ import Avatar from '../components/Avatar'
 import Button from '../components/Button'
 import Spinner from '../components/Spinner'
 import PostCard from '../components/PostCard'
+import LocalCacheResultCard from '../components/LocalCacheResultCard'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import { clientNow } from '../utils/clientClock'
+import { PostSummary } from '../curation/types'
+import { searchLocalCache } from '../curation/localCacheSearch'
 
-type SearchTab = 'people' | 'posts'
+type SearchTab = 'local' | 'people' | 'posts'
+
+const tabLabels: Record<SearchTab, string> = {
+  local: 'Local Cache',
+  people: 'People',
+  posts: 'Posts',
+}
 
 // sessionStorage keys
 const SEARCH_STATE_KEY = 'websky_search_state'
@@ -26,6 +35,11 @@ interface SavedSearchState {
   results: any[]
   postResults: AppBskyFeedDefs.PostView[]
   postCursor: string | undefined
+  localResults: PostSummary[]
+  localDisplayNames: [string, string][]  // serialized Map entries
+  localTotal: number
+  localOffset: number
+  shownOnly: boolean
   savedAt: number
 }
 
@@ -35,12 +49,18 @@ export default function SearchPage() {
   const location = useLocation()
   const navigationType = useNavigationType()
   const [query, setQuery] = useState('')
-  const [activeTab, setActiveTab] = useState<SearchTab>('people')
+  const [activeTab, setActiveTab] = useState<SearchTab>('local')
   const [results, setResults] = useState<any[]>([])
   const [postResults, setPostResults] = useState<AppBskyFeedDefs.PostView[]>([])
   const [postCursor, setPostCursor] = useState<string | undefined>()
   const [isSearching, setIsSearching] = useState(false)
   const [isLoadingMorePosts, setIsLoadingMorePosts] = useState(false)
+  const [localResults, setLocalResults] = useState<PostSummary[]>([])
+  const [localDisplayNames, setLocalDisplayNames] = useState<Map<string, string>>(new Map())
+  const [localTotal, setLocalTotal] = useState(0)
+  const [localOffset, setLocalOffset] = useState(0)
+  const [shownOnly, setShownOnly] = useState(true)
+  const [isLoadingMoreLocal, setIsLoadingMoreLocal] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [isScrolledDown, setIsScrolledDown] = useState(false)
 
@@ -51,7 +71,7 @@ export default function SearchPage() {
   const isRestoringRef = useRef(false)
 
   // Ref to capture latest state for saving on unmount
-  const stateRef = useRef({ query, activeTab, results, postResults, postCursor })
+  const stateRef = useRef({ query, activeTab, results, postResults, postCursor, localResults, localDisplayNames, localTotal, localOffset, shownOnly })
 
   // Disable browser scroll restoration
   useEffect(() => {
@@ -94,6 +114,11 @@ export default function SearchPage() {
       setResults(savedState.results)
       setPostResults(savedState.postResults)
       setPostCursor(savedState.postCursor)
+      if (savedState.localResults) setLocalResults(savedState.localResults)
+      if (savedState.localDisplayNames) setLocalDisplayNames(new Map(savedState.localDisplayNames))
+      if (savedState.localTotal !== undefined) setLocalTotal(savedState.localTotal)
+      if (savedState.localOffset !== undefined) setLocalOffset(savedState.localOffset)
+      if (savedState.shownOnly !== undefined) setShownOnly(savedState.shownOnly)
 
       // Allow a tick for state to settle
       setTimeout(() => {
@@ -115,7 +140,7 @@ export default function SearchPage() {
     }
 
     // Wait for results to be populated before restoring scroll
-    const hasResults = results.length > 0 || postResults.length > 0
+    const hasResults = results.length > 0 || postResults.length > 0 || localResults.length > 0
     if (!hasResults) return
 
     const savedScrollY = sessionStorage.getItem(SEARCH_SCROLL_KEY)
@@ -159,28 +184,34 @@ export default function SearchPage() {
     }
 
     attemptRestore()
-  }, [location.pathname, navigationType, results, postResults])
+  }, [location.pathname, navigationType, results, postResults, localResults])
 
   // Keep stateRef in sync with current state values
   useEffect(() => {
-    stateRef.current = { query, activeTab, results, postResults, postCursor }
-  }, [query, activeTab, results, postResults, postCursor])
+    stateRef.current = { query, activeTab, results, postResults, postCursor, localResults, localDisplayNames, localTotal, localOffset, shownOnly }
+  }, [query, activeTab, results, postResults, postCursor, localResults, localDisplayNames, localTotal, localOffset, shownOnly])
 
   // Save search state on unmount (when navigating away from search page)
   // Note: scroll position is saved continuously by the scroll listener effect,
   // so we don't save it here (window.scrollY may already be 0 during unmount)
   useEffect(() => {
     return () => {
-      const { query: q, activeTab: tab, results: r, postResults: pr, postCursor: pc } = stateRef.current
+      const { query: q, activeTab: tab, results: r, postResults: pr, postCursor: pc,
+        localResults: lr, localDisplayNames: ldn, localTotal: lt, localOffset: lo, shownOnly: so } = stateRef.current
 
       // Only save if there's a query with results
-      if (q.trim() && (r.length > 0 || pr.length > 0)) {
+      if (q.trim() && (r.length > 0 || pr.length > 0 || lr.length > 0)) {
         const searchState: SavedSearchState = {
           query: q,
           activeTab: tab,
           results: r,
           postResults: pr,
           postCursor: pc,
+          localResults: lr,
+          localDisplayNames: Array.from(ldn.entries()),
+          localTotal: lt,
+          localOffset: lo,
+          shownOnly: so,
           savedAt: clientNow()
         }
 
@@ -300,10 +331,70 @@ export default function SearchPage() {
     [agent]
   )
 
+  const debouncedSearchLocal = useCallback(
+    (() => {
+      let timeout: ReturnType<typeof setTimeout>
+      return (searchQuery: string, filterShownOnly?: boolean) => {
+        clearTimeout(timeout)
+        timeout = setTimeout(async () => {
+          const so = filterShownOnly ?? shownOnly
+          if (!searchQuery.trim()) {
+            setLocalResults([])
+            setLocalDisplayNames(new Map())
+            setLocalTotal(0)
+            setLocalOffset(0)
+            return
+          }
+
+          setIsSearching(true)
+          try {
+            const { results: r, total, displayNameMap } = await searchLocalCache(searchQuery, {
+              shownOnly: so,
+              offset: 0,
+              limit: 50,
+            })
+            setLocalResults(r)
+            setLocalDisplayNames(displayNameMap)
+            setLocalTotal(total)
+            setLocalOffset(50)
+          } catch (error) {
+            console.error('Local cache search failed:', error)
+            addToast(error instanceof Error ? error.message : 'Local cache search failed', 'error')
+            setLocalResults([])
+          } finally {
+            setIsSearching(false)
+          }
+        }, 300)
+      }
+    })(),
+    [shownOnly]
+  )
+
+  const handleLoadMoreLocal = async () => {
+    if (localOffset >= localTotal || !query.trim()) return
+    setIsLoadingMoreLocal(true)
+    try {
+      const { results: r } = await searchLocalCache(query, {
+        shownOnly,
+        offset: localOffset,
+        limit: 50,
+      })
+      setLocalResults(prev => [...prev, ...r])
+      setLocalOffset(prev => prev + 50)
+    } catch (error) {
+      console.error('Failed to load more local results:', error)
+      addToast(error instanceof Error ? error.message : 'Failed to load more results', 'error')
+    } finally {
+      setIsLoadingMoreLocal(false)
+    }
+  }
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
     setQuery(value)
-    if (activeTab === 'people') {
+    if (activeTab === 'local') {
+      debouncedSearchLocal(value)
+    } else if (activeTab === 'people') {
       debouncedSearchActors(value)
     } else {
       debouncedSearchPosts(value)
@@ -314,7 +405,9 @@ export default function SearchPage() {
     if (tab === activeTab) return
     setActiveTab(tab)
     if (query.trim()) {
-      if (tab === 'people') {
+      if (tab === 'local') {
+        debouncedSearchLocal(query)
+      } else if (tab === 'people') {
         debouncedSearchActors(query)
       } else {
         debouncedSearchPosts(query)
@@ -377,24 +470,24 @@ export default function SearchPage() {
             type="text"
             value={query}
             onChange={handleSearchChange}
-            placeholder={activeTab === 'people' ? "Search for people..." : "Search for posts..."}
+            placeholder={activeTab === 'local' ? "Search cache: @handle*(name*): *text" : activeTab === 'people' ? "Search for people..." : "Search for posts..."}
             className="input w-full"
           />
         </div>
 
         {/* Tab bar */}
         <div className="flex border-b border-gray-200 dark:border-gray-700">
-          {(['people', 'posts'] as SearchTab[]).map((tab) => (
+          {(['local', 'people', 'posts'] as SearchTab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => handleTabChange(tab)}
-              className={`flex-1 px-4 py-3 text-center font-medium capitalize transition-colors ${
+              className={`flex-1 px-4 py-3 text-center font-medium transition-colors ${
                 activeTab === tab
                   ? 'border-b-2 border-blue-500 text-blue-500'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
               }`}
             >
-              {tab}
+              {tabLabels[tab]}
             </button>
           ))}
         </div>
@@ -414,6 +507,27 @@ export default function SearchPage() {
           </div>
         )}
 
+        {!isSearching && query.trim() && activeTab === 'local' && localResults.length === 0 && (
+          <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+            <p>No cached posts match your search</p>
+            <label className="flex items-center justify-center gap-1.5 text-xs mt-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!shownOnly}
+                onChange={(e) => {
+                  const newShownOnly = !e.target.checked
+                  setShownOnly(newShownOnly)
+                  if (query.trim()) {
+                    debouncedSearchLocal(query, newShownOnly)
+                  }
+                }}
+                className="rounded border-gray-300 dark:border-gray-600"
+              />
+              Include dropped posts
+            </label>
+          </div>
+        )}
+
         {!isSearching && query.trim() && activeTab === 'posts' && postResults.length === 0 && (
           <div className="text-center py-12 text-gray-500 dark:text-gray-400">
             <p>No posts found</p>
@@ -422,10 +536,70 @@ export default function SearchPage() {
 
         {!isSearching && !query.trim() && (
           <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-            <p>{activeTab === 'people'
+            <p>{activeTab === 'local'
+              ? 'Search cached posts: @handle*(name*): *text'
+              : activeTab === 'people'
               ? 'Search for people by username or display name'
               : 'Search for posts by keyword or phrase'
             }</p>
+          </div>
+        )}
+
+        {/* Local cache results */}
+        {!isSearching && activeTab === 'local' && localResults.length > 0 && (
+          <div className="pt-2">
+            <div className="px-4 py-1 flex items-center justify-between">
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {localOffset < localTotal
+                  ? `Showing ${localResults.length} of ${localTotal} results`
+                  : `${localTotal} result${localTotal !== 1 ? 's' : ''}`}
+              </span>
+              <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!shownOnly}
+                  onChange={(e) => {
+                    const newShownOnly = !e.target.checked
+                    setShownOnly(newShownOnly)
+                    if (query.trim()) {
+                      debouncedSearchLocal(query, newShownOnly)
+                    }
+                  }}
+                  className="rounded border-gray-300 dark:border-gray-600"
+                />
+                Show dropped
+              </label>
+            </div>
+            {localResults.map((post) => (
+              <LocalCacheResultCard
+                key={post.uniqueId}
+                post={post}
+                displayName={localDisplayNames.get(post.accountDid)}
+                onClick={() => {
+                  const postUri = post.repostUri || post.uniqueId
+                  navigate(`/post/${encodeURIComponent(postUri)}`)
+                }}
+              />
+            ))}
+
+            {localOffset < localTotal && (
+              <div className="p-4 text-center">
+                <Button
+                  variant="secondary"
+                  onClick={handleLoadMoreLocal}
+                  disabled={isLoadingMoreLocal}
+                >
+                  {isLoadingMoreLocal ? (
+                    <span className="flex items-center gap-2">
+                      <Spinner size="sm" />
+                      Loading...
+                    </span>
+                  ) : (
+                    'Load More'
+                  )}
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

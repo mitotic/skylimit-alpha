@@ -28,7 +28,7 @@ import { getLocalMidnight } from './feedCacheCore'
 // countTotalPosts is defined in this file
 import { hmacHex } from '../utils/hmac'
 import { clientDate } from '../utils/clientClock'
-import { setUnviewedPostsTodayMap } from './skylimitUnviewedTracker'
+import { setUnviewedPostsTodayMap, setUnviewedPostsYesterdayMap } from './skylimitUnviewedTracker'
 
 // Prototype for PostStats - tracks repost counts during interval processing
 const POST_STATS_PROTO: PostStats = { repost_count: 0, followed_repost_count: 0, repostCount: 0 }
@@ -101,6 +101,21 @@ export async function computePostStats(
     }
   }
   setUnviewedPostsTodayMap(unviewedMap, todayMidnight)
+
+  // Build unviewed posts map for yesterday (only if cache covers yesterday)
+  const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
+  const oldestPostTimestamp = Math.min(...allSummaries.map(s => s.postTimestamp))
+  const ONE_HOUR = 60 * 60 * 1000
+  if (oldestPostTimestamp <= yesterdayMidnight + ONE_HOUR) {
+    const unviewedYesterdayMap = new Map<string, number>()
+    for (const summary of allSummaries) {
+      if (!summary.viewedAt && isStatusShow(summary.curation_status) &&
+          summary.postTimestamp > yesterdayMidnight && summary.postTimestamp <= todayMidnight) {
+        unviewedYesterdayMap.set(summary.uniqueId, summary.postTimestamp)
+      }
+    }
+    setUnviewedPostsYesterdayMap(unviewedYesterdayMap, yesterdayMidnight)
+  }
 
   // Group summaries by computed interval for the complete intervals algorithm
   const summariesByInterval = new Map<string, PostSummary[]>()
@@ -415,6 +430,9 @@ function computeIntervalStats(
   timestampRange: TimestampRange
 ): void {
   for (const summary of summaries) {
+    // Skip edition posts (held, published, or synthetic) from statistics
+    if (summary.edition_status) continue
+
     summaryCache[summary.uniqueId] = {
       username: summary.username,
       tags: summary.tags,

@@ -7,14 +7,16 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
+import { parseEditionFile, invalidateEditionsCache } from '../curation/skylimitEditions'
 import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
 import { getBrowserTimezone } from '../utils/timezoneUtils'
 import Button from '../components/Button'
 import SkylimitStatistics from '../components/SkylimitStatistics'
-import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange } from '../curation/skylimitCache'
+import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 type Tab = 'basic' | 'curation' | 'following'
 
@@ -120,6 +122,7 @@ export default function SettingsPage() {
   const [originalSettings, setOriginalSettings] = useState<SkylimitSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [editionFeedback, setEditionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -129,8 +132,8 @@ export default function SettingsPage() {
   const [summariesCacheRanges, setSummariesCacheRanges] = useState<SummaryCacheTimeRange[]>([])
   const [showResetFeedModal, setShowResetFeedModal] = useState(false)
   const [isResettingFeed, setIsResettingFeed] = useState(false)
-  const [showResetCurationModal, setShowResetCurationModal] = useState(false)
-  const [isResettingCuration, setIsResettingCuration] = useState(false)
+  const [showResetDataModal, setShowResetDataModal] = useState(false)
+  const [isResettingData, setIsResettingData] = useState(false)
   const [showClearSettingsModal, setShowClearSettingsModal] = useState(false)
   const [isClearingSettings, setIsClearingSettings] = useState(false)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
@@ -138,6 +141,9 @@ export default function SettingsPage() {
   const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
+  )
+  const [readOnlyMode, setReadOnlyMode] = useState(() =>
+    isReadOnlyMode()
   )
   const [textSize, setTextSize] = useState<'small' | 'medium' | 'large'>(() => {
     const stored = localStorage.getItem('websky_text_size')
@@ -385,26 +391,21 @@ export default function SettingsPage() {
     setSettings({ ...settings, [key]: value })
   }
 
-  const handleResetCuration = async () => {
-    setIsResettingCuration(true)
+  const handleResetData = async () => {
+    setIsResettingData(true)
     try {
-      if (typeof (window as any).clearCacheAndReloadHomePage === 'function') {
-        await (window as any).clearCacheAndReloadHomePage()
-        setShowResetCurationModal(false)
-        setIsResettingCuration(false)
-        navigate('/')
-      } else {
-        navigate('/')
-        setTimeout(async () => {
-          if (typeof (window as any).clearCacheAndReloadHomePage === 'function') {
-            await (window as any).clearCacheAndReloadHomePage()
-          }
-          setIsResettingCuration(false)
-        }, 500)
-      }
+      // Clear sessionStorage feed/scroll state
+      sessionStorage.removeItem('websky_home_feed_state')
+      sessionStorage.removeItem('websky_home_scroll_state')
+      sessionStorage.removeItem('websky_home_editions_feed_state')
+      sessionStorage.removeItem('websky_home_editions_scroll_state')
+      sessionStorage.removeItem('websky_home_active_tab')
+
+      await clearAllTimeVariantDataAndLogout()
+      // Function handles logout and redirect to /login
     } catch (error) {
-      console.error('Failed to reset curation:', error)
-      setIsResettingCuration(false)
+      console.error('Failed to reset data:', error)
+      setIsResettingData(false)
     }
   }
 
@@ -472,7 +473,7 @@ export default function SettingsPage() {
           <div>
             <div className="font-medium">Click to <span className="text-blue-500">Bluesky</span></div>
             <div className="text-sm text-gray-500 dark:text-gray-400">
-              Open posts, profiles, and notifications in Bluesky. Return to Skylimit by using back navigation repeatedly.
+              Open threads, search, saved posts, notifications, and profiles in Bluesky. You can return to Skylimit by using back navigation repeatedly (i.e., clicking back once more after returning to the Bluesky home page).
             </div>
           </div>
           <button
@@ -484,6 +485,28 @@ export default function SettingsPage() {
             className="btn bg-blue-500 hover:bg-blue-600 text-white"
           >
             {clickToBlueSky ? 'Disable' : 'Enable'}
+          </button>
+        </div>
+      </div>
+
+      <div className="card space-y-4">
+        <h2 className="text-lg font-semibold">Interaction</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-medium">Read-only Mode</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Prevent accidental likes, reposts, replies, bookmarks, and follows
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const newValue = !readOnlyMode
+              localStorage.setItem('websky_read_only_mode', newValue.toString())
+              setReadOnlyMode(newValue)
+            }}
+            className={`btn ${readOnlyMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+          >
+            {readOnlyMode ? 'Disable' : 'Enable'}
           </button>
         </div>
       </div>
@@ -581,7 +604,7 @@ export default function SettingsPage() {
             e.preventDefault()
             handleSave()
           }}
-          className="space-y-6"
+          className="space-y-6 border border-gray-200 dark:border-gray-700 rounded-lg p-5"
         >
           <section>
             <h2 className="text-xl font-semibold mb-4">Basic Settings</h2>
@@ -791,39 +814,6 @@ export default function SettingsPage() {
                   Controls day boundaries for post numbering and curation. Changing this will re-number posts.
                 </p>
               </div>
-            </div>
-          </DisclosureSection>
-
-          <DisclosureSection title="Experimental Settings">
-            <div className="space-y-4">
-              <div>
-                <label className="block mb-2 font-medium">
-                  Digest edition times (comma-separated, e.g., "08:00,15:00"):
-                </label>
-                <input
-                  type="text"
-                  value={settings.editionTimes}
-                  onChange={(e) => updateSetting('editionTimes', e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                  placeholder="08:00,15:00"
-                />
-              </div>
-
-              <div>
-                <label className="block mb-2 font-medium">
-                  Digest edition layout:
-                </label>
-                <textarea
-                  value={settings.editionLayout}
-                  onChange={(e) => updateSetting('editionLayout', e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                  rows={6}
-                  placeholder="@user1.bsky.social @user2.bsky.social#hashtag&#10;SectionName&#10;@user3.bsky.social"
-                />
-                <p className="text-sm text-gray-500 mt-1">
-                  Configure which accounts appear in digest editions
-                </p>
-              </div>
 
               <label className="flex items-center space-x-3">
                 <input
@@ -847,6 +837,16 @@ export default function SettingsPage() {
                   className="w-5 h-5"
                 />
                 <span>Debug mode (enables additional UI features)</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={settings.quietMode ?? false}
+                  onChange={(e) => updateSetting('quietMode', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Quiet mode (suppress [Paged Updates] and [Idle Timer] console logs)</span>
               </label>
 
               <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
@@ -978,7 +978,7 @@ export default function SettingsPage() {
             </div>
           </DisclosureSection>
 
-          <div className="flex justify-start pt-4 border-t">
+          <div className="flex justify-start pt-4">
             <Button
               type="submit"
               variant="primary"
@@ -988,6 +988,74 @@ export default function SettingsPage() {
             </Button>
           </div>
         </form>
+
+        <div className="mt-6">
+          <DisclosureSection title="Edition Settings">
+            <div className="space-y-4">
+              <div>
+                <label className="block mb-2 font-medium">
+                  Edition description:
+                </label>
+                <textarea
+                  value={settings.editionLayout}
+                  onChange={(e) => {
+                    updateSetting('editionLayout', e.target.value)
+                    setEditionFeedback(null)
+                  }}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
+                  rows={12}
+                  placeholder={"@user1.bsky.social\n@user2*: #topic1, #topic2\n\n## Section1\n@prefix*\n@*suffix: keyword*\n\n# 08:00 [Morning Edition]\n\n## Tech\n@tech*: #programming\n\n# 18:00 [Evening Edition]"}
+                />
+                <p className="text-sm text-gray-500 mt-1">
+                  Configure edition patterns. Lines starting with @ define user patterns
+                  (with optional text patterns after colon). ## marks sections, # hh:mm marks editions.
+                </p>
+                <div className="mt-2 flex items-center gap-3">
+                  <Button
+                    variant="primary"
+                    onClick={async () => {
+                      const text = settings.editionLayout.trim()
+                      if (!text) {
+                        // Empty layout: clear editions
+                        updateSetting('editionLayout', '')
+                        await updateSettings({ ...settings, editionLayout: '' })
+                        invalidateEditionsCache()
+                        setOriginalSettings({ ...settings, editionLayout: '' })
+                        setEditionFeedback({ type: 'success', message: 'Edition description cleared.' })
+                        return
+                      }
+                      const result = parseEditionFile(text)
+                      if (result.errors.length > 0) {
+                        setEditionFeedback({ type: 'error', message: result.errors.join('\n') })
+                        return
+                      }
+                      // Count editions and patterns for confirmation
+                      const editionCount = result.editions.filter(e => e.editionNumber > 0).length
+                      const patternCount = result.editions.reduce(
+                        (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
+                      )
+                      // Save to settings
+                      await updateSettings({ ...settings, editionLayout: text })
+                      invalidateEditionsCache()
+                      setOriginalSettings({ ...settings, editionLayout: text })
+                      const parts: string[] = []
+                      if (editionCount > 0) parts.push(`${editionCount} edition${editionCount > 1 ? 's' : ''}`)
+                      parts.push(`${patternCount} pattern${patternCount !== 1 ? 's' : ''}`)
+                      setEditionFeedback({ type: 'success', message: `Edition description updated: ${parts.join(', ')}.` })
+                    }}
+                  >
+                    Update Editions
+                  </Button>
+                  {editionFeedback && (
+                    <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                      {editionFeedback.message}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </DisclosureSection>
+        </div>
 
         {/* Data Management */}
         <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
@@ -1176,11 +1244,11 @@ export default function SettingsPage() {
           <Button
             type="button"
             variant="secondary"
-            onClick={() => setShowResetCurationModal(true)}
-            disabled={isResettingCuration}
+            onClick={() => setShowResetDataModal(true)}
+            disabled={isResettingData}
             className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
           >
-            Reset curation
+            Reset data
           </Button>
           <Button
             type="button"
@@ -1189,7 +1257,7 @@ export default function SettingsPage() {
             disabled={isClearingSettings}
             className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
           >
-            Reset Skylimit settings
+            Reset settings
           </Button>
           <Button
             type="button"
@@ -1223,32 +1291,33 @@ You will be redirected to the home page with a refreshed feed.`}
           isLoading={isResettingFeed}
         />
 
-        {/* Reset Curation Confirmation Modal */}
+        {/* Reset Data Confirmation Modal */}
         <ConfirmModal
-          isOpen={showResetCurationModal}
-          onClose={() => setShowResetCurationModal(false)}
-          onConfirm={handleResetCuration}
-          title="Reset Curation"
-          message={`This will clear all cached data including curation summaries and reload the home feed:
-• Feed posts and pagination state
-• Curation summaries cache
-• Session storage state
+          isOpen={showResetDataModal}
+          onClose={() => setShowResetDataModal(false)}
+          onConfirm={handleResetData}
+          title="Reset Data"
+          message={`This will clear all time-variant cached data and log you out:
+• Feed posts, pagination state, and session storage
+• Curation summaries and filter/stats cache
+• Parent posts cache and follow list cache
+• Browser timezone setting
 
-Your Skylimit settings, follow list, and login session will be preserved.
+Your Skylimit settings (viewsPerDay, edition layout, etc.) will be preserved.
 
-You will be redirected to the home page with a fresh curation pass.`}
-          confirmText={isResettingCuration ? 'Resetting...' : 'Reset Curation'}
+You will be logged out and redirected to the login page.`}
+          confirmText={isResettingData ? 'Resetting...' : 'Reset Data & Logout'}
           cancelText="Cancel"
-          isDangerous={false}
-          isLoading={isResettingCuration}
+          isDangerous={true}
+          isLoading={isResettingData}
         />
 
-        {/* Reset Skylimit Settings Confirmation Modal */}
+        {/* Reset Settings Confirmation Modal */}
         <ConfirmModal
           isOpen={showClearSettingsModal}
           onClose={() => setShowClearSettingsModal(false)}
           onConfirm={handleClearSettings}
-          title="Reset Skylimit Settings"
+          title="Reset Settings"
           message={`This will reset all Skylimit settings to their default values.
 
 Your cached data, follow list, and login session will be preserved.

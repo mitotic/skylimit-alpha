@@ -1,15 +1,14 @@
 /**
  * Cleanup functions for Skylimit curation cache
- * Removes old post summaries and edition posts to prevent unbounded growth
+ * Removes old post summaries to prevent unbounded growth
  */
 
-import { removePostSummariesBefore, removeOldEditionPosts } from './skylimitCache'
+import { removePostSummariesBefore } from './skylimitCache'
 import { getSettings } from './skylimitStore'
 import { clientNow, clientTimeout, clearClientTimeout } from '../utils/clientClock'
 
 // Cleanup constants (matching Mahoot's approach)
 const CURATION_DELAY = 5 * 60 * 1000 // 5 minutes debounce delay
-const EDITION_POSTS_AGO = 2 * 24 * 60 * 60 * 1000 // 2 days ago
 
 let cleanupTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -30,11 +29,7 @@ export async function performCleanup(): Promise<void> {
     // Remove post summaries older than cutoff
     const deletedSummaries = await removePostSummariesBefore(cutoffTimestamp)
 
-    // Remove edition posts older than 2 days
-    const editionCutoffTime = clientNow() - EDITION_POSTS_AGO
-    const deletedEditions = await removeOldEditionPosts(editionCutoffTime)
-
-    console.log(`Cleanup complete: removed ${deletedSummaries} post summaries and ${deletedEditions} edition posts`)
+    console.log(`Cleanup complete: removed ${deletedSummaries} post summaries`)
   } catch (error) {
     console.error('Error during cleanup:', error)
   }

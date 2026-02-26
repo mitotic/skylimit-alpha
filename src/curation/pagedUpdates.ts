@@ -174,9 +174,9 @@ export async function probeForNewPosts(
       const summary = createPostSummary(post, new Date(postTimestamp))
       summary.curation_status = curation.curation_status
       summary.curation_msg = curation.curation_msg
-      if (curation.curation_save) {
-        summary.curation_save = curation.curation_save
-      }
+      if (curation.edition_tag) summary.edition_tag = curation.edition_tag
+      if (curation.edition_pattern) summary.edition_pattern = curation.edition_pattern
+      if (curation.edition_status) summary.edition_status = curation.edition_status
 
       const uniqueId = getPostUniqueId(post)
       const entry: FeedCacheEntryWithPost = {

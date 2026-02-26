@@ -3,8 +3,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
 import { getHomeFeed } from '../api/feed'
 import { CurationInitStatsDisplay } from '../components/CurationInitModal'
-import { insertEditionPosts } from '../curation/skylimitTimeline'
-import { initDB, closeDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh } from '../curation/skylimitCache'
+import { initDB, closeDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh, clearAllTimeVariantDataAndLogout } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
@@ -16,6 +15,7 @@ import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata,
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/skylimitNumbering'
 import { clientNow, clientDate, clientTimeout, clearClientTimeout, clientInterval, clearClientInterval } from '../utils/clientClock'
+import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { HomeTab, getFeedStateKey, getScrollStateKey, HOME_TAB_STATE_KEY, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary, RefreshDisplayedFeedOptions, RefreshDisplayedFeedResult } from './homePageTypes'
 
 interface UseFeedPipelineParams {
@@ -721,6 +721,9 @@ export function useFeedPipeline({
           }
           return
         }
+        // Cache metadata said fresh but no posts found — switch to idle return
+        isIdleReturnMode = true
+        console.log('[Feed] Mode: USE CACHE → IDLE RETURN - cache metadata fresh but no posts found')
       }
 
       let fetchLimit = pageLength
@@ -809,8 +812,6 @@ export function useFeedPipeline({
         console.log(`[Curation] Processed ${curatedFeed.length} posts (all posts, including dropped)`)
       }
 
-      const feedWithEditions = await insertEditionPosts(curatedFeed)
-
       const feedReceivedTime = initialLastPostTime
 
       let filteredPosts: CurationFeedViewPost[]
@@ -820,7 +821,7 @@ export function useFeedPipeline({
         const showAllPosts = fetchSettings2?.showAllPosts || false
         filteredPosts = filterSecondaryForDisplay(initialSecondaryEntries, curationSuspended, showAllPosts)
       } else {
-        filteredPosts = await lookupCurationAndFilter(feedWithEditions, feedReceivedTime)
+        filteredPosts = await lookupCurationAndFilter(curatedFeed, feedReceivedTime)
       }
 
       if (cursor) {
@@ -844,12 +845,12 @@ export function useFeedPipeline({
           console.log(`[Feed] Set oldestDisplayedPostTimestamp from displayed posts: ${new Date(oldestDisplayedTimestamp).toISOString()} (from ${filteredPosts.length} displayed posts)`)
 
           if (!initialSecondaryEntries) {
-            const oldestFetchedTimestamp = feedWithEditions.length > 0
-              ? getFeedViewPostTimestamp(feedWithEditions[feedWithEditions.length - 1], feedReceivedTime).getTime()
+            const oldestFetchedTimestamp = curatedFeed.length > 0
+              ? getFeedViewPostTimestamp(curatedFeed[curatedFeed.length - 1], feedReceivedTime).getTime()
               : undefined
             if (oldestFetchedTimestamp !== undefined) {
               await updateFeedCacheOldestPostTimestamp(oldestFetchedTimestamp)
-              console.log(`[Feed] Updated oldestCachedPostTimestamp in metadata to oldest fetched post: ${new Date(oldestFetchedTimestamp).toISOString()} (from ${feedWithEditions.length} fetched posts, ${filteredPosts.length} displayed)`)
+              console.log(`[Feed] Updated oldestCachedPostTimestamp in metadata to oldest fetched post: ${new Date(oldestFetchedTimestamp).toISOString()} (from ${curatedFeed.length} fetched posts, ${filteredPosts.length} displayed)`)
             }
           }
 
@@ -1346,10 +1347,9 @@ export function useFeedPipeline({
     }
   }, [agent, session, dbInitialized, isLoadingMore, activeTab, newestDisplayedPostTimestamp, lookupCurationAndFilter, prefetchPrevPage])
 
-  // Clear all caches and trigger fresh initial load
+  // Clear all time-variant data and logout
   const clearCacheAndReloadHomePage = useCallback(async () => {
     console.log('[Debug] clearCacheAndReloadHomePage: Starting...')
-
     try {
       sessionStorage.removeItem(getFeedStateKey('curated'))
       sessionStorage.removeItem(getScrollStateKey('curated'))
@@ -1358,59 +1358,11 @@ export function useFeedPipeline({
       sessionStorage.removeItem(HOME_TAB_STATE_KEY)
       console.log('[Debug] Cleared sessionStorage')
 
-      const database = await initDB()
-
-      const summariesTx = database.transaction(['post_summaries'], 'readwrite')
-      await new Promise<void>((resolve, reject) => {
-        const req = summariesTx.objectStore('post_summaries').clear()
-        req.onsuccess = () => resolve()
-        req.onerror = () => reject(req.error)
-      })
-      console.log('[Debug] Cleared summaries cache')
-
-      const feedTx = database.transaction(['feed_cache'], 'readwrite')
-      await new Promise<void>((resolve, reject) => {
-        const req = feedTx.objectStore('feed_cache').clear()
-        req.onsuccess = () => resolve()
-        req.onerror = () => reject(req.error)
-      })
-      console.log('[Debug] Cleared feed_cache')
-
-      const metaTx = database.transaction(['feed_metadata'], 'readwrite')
-      await new Promise<void>((resolve, reject) => {
-        const req = metaTx.objectStore('feed_metadata').clear()
-        req.onsuccess = () => resolve()
-        req.onerror = () => reject(req.error)
-      })
-      console.log('[Debug] Cleared feed_metadata')
-
-      setFeed([])
-      setCursor(undefined)
-      setServerCursor(undefined)
-      setHasMorePosts(false)
-      setPreviousPageFeed([])
-      setIsLoading(true)
-      setIsInitialLoad(true)
-      setInitialPrefetchDone(false)
-      setNewestDisplayedPostTimestamp(null)
-      setOldestDisplayedPostTimestamp(null)
-      setNewPostsCount(0)
-      setShowNewPostsButton(false)
-      setLookingBack(false)
-      setLookbackProgress(null)
-      console.log('[Debug] Reset React state')
-
-      isInitialCurationRef.current = true
-      console.log('[Debug] Set isInitialCurationRef to true for modal display')
-
-      console.log('[Debug] Triggering fresh loadFeed with useCache=false...')
-      await loadFeed(undefined, false)
-      console.log('[Debug] clearCacheAndReloadHomePage: Complete!')
-
+      await clearAllTimeVariantDataAndLogout()
     } catch (error) {
       console.error('[Debug] clearCacheAndReloadHomePage failed:', error)
     }
-  }, [loadFeed])
+  }, [])
 
   // Reset feed only (preserve summaries)
   const resetFeedAndReloadHomePage = useCallback(async () => {
@@ -1556,14 +1508,30 @@ export function useFeedPipeline({
     const probeInProgressRef = { current: null as number | null }
     const PROBE_STALE_MS = 5 * 60 * 1000
 
+    let rateLimitLoggedRef = false
+
     const checkForNewPosts = async () => {
+      const { quietMode } = await getSettings()
+
+      if (isRateLimited()) {
+        if (!rateLimitLoggedRef) {
+          if (!quietMode) console.log(`[Paged Updates] Rate limited, pausing probes (${Math.round(getTimeUntilClear())}s remaining)`)
+          rateLimitLoggedRef = true
+        }
+        return
+      }
+      if (rateLimitLoggedRef) {
+        if (!quietMode) console.log('[Paged Updates] Rate limit cleared, resuming probes')
+        rateLimitLoggedRef = false
+      }
+
       if (probeInProgressRef.current !== null) {
         const elapsed = clientNow() - probeInProgressRef.current
         if (elapsed < PROBE_STALE_MS) {
-          console.log('[Paged Updates] Skipping probe — previous probe still in progress')
+          if (!quietMode) console.log('[Paged Updates] Skipping probe — previous probe still in progress')
           return
         }
-        console.log(`[Paged Updates] Previous probe stale (${Math.round(elapsed / 1000)}s), starting new probe`)
+        if (!quietMode) console.log(`[Paged Updates] Previous probe stale (${Math.round(elapsed / 1000)}s), starting new probe`)
       }
 
       const currentTimestamp = newestDisplayedPostTimestamp
@@ -1582,7 +1550,7 @@ export function useFeedPipeline({
 
         const pageRaw = calculatePageRaw(pageSize * 3, currentFilterFrac, varFactor)
 
-        console.log(`[Paged Updates] Probing for new posts (filterFrac=${currentFilterFrac.toFixed(2)}, pageRaw=${pageRaw}, newestDisplayed=${new Date(currentTimestamp).toLocaleTimeString()}, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'})...`)
+        if (!quietMode) console.log(`[Paged Updates] Probing for new posts (filterFrac=${currentFilterFrac.toFixed(2)}, pageRaw=${pageRaw}, newestDisplayed=${new Date(currentTimestamp).toLocaleTimeString()}, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'})...`)
 
         const probeResult = await probeForNewPosts(
           agent,
@@ -1594,7 +1562,7 @@ export function useFeedPipeline({
 
         const rawNewestTime = probeResult.rawNewestTimestamp > 0 ? new Date(probeResult.rawNewestTimestamp).toLocaleTimeString() : 'N/A'
         const rawOldestTime = probeResult.rawOldestTimestamp < Number.MAX_SAFE_INTEGER ? new Date(probeResult.rawOldestTimestamp).toLocaleTimeString() : 'N/A'
-        console.log(`[Paged Updates] Probe result: ${probeResult.filteredPostCount}/${pageSize} displayable posts (${probeResult.totalPostCount} processed, ${probeResult.rawPostCount} raw, rawNewest=${rawNewestTime}, rawOldest=${rawOldestTime})`)
+        if (!quietMode) console.log(`[Paged Updates] Probe result: ${probeResult.filteredPostCount}/${pageSize} displayable posts (${probeResult.totalPostCount} processed, ${probeResult.rawPostCount} raw, rawNewest=${rawNewestTime}, rawOldest=${rawOldestTime})`)
 
         probeExpectedCountRef.current = probeResult.filteredPostCount
 
@@ -1604,17 +1572,17 @@ export function useFeedPipeline({
         const isForceProbe = forceProbeRef.current
         if (isForceProbe) {
           forceProbeRef.current = false
-          console.log('[Paged Updates] Force-probe: bypassing cooldown')
+          if (!quietMode) console.log('[Paged Updates] Force-probe: bypassing cooldown')
         }
         const inCooldown = !isForceProbe && clientNow() - lastDisplayTimeRef.current < DISPLAY_COOLDOWN_MS
         if (inCooldown) {
-          console.log(`[Paged Updates] In cooldown (${Math.round((DISPLAY_COOLDOWN_MS - (clientNow() - lastDisplayTimeRef.current)) / 1000)}s remaining), skipping button updates`)
+          if (!quietMode) console.log(`[Paged Updates] In cooldown (${Math.round((DISPLAY_COOLDOWN_MS - (clientNow() - lastDisplayTimeRef.current)) / 1000)}s remaining), skipping button updates`)
           return
         }
 
         if (hasMultiplePages) {
           setMultiPageCount(probeResult.filteredPostCount)
-          console.log(`[Paged Updates] Multi-page detected: ${probeResult.filteredPostCount} posts (${probeResult.pageCount} pages)`)
+          if (!quietMode) console.log(`[Paged Updates] Multi-page detected: ${probeResult.filteredPostCount} posts (${probeResult.pageCount} pages)`)
         }
         // Don't reset multiPageCount to 0 — once multi-page is detected,
         // keep it sticky until an explicit load action resets it.
@@ -1624,7 +1592,7 @@ export function useFeedPipeline({
         if (nextPageReadyRef.current) {
           setNewPostsCount(probeResult.filteredPostCount)
           setPartialPageCount(probeResult.filteredPostCount)
-          console.log(`[Paged Updates] Next Page already ready, skipping button state update (${probeResult.filteredPostCount} posts available)`)
+          if (!quietMode) console.log(`[Paged Updates] Next Page already ready, skipping button state update (${probeResult.filteredPostCount} posts available)`)
           return
         }
 
@@ -1653,11 +1621,11 @@ export function useFeedPipeline({
         setShowNewPostsButton(isReady)
 
         if (isPartialPage) {
-          console.log(`[Paged Updates] Partial page ready (boundary alignment): ${probeResult.filteredPostCount} posts (need ${postsToNextBoundary} to reach next boundary)`)
+          if (!quietMode) console.log(`[Paged Updates] Partial page ready (boundary alignment): ${probeResult.filteredPostCount} posts (need ${postsToNextBoundary} to reach next boundary)`)
         } else if (hasFullPage) {
-          console.log(`[Paged Updates] Full page ready: ${probeResult.filteredPostCount} posts`)
+          if (!quietMode) console.log(`[Paged Updates] Full page ready: ${probeResult.filteredPostCount} posts`)
         } else {
-          console.log(`[Paged Updates] Partial page: ${probeResult.filteredPostCount}/${pageSize} posts (idle timer will handle "All new posts" button)`)
+          if (!quietMode) console.log(`[Paged Updates] Partial page: ${probeResult.filteredPostCount}/${pageSize} posts (idle timer will handle "All new posts" button)`)
         }
       } catch (error) {
         console.warn('[Paged Updates] Probe error:', error)
@@ -1670,9 +1638,10 @@ export function useFeedPipeline({
 
     const interval = clientInterval(checkForNewPosts, 60000)
 
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (!document.hidden) {
-        console.log('[Paged Updates] Page became visible, triggering immediate probe')
+        const { quietMode: qm } = await getSettings()
+        if (!qm) console.log('[Paged Updates] Page became visible, triggering immediate probe')
         checkForNewPosts()
       }
     }
@@ -1691,7 +1660,22 @@ export function useFeedPipeline({
       return
     }
 
+    let idleLoggedWhileRateLimited = false
+
     const checkIdleTime = async () => {
+      const { quietMode } = await getSettings()
+
+      if (isRateLimited()) {
+        if (!idleLoggedWhileRateLimited) {
+          if (!quietMode) console.log('[Idle Timer] Paused during rate limit')
+          idleLoggedWhileRateLimited = true
+        }
+        return
+      }
+      if (idleLoggedWhileRateLimited) {
+        idleLoggedWhileRateLimited = false
+      }
+
       const pagedSettings = await getPagedUpdatesSettings()
       const fullPageWaitMs = pagedSettings.fullPageWaitMinutes * 60 * 1000
 
@@ -1699,7 +1683,7 @@ export function useFeedPipeline({
 
       if (timeSinceTopPost >= fullPageWaitMs && partialPageCount > 0) {
         setIdleTimerTriggered(true)
-        console.log(`[Idle Timer] Triggered: ${Math.round(timeSinceTopPost / 60000)} min elapsed, ${partialPageCount} posts available`)
+        if (!quietMode) console.log(`[Idle Timer] Triggered: ${Math.round(timeSinceTopPost / 60000)} min elapsed, ${partialPageCount} posts available`)
       } else {
         setIdleTimerTriggered(false)
       }

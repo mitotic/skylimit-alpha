@@ -11,6 +11,7 @@ import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import EngagementList from '../components/EngagementList'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 // Scroll state preservation constant for thread pages
 const WEBSKY_THREAD_SCROLL_POSITION = 'websky_thread_scroll_position'
@@ -111,8 +112,12 @@ export default function ThreadPage() {
 
       // Check if we should show compose (from query param)
       if (searchParams.get('reply') === 'true') {
-        setReplyToUri(decodedUri)
-        setShowCompose(true)
+        if (isReadOnlyMode()) {
+          addToast('Disable Read-only mode in Settings to do this', 'error')
+        } else {
+          setReplyToUri(decodedUri)
+          setShowCompose(true)
+        }
       }
     } catch (error) {
       console.error('Failed to load thread:', error)
@@ -324,6 +329,7 @@ export default function ThreadPage() {
 
   const handleLike = async (uri: string, cid: string) => {
     if (!agent || !thread) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     // Capture original state BEFORE any updates
     const originalLikeUri = thread.post.viewer?.like
@@ -377,6 +383,7 @@ export default function ThreadPage() {
 
   const handleBookmark = async (uri: string, cid: string) => {
     if (!agent || !thread) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     // Check if it's the anchor post or a reply
     const isAnchorPost = thread.post.uri === uri
@@ -457,6 +464,7 @@ export default function ThreadPage() {
 
   const handleRepost = async (uri: string, cid: string) => {
     if (!agent || !thread) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     // Capture original state BEFORE any updates
     const originalRepostUri = thread.post.viewer?.repost
@@ -509,12 +517,14 @@ export default function ThreadPage() {
   }
 
   const handleQuotePost = (post: AppBskyFeedDefs.PostView) => {
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
     setQuotePost(post)
     setReplyToUri(null)
     setShowCompose(true)
   }
 
   const handleReply = (uri: string) => {
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
     setReplyToUri(uri)
     setQuotePost(null)
     setShowCompose(true)
@@ -522,6 +532,7 @@ export default function ThreadPage() {
 
   const handlePost = async (text: string, replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string }, quotePost?: AppBskyFeedDefs.PostView) => {
     if (!agent || !thread) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     if (quotePost) {
       await createQuotePost(agent, {

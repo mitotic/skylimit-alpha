@@ -3,7 +3,7 @@
  */
 
 import { BskyAgent, AppBskyGraphGetFollows } from '@atproto/api'
-import { FollowInfo } from './types'
+import { FollowInfo, MIN_AMP_FACTOR, MAX_AMP_FACTOR } from './types'
 import { getAllFollows, saveFollow, getFilter } from './skylimitCache'
 import { recomputeProbabilities } from './skylimitStats'
 import { getSettings } from './skylimitStore'
@@ -204,6 +204,25 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
 }
 
 /**
+ * Snap an amp factor to the nearest integral power of √2,
+ * fixing floating-point precision drift from repeated √2 multiplications.
+ * For factor >= 1: square it, round to nearest integer, take sqrt.
+ *   This works because (√2)^n squared is 2^n, always an integer.
+ * For factor < 1: snap the reciprocal, then invert.
+ * Even powers of √2 (i.e. powers of 2) come out as exact integers.
+ */
+function snapAmpFactor(factor: number): number {
+  if (factor >= 1) {
+    const squared = factor * factor
+    return Math.sqrt(Math.round(squared))
+  } else {
+    const reciprocal = 1 / factor
+    const squared = reciprocal * reciprocal
+    return 1 / Math.sqrt(Math.round(squared))
+  }
+}
+
+/**
  * Update amplification factor for a follow
  */
 export async function updateAmplificationFactor(
@@ -212,9 +231,9 @@ export async function updateAmplificationFactor(
 ): Promise<void> {
   const follows = await getAllFollows()
   const follow = follows.find(f => f.username === username)
-  
+
   if (follow) {
-    follow.amp_factor = Math.max(0.125, Math.min(8.0, factor))
+    follow.amp_factor = Math.max(MIN_AMP_FACTOR, Math.min(MAX_AMP_FACTOR, snapAmpFactor(factor)))
     follow.amp_factor_changed_at = clientNow()
     await saveFollow(follow)
   }
@@ -233,27 +252,29 @@ async function recomputeAfterAmpChange(myUsername: string): Promise<void> {
 }
 
 /**
- * Amp up a follow (multiply by √2, approximately +41%)
+ * Amp up a follow (×2 when below 1, ×√2 otherwise)
  */
 export async function ampUp(username: string, myUsername: string): Promise<void> {
   const follows = await getAllFollows()
   const follow = follows.find(f => f.username === username)
 
   if (follow) {
-    await updateAmplificationFactor(username, follow.amp_factor * Math.SQRT2)
+    const multiplier = follow.amp_factor < 1 ? 2 : Math.SQRT2
+    await updateAmplificationFactor(username, follow.amp_factor * multiplier)
     await recomputeAfterAmpChange(myUsername)
   }
 }
 
 /**
- * Amp down a follow (divide by √2, approximately -29%)
+ * Amp down a follow (÷2 when at or below 1, ÷√2 otherwise)
  */
 export async function ampDown(username: string, myUsername: string): Promise<void> {
   const follows = await getAllFollows()
   const follow = follows.find(f => f.username === username)
 
   if (follow) {
-    await updateAmplificationFactor(username, follow.amp_factor / Math.SQRT2)
+    const divisor = follow.amp_factor <= 1 ? 2 : Math.SQRT2
+    await updateAmplificationFactor(username, follow.amp_factor / divisor)
     await recomputeAfterAmpChange(myUsername)
   }
 }

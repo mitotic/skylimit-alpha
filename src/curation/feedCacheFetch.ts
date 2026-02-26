@@ -6,7 +6,6 @@ import { AppBskyFeedDefs, BskyAgent } from '@atproto/api'
 import {
   getPostSummary,
   isInPrimaryCache,
-  saveEditionPost,
   getFilter,
   getAllFollows,
   savePostsToPrimaryCache,
@@ -32,6 +31,10 @@ import {
   DEFAULT_PAGE_LENGTH,
   MAX_FETCH_ITERATIONS,
 } from './feedCacheCore'
+import {
+  tryCreateEdition,
+} from './skylimitEditionAssembly'
+import { getParsedEditions, EDITION_PRE_OFFSET_MS } from './skylimitEditions'
 
 /**
  * Save posts to feed cache AND curate them (save summaries)
@@ -100,9 +103,9 @@ export async function curateEntriesToSecondary(
       summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
       summary.curation_status = curationResult.curation_status
       summary.curation_msg = curationResult.curation_msg
-      if (curationResult.curation_save) {
-        summary.curation_save = curationResult.curation_save
-      }
+      if (curationResult.edition_tag) summary.edition_tag = curationResult.edition_tag
+      if (curationResult.edition_pattern) summary.edition_pattern = curationResult.edition_pattern
+      if (curationResult.edition_status) summary.edition_status = curationResult.edition_status
     }
     result.push({ entry, summary })
     addToRepostIndex(repostIndex, summary)
@@ -763,9 +766,9 @@ export async function fetchToSecondaryFeedCache(
         summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
         summary.curation_status = curationResult.curation_status
         summary.curation_msg = curationResult.curation_msg
-        if (curationResult.curation_save) {
-          summary.curation_save = curationResult.curation_save
-        }
+        if (curationResult.edition_tag) summary.edition_tag = curationResult.edition_tag
+        if (curationResult.edition_pattern) summary.edition_pattern = curationResult.edition_pattern
+        if (curationResult.edition_status) summary.edition_status = curationResult.edition_status
       }
 
       // Append to in-memory array and update repost index
@@ -832,6 +835,73 @@ export interface TransferResult {
 }
 
 /**
+ * Compute a UTC timestamp for an edition HH:MM on the calendar day of a
+ * reference timestamp, with an optional day offset (0 = same day, 1 = next day).
+ * Edition times are expressed in the configured timezone.
+ */
+function computeEditionTimestampForDay(
+  editionTime: string,
+  referenceDayTimestamp: number,
+  timezone?: string,
+  dayOffset: number = 0
+): number {
+  const [hours, minutes] = editionTime.split(':').map(Number)
+  const refDate = new Date(referenceDayTimestamp)
+
+  if (timezone) {
+    // Get the calendar date in the configured timezone
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    })
+    const parts = formatter.formatToParts(refDate)
+    const year = parseInt(parts.find(p => p.type === 'year')!.value)
+    const month = parseInt(parts.find(p => p.type === 'month')!.value) - 1
+    const day = parseInt(parts.find(p => p.type === 'day')!.value) + dayOffset
+
+    // Note: Date.UTC and Intl.DateTimeFormat are real-time APIs, but they're
+    // used here purely for calendar/timezone math on the input timestamp —
+    // no reference to "now". The referenceDayTimestamp is already in client-time
+    // space (accelerated timestamps from Skyspeed flow through the cache), and
+    // these APIs correctly map any UTC ms value to the right calendar date/time
+    // in the configured timezone, regardless of clock acceleration.
+
+    // Start with a UTC guess: "HH:MM UTC on this calendar day"
+    const utcGuess = Date.UTC(year, month, day, hours, minutes, 0, 0)
+
+    // Check what time the configured TZ shows at this UTC moment
+    const tzParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric', minute: 'numeric', hour12: false,
+    }).formatToParts(new Date(utcGuess))
+    const tzHour = parseInt(tzParts.find(p => p.type === 'hour')!.value) % 24
+    const tzMin = parseInt(tzParts.find(p => p.type === 'minute')!.value)
+
+    // Difference = how far off the guess is from the desired time in the configured TZ
+    let diffMs = ((tzHour - hours) * 60 + (tzMin - minutes)) * 60_000
+    // Normalize for wrap-around (e.g., timezones far from UTC)
+    if (diffMs > 12 * 3600_000) diffMs -= 24 * 3600_000
+    if (diffMs < -12 * 3600_000) diffMs += 24 * 3600_000
+    // If configured TZ shows a later time than desired, UTC guess is too late → subtract
+    return utcGuess - diffMs
+  }
+
+  // No configured timezone: use browser local time
+  return new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate() + dayOffset, hours, minutes, 0, 0).getTime()
+}
+
+const LAST_CREATED_EDITION_KEY = 'lastCreatedEditionTimestamp'
+
+function isEditionAlreadyCreated(editionTimestamp: number): boolean {
+  const stored = localStorage.getItem(LAST_CREATED_EDITION_KEY)
+  return stored !== null && parseInt(stored) === editionTimestamp
+}
+
+function markEditionCreated(editionTimestamp: number): void {
+  localStorage.setItem(LAST_CREATED_EDITION_KEY, String(editionTimestamp))
+}
+
+/**
  * Transfer in-memory secondary entries to primary cache with numbering.
  *
  * Processes entries oldest-first:
@@ -867,8 +937,8 @@ export async function transferSecondaryToPrimary(
   // Initialize numbering from the day of the oldest entry (unless skipping)
   const settings = await getSettings()
   const timezone = settings.timezone
-  const oldestTimestamp = sorted[0].entry.postTimestamp
-  let currentDayStart = getLocalMidnight(new Date(oldestTimestamp), timezone).getTime()
+  const oldestEntryTimestamp = sorted[0].entry.postTimestamp
+  let currentDayStart = getLocalMidnight(new Date(oldestEntryTimestamp), timezone).getTime()
   let currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
   let postNumber = 0
   let curationNumber = 0
@@ -876,6 +946,46 @@ export async function transferSecondaryToPrimary(
     const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
     postNumber = dayNumbers.maxPostNumber
     curationNumber = dayNumbers.maxCurationNumber
+  }
+
+  // --- Edition assembly setup ---
+  // Get newest primary cache timestamp for edition gap detection
+  const metadata = await getLastFetchMetadata()
+  let newestPrimaryTimestamp = metadata?.newestCachedPostTimestamp ?? null
+  console.log(`${label} newestPrimaryTimestamp=${newestPrimaryTimestamp !== null ? new Date(newestPrimaryTimestamp).toLocaleString() + ' (from metadata)' : 'null (no metadata)'}`)
+
+  // Initialize edition state
+  const parsedEditions = await getParsedEditions()
+
+  // If primary cache is empty, use oldest secondary entry as the reference point
+  if (newestPrimaryTimestamp === null) {
+    newestPrimaryTimestamp = oldestEntryTimestamp
+    console.log(`${label} Primary cache empty, using oldest entry as reference: ${new Date(oldestEntryTimestamp).toLocaleString()}`)
+  }
+
+  const newestEntryTimestamp = sorted[sorted.length - 1].entry.postTimestamp
+
+  // Find all pending editions between newestPrimaryTimestamp and newestEntryTimestamp
+  const pendingEditions: Array<{ editionNumber: number; editionTime: string; editionTimestamp: number }> = []
+  const editionTimes = parsedEditions.editions
+    .filter(e => e.editionNumber !== 0)
+    .sort((a, b) => a.time.localeCompare(b.time))
+
+  let pastRange = false
+  for (let dayOffset = 0; dayOffset <= 1 && !pastRange; dayOffset++) {
+    for (const edition of editionTimes) {
+      const editionTimestamp = computeEditionTimestampForDay(edition.time, newestPrimaryTimestamp, timezone, dayOffset)
+      if (editionTimestamp >= newestEntryTimestamp) { pastRange = true; break }
+      if (isEditionAlreadyCreated(editionTimestamp)) continue
+      if (editionTimestamp < newestPrimaryTimestamp - EDITION_PRE_OFFSET_MS) continue
+      pendingEditions.push({ editionNumber: edition.editionNumber, editionTime: edition.time, editionTimestamp })
+    }
+  }
+  // Sort pending editions oldest-first for correct processing order
+  pendingEditions.sort((a, b) => a.editionTimestamp - b.editionTimestamp)
+  console.log(`${label} Transferring ${sorted.length} entries: oldest=${new Date(oldestEntryTimestamp).toLocaleString()}, newest=${new Date(newestEntryTimestamp).toLocaleString()}`)
+  if (pendingEditions.length > 0) {
+    console.log(`${label} Edition timestamps to check: ${pendingEditions.map(p => `${p.editionTime} (${new Date(p.editionTimestamp).toLocaleString()}, ts=${p.editionTimestamp})`).join(', ')}`)
   }
 
   // Collect entries to write
@@ -893,6 +1003,142 @@ export async function transferSecondaryToPrimary(
   let newestTransferredTimestamp: number | null = null
   let oldestTransferredTimestamp: number | null = null
 
+  // --- Edition pre-processing: find gaps and create editions before transfer ---
+  // Extract in-memory summaries for tryCreateEdition. On initial load, held posts
+  // aren't in IndexedDB yet — they're only in the sorted entries being transferred.
+  const inMemorySummaries = sorted.map(s => s.summary)
+
+  let tempLastCreatedEditionTimestamp: number | null = null
+  const now = clientNow()
+  const STALENESS_MS = 48 * 60 * 60 * 1000
+
+  for (const pending of pendingEditions) {
+    // Check lead time window (now >= editionTimestamp - 15 min)
+    if (now < pending.editionTimestamp - EDITION_PRE_OFFSET_MS) {
+      console.log(`[Transfer/edition] ${pending.editionTime} SKIPPED: lead time not met (now=${new Date(now).toLocaleString()}, earliest=${new Date(pending.editionTimestamp - EDITION_PRE_OFFSET_MS).toLocaleString()})`)
+      continue
+    }
+
+    // Check staleness (edition must be within 48 hours of now)
+    const ageMs = now - pending.editionTimestamp
+    if (ageMs > STALENESS_MS) {
+      console.log(`[Transfer/edition] ${pending.editionTime} SKIPPED: edition too old (${Math.round(ageMs / 3600000)}h ago)`)
+      continue
+    }
+
+    // Find the best gap for this edition.
+    // Scan consecutive entry pairs starting 15 min before edition time.
+    // Prefer the gap closest to edition time without exceeding it.
+    // If none found before, use the next gap found after.
+    const searchStart = pending.editionTimestamp - EDITION_PRE_OFFSET_MS
+    let bestGapIdx = -1        // index of the entry AFTER the best gap (before edition time)
+    let bestGapBeforeTs = 0    // timestamp of the entry before the gap
+    let fallbackGapIdx = -1    // first gap found at or after edition time
+    let fallbackGapBeforeTs = 0
+
+    for (let i = 0; i < sorted.length; i++) {
+      const entryTs = sorted[i].entry.postTimestamp
+      if (entryTs < searchStart) continue
+
+      // Get the previous timestamp: either the previous entry, or newestPrimaryTimestamp
+      const prevTs = i > 0 ? sorted[i - 1].entry.postTimestamp : newestPrimaryTimestamp
+      if (prevTs === null) continue
+
+      const gap = entryTs - prevTs
+      if (gap < 1000) continue // need >= 1 second gap
+
+      if (entryTs <= pending.editionTimestamp) {
+        // Gap is before edition time — track the closest one
+        bestGapIdx = i
+        bestGapBeforeTs = prevTs
+      } else if (fallbackGapIdx === -1) {
+        // First gap at or after edition time — fallback
+        fallbackGapIdx = i
+        fallbackGapBeforeTs = prevTs
+      }
+
+      // If we found a fallback, stop scanning (we have the best pre-edition gap or the first post-edition gap)
+      if (fallbackGapIdx !== -1) break
+    }
+
+    // Choose the gap to use
+    let gapIdx: number
+    let gapBeforeTs: number
+    if (bestGapIdx !== -1) {
+      gapIdx = bestGapIdx
+      gapBeforeTs = bestGapBeforeTs
+    } else if (fallbackGapIdx !== -1) {
+      gapIdx = fallbackGapIdx
+      gapBeforeTs = fallbackGapBeforeTs
+    } else {
+      console.log(`[Transfer/edition] ${pending.editionTime} (${new Date(pending.editionTimestamp).toLocaleString()}) SKIPPED: no suitable gap found`)
+      continue
+    }
+
+    const gapAfterTs = sorted[gapIdx].entry.postTimestamp
+    console.log(`[Transfer/edition] Gap found: ${pending.editionTime} (${new Date(pending.editionTimestamp).toLocaleString()}) between [${new Date(gapBeforeTs).toLocaleString()}, ${new Date(gapAfterTs).toLocaleString()}] (gap=${gapAfterTs - gapBeforeTs}ms)`)
+
+    // Determine the interval string from the entry at the gap
+    const gapInterval = sorted[gapIdx].entry.interval
+
+    // Create edition
+    const syntheticPosts = await tryCreateEdition(
+      pending.editionNumber,
+      pending.editionTime,
+      gapBeforeTs,
+      gapAfterTs,
+      inMemorySummaries
+    )
+
+    if (syntheticPosts.length > 0) {
+      // Insert synthetic posts into sorted array at the gap position
+      // They get timestamps starting at gapBeforeTs + 1ms with 1ms spacing
+      const syntheticEntries: typeof sorted[0][] = []
+      for (const syntheticPost of syntheticPosts) {
+        const insertTimestamp = getFeedViewPostTimestamp(syntheticPost).getTime()
+        const syntheticUniqueId = getPostUniqueId(syntheticPost)
+
+        const syntheticSummary: PostSummary = {
+          uniqueId: syntheticUniqueId,
+          cid: syntheticPost.post.cid,
+          username: syntheticPost.post.author.handle,
+          accountDid: syntheticPost.post.author.did,
+          tags: [],
+          repostCount: syntheticPost.post.repostCount ?? 0,
+          timestamp: new Date(insertTimestamp),
+          postTimestamp: insertTimestamp,
+          engaged: false,
+          curation_status: 'edition_publish_show',
+          curation_msg: syntheticPost.curation?.curation_msg,
+          edition_status: 'synthetic',
+          postNumber: null,
+          curationNumber: null,
+        }
+
+        syntheticEntries.push({
+          entry: {
+            uniqueId: syntheticUniqueId,
+            post: syntheticPost,
+            timestamp: insertTimestamp,
+            postTimestamp: insertTimestamp,
+            interval: gapInterval,
+            cachedAt: clientNow(),
+            originalPost: syntheticPost as any,
+          },
+          summary: syntheticSummary,
+        })
+      }
+
+      // Insert synthetic entries into sorted array at gapIdx position
+      sorted.splice(gapIdx, 0, ...syntheticEntries)
+
+      console.log(`[Transfer/edition] Injected ${syntheticPosts.length} synthetic edition posts`)
+    }
+
+    tempLastCreatedEditionTimestamp = pending.editionTimestamp
+  }
+
+  // --- Main transfer loop ---
   for (const { entry, summary } of sorted) {
     // In 'page' mode, stop when we have enough displayable posts
     if (transferMode === 'page' && displayableCount >= pageLength) {
@@ -951,10 +1197,8 @@ export async function transferSecondaryToPrimary(
       oldestTransferredTimestamp = entry.postTimestamp
     }
 
-    // Save edition post if needed
-    if (summary.curation_save) {
-      await saveEditionPost(entry.post.post.uri, entry.post, summary.curation_save)
-    }
+    // Update running newest primary timestamp as entries are processed
+    newestPrimaryTimestamp = Math.max(newestPrimaryTimestamp ?? 0, entry.postTimestamp)
   }
 
   // Batch write to primary cache
@@ -962,6 +1206,11 @@ export async function transferSecondaryToPrimary(
 
   // Batch save summaries (numbers assigned inline unless skipNumbering)
   await savePostSummariesForce(summariesToSave)
+
+  // Commit lastCreatedEditionTimestamp after successful IndexedDB write
+  if (tempLastCreatedEditionTimestamp !== null) {
+    markEditionCreated(tempLastCreatedEditionTimestamp)
+  }
 
   // Update primary cache metadata
   await updateFeedCacheNewestPostTimestamp()

@@ -14,6 +14,7 @@ import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
 import ConfirmModal from '../components/ConfirmModal'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 type Tab = 'posts' | 'replies' | 'likes'
 
@@ -150,6 +151,10 @@ export default function ProfilePage() {
 
   const handleFollow = async () => {
     if (!agent || !profile) return
+    if (isReadOnlyMode()) {
+      addToast('Disable Read-only mode in Settings to do this', 'error')
+      return
+    }
 
     try {
       if (profile.viewer?.following) {
@@ -167,6 +172,7 @@ export default function ProfilePage() {
 
   const handleLike = async (uri: string, cid: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     const post = feed.find(p => p.post.uri === uri)
     if (!post) return
@@ -229,6 +235,7 @@ export default function ProfilePage() {
 
   const handleBookmark = async (uri: string, cid: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     const post = feed.find(p => p.post.uri === uri)
     if (!post) return
@@ -275,6 +282,7 @@ export default function ProfilePage() {
 
   const handleRepost = async (uri: string, cid: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     const post = feed.find(p => p.post.uri === uri)
     if (!post) return
@@ -336,12 +344,14 @@ export default function ProfilePage() {
   }
 
   const handleQuotePost = (post: AppBskyFeedDefs.PostView) => {
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
     setQuotePost(post)
     setShowCompose(true)
   }
 
   const handlePost = async (text: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     if (quotePost) {
       await createQuotePost(agent, {
@@ -399,7 +409,7 @@ export default function ProfilePage() {
             </div>
             {isOwnProfile ? (
               <Button
-                variant="secondary"
+                variant="danger"
                 onClick={() => setShowLogoutModal(true)}
               >
                 Logout
@@ -408,6 +418,7 @@ export default function ProfilePage() {
               <Button
                 variant={profile.viewer?.following ? "secondary" : "primary"}
                 onClick={handleFollow}
+                className={isReadOnlyMode() ? 'opacity-50 cursor-not-allowed' : ''}
               >
                 {profile.viewer?.following ? 'Following' : 'Follow'}
               </Button>

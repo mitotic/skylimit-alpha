@@ -4,12 +4,10 @@
 
 import { BskyAgent } from '@atproto/api'
 import { curateSinglePost } from './skylimitFilter'
-import { getFilter, getAllFollows, savePostSummaries, saveEditionPost, getEditionPosts, clearEditionPosts, getPostSummary } from './skylimitCache'
+import { getFilter, getAllFollows, savePostSummaries, getPostSummary } from './skylimitCache'
 import { createPostSummary } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { scheduleCleanup } from './skylimitCleanup'
-import { clientDate } from '../utils/clientClock'
-import { getTimeInTimezone } from '../utils/timezoneUtils'
 import { CurationFeedViewPost, PostSummary, FeedCacheEntryWithPost, CurationResult } from './types'
 
 /**
@@ -92,13 +90,19 @@ export async function curatePosts(
       summary.curation_status = curation.curation_status
       summary.curation_msg = curation.curation_msg
 
+      // Store edition fields if present
+      if (curation.edition_tag) {
+        summary.edition_tag = curation.edition_tag
+      }
+      if (curation.edition_pattern) {
+        summary.edition_pattern = curation.edition_pattern
+      }
+      if (curation.edition_status) {
+        summary.edition_status = curation.edition_status
+      }
+
       // Add to list of new summaries to save
       newSummaries.push(summary)
-
-      // Save for edition if needed (only for newly curated posts)
-      if (curation.curation_save) {
-        await saveEditionPost(post.post.uri, post, curation.curation_save)
-      }
     }
 
     // Create curated post (include ALL posts, even dropped ones)
@@ -123,71 +127,4 @@ export async function curatePosts(
   return result
 }
 
-/**
- * Insert edition posts into timeline
- */
-export async function insertEditionPosts(
-  posts: CurationFeedViewPost[],
-  editionTime?: Date
-): Promise<CurationFeedViewPost[]> {
-  const { getEditionTimeStrs } = await import('./skylimitGeneral')
-  const editionTimeStrs = await getEditionTimeStrs()
-  if (editionTimeStrs.length === 0) {
-    return posts
-  }
-  
-  // Check if it's time to show an edition (using stored timezone)
-  const now = editionTime || clientDate()
-  const settings = await getSettings()
-  const nowTime = settings?.timezone
-    ? getTimeInTimezone(now, settings.timezone)
-    : `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-  
-  if (!editionTimeStrs.includes(nowTime)) {
-    return posts
-  }
-  
-  // Get edition posts
-  const editionPosts = await getEditionPosts()
-  if (editionPosts.length === 0) {
-    return posts
-  }
-  
-  // Create edition marker post
-  const editionMarker: CurationFeedViewPost = {
-    post: {
-      uri: `edition-${nowTime}`,
-      cid: '',
-      author: {
-        did: '',
-        handle: 'edition',
-        displayName: `Edition ${nowTime}`,
-      },
-      record: {
-        text: `📰 Edition ${nowTime}`,
-        createdAt: now.toISOString(),
-      },
-      likeCount: 0,
-      replyCount: 0,
-      repostCount: 0,
-    },
-    curation: {
-      curation_edition: true,
-    },
-  } as any
-  
-  // Insert edition posts (convert to FeedViewPost format)
-  const editionFeedPosts: CurationFeedViewPost[] = editionPosts.map((p: any) => ({
-    post: p.post || p,
-    reason: p.reason,
-    curation: { curation_edition: true },
-  }))
-  
-  const result = [editionMarker, ...editionFeedPosts, ...posts]
-  
-  // Clear edition posts after displaying
-  await clearEditionPosts()
-  
-  return result
-}
 

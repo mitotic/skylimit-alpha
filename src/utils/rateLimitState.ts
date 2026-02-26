@@ -3,7 +3,7 @@
  * Tracks when we're rate limited to pause periodic operations
  */
 
-import { clientNow, clientTimeout } from './clientClock'
+// Use real clock for rate limiting — accelerated clock is not designed for rate limit behavior
 
 interface RateLimitState {
   isRateLimited: boolean
@@ -23,12 +23,12 @@ export function updateRateLimitState(retryAfter?: number): void {
   globalRateLimitState = {
     isRateLimited: true,
     retryAfter,
-    lastRateLimitTime: clientNow(),
+    lastRateLimitTime: Date.now(),
   }
   
   // Auto-clear after retry-after time (or 60 seconds if not specified)
   const clearAfter = (retryAfter || 60) * 1000
-  clientTimeout(() => {
+  setTimeout(() => {
     globalRateLimitState.isRateLimited = false
   }, clearAfter)
 }
@@ -50,14 +50,14 @@ export function isRateLimited(): boolean {
   
   // Check if retry-after time has passed
   if (globalRateLimitState.retryAfter) {
-    const elapsed = (clientNow() - globalRateLimitState.lastRateLimitTime) / 1000
+    const elapsed = (Date.now() - globalRateLimitState.lastRateLimitTime) / 1000
     if (elapsed >= globalRateLimitState.retryAfter) {
       globalRateLimitState.isRateLimited = false
       return false
     }
   } else {
     // If no retry-after, assume 60 seconds
-    const elapsed = (clientNow() - globalRateLimitState.lastRateLimitTime) / 1000
+    const elapsed = (Date.now() - globalRateLimitState.lastRateLimitTime) / 1000
     if (elapsed >= 60) {
       globalRateLimitState.isRateLimited = false
       return false
@@ -75,7 +75,7 @@ export function getTimeUntilClear(): number {
     return 0
   }
   
-  const elapsed = (clientNow() - globalRateLimitState.lastRateLimitTime) / 1000
+  const elapsed = (Date.now() - globalRateLimitState.lastRateLimitTime) / 1000
   const retryAfter = globalRateLimitState.retryAfter || 60
   return Math.max(0, retryAfter - elapsed)
 }

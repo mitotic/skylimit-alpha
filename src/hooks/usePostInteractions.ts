@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 interface UsePostInteractionsParams {
   agent: BskyAgent | null
@@ -17,8 +18,10 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
   const [replyToUri, setReplyToUri] = useState<string | null>(null)
   const [quotePost, setQuotePost] = useState<AppBskyFeedDefs.PostView | null>(null)
 
+
   const handleLike = useCallback(async (uri: string, cid: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     const post = feed.find(p => p.post.uri === uri)
     if (!post) return
@@ -94,6 +97,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
 
   const handleBookmark = useCallback(async (uri: string, cid: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     const post = feed.find(p => p.post.uri === uri)
     if (!post) return
@@ -140,6 +144,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
 
   const handleRepost = useCallback(async (uri: string, cid: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     const post = feed.find(p => p.post.uri === uri)
     if (!post) return
@@ -214,16 +219,18 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
   }, [agent, feed, setFeed, addToast])
 
   const handleQuotePost = useCallback((post: AppBskyFeedDefs.PostView) => {
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
     setQuotePost(post)
     setReplyToUri(null)
     setShowCompose(true)
-  }, [])
+  }, [addToast])
 
   const handleReply = useCallback((uri: string) => {
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
     setReplyToUri(uri)
     setQuotePost(null)
     setShowCompose(true)
-  }, [])
+  }, [addToast])
 
   const handlePost = useCallback(async (
     text: string,
@@ -232,6 +239,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
     images?: Array<{ image: Blob; alt: string }>
   ) => {
     if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
     if (quotePostArg) {
       await createQuotePost(agent, {

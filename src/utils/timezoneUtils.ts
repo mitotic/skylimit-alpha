@@ -5,6 +5,8 @@
  * with the client clock system (clientDate()/clientNow()).
  */
 
+import { clientDate } from './clientClock'
+
 /**
  * Get midnight (00:00:00) in a specific timezone for the calendar date
  * that `date` falls on in that timezone.
@@ -66,7 +68,25 @@ export function getTimeInTimezone(date: Date, timezone: string): string {
   const parts = formatter.formatToParts(date)
   const hour = parts.find(p => p.type === 'hour')!.value
   const minute = parts.find(p => p.type === 'minute')!.value
-  return `${hour}:${minute}`
+  const timeStr = `${hour}:${minute}`
+
+  // Add day-of-week prefix for posts not from today
+  const dateFmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  })
+  const postDate = dateFmt.format(date)
+  const nowDate = dateFmt.format(clientDate())
+
+  if (postDate !== nowDate) {
+    const weekday = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'short'
+    }).format(date)
+    return `${weekday} ${timeStr}`
+  }
+
+  return timeStr
 }
 
 /**

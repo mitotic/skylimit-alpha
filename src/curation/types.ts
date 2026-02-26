@@ -5,9 +5,6 @@ export const MOTD_TAG = 'motd'
 export const MOTW_TAG = 'motw'
 export const MOTM_TAG = 'motm'
 export const MOT_TAGS = [MOTD_TAG, MOTW_TAG, MOTM_TAG]
-export const MOTX_TAG = 'motx'
-export const DIGEST_TAG = 'digest'
-export const NODIGEST_TAG = 'nodigest'
 export const PRIORITY_TAG = 'priority'
 
 // Curation status type - always ends in '_show' or '_drop'
@@ -19,7 +16,9 @@ export type CurationStatus =
   | 'regular_drop'     // Regular post fails probability filter
   | 'reply_drop'       // Unfollowed reply dropped
   | 'repost_drop'      // Repost/original shown within interval
-  | 'edition_drop'     // Post saved for edition digest
+  | 'edition_post_drop'    // Post matched edition pattern, held for edition
+  | 'edition_publish_drop' // Edition repost dropped (shouldn't normally occur)
+  | 'edition_publish_show' // Edition repost shown
   | 'untracked_show'   // User not tracked - shown by default
   | 'temp_show'        // Temporary show during initial lookback (before stats computed)
   | 'self_show'        // User's own post - always shown
@@ -38,13 +37,20 @@ export function isStatusDrop(status: CurationStatus | undefined): boolean {
   return status !== undefined && status.endsWith('_drop')
 }
 
+/**
+ * Check if a curation status is an edition publish status (skip in numbering)
+ */
+export function isEditionPublishStatus(status: CurationStatus | undefined): boolean {
+  return status !== undefined && status.startsWith('edition_publish_')
+}
+
 // Keys for user profile metadata
 export const USER_TOPICS_KEY = 'topics'
 export const USER_TIMEZONE_KEY = 'timezone'
 
 // Amplification factor limits
-export const MAX_AMP_FACTOR = 8.0
-export const MIN_AMP_FACTOR = 0.125
+export const MAX_AMP_FACTOR = 32.0
+export const MIN_AMP_FACTOR = 1/32  // 0.03125
 
 // Analysis period settings - default interval (used as fallback)
 const DEFAULT_INTERVAL_HOURS = 2
@@ -151,7 +157,7 @@ export interface GlobalStats {
 /**
  * Per-user curation statistics and probabilities.
  *
- * Amplification Factor (amp_factor): A per-user multiplier (0.125 to 8.0)
+ * Amplification Factor (amp_factor): A per-user multiplier (1/32 to 32.0)
  * that increases or decreases visibility of posts from specific accounts.
  * Higher values = more posts shown from that user.
  */
@@ -208,8 +214,10 @@ export interface PostSummary {
   // Text fields for search capability
   postText?: string             // Main post text content
   quotedText?: string           // Text from quoted/embedded post (if any)
-  // Edition save section (from CurationResult, for deferred edition saving)
-  curation_save?: string
+  // Edition fields
+  edition_tag?: string          // Edition pattern tag (e.g., "1.a.00b")
+  edition_pattern?: string      // Matched pattern string (e.g., "@user*: #tech") for debugging
+  edition_status?: string       // "hold" | "published"
   // View tracking
   viewedAt?: number             // Client time timestamp (ms via clientNow()) when the post was first viewed in the viewport
 }
@@ -236,8 +244,10 @@ export interface CurationResult {
   curation_status?: CurationStatus
   curation_msg?: string
   curation_edition?: boolean
-  curation_save?: string
   curation_id?: string
+  edition_tag?: string
+  edition_pattern?: string
+  edition_status?: string
 }
 
 /**
@@ -267,14 +277,6 @@ export interface PostStats {
   repostCount: number            // Original repost count from post metadata
 }
 
-export interface EditionLayout {
-  [key: string]: {
-    section: string
-    tag?: string
-    index: number
-  }
-}
-
 export interface SkylimitSettings {
   viewsPerDay: number
   showTime: boolean
@@ -282,7 +284,6 @@ export interface SkylimitSettings {
   curationSuspended: boolean
   daysOfData: number
   secretKey: string
-  editionTimes: string
   editionLayout: string
   anonymizeUsernames: boolean
   debugMode: boolean
@@ -305,6 +306,7 @@ export interface SkylimitSettings {
   // Reply handling settings
   hideUnfollowedReplies?: boolean // Hide all replies to non-followees, default false
   showViewedStatus?: boolean // Show viewed-post visual indicators (checkmark, gradient, unviewed count), default true
+  quietMode?: boolean // Suppress [Paged Updates] and [Idle Timer] console logs, default false
   timezone?: string // Stored timezone for consistent day boundaries (e.g., "America/New_York")
   lastBrowserTimezone?: string // Browser timezone when user last saved/confirmed timezone setting
 }
@@ -316,8 +318,8 @@ export interface CurationMetadata {
   curation_status?: CurationStatus
   curation_msg?: string
   curation_edition?: boolean
-  curation_save?: string
   curation_id?: string
+  edition_status?: string
   // Number fields to avoid IndexedDB lookups in PostCard
   postNumber?: number | null
   curationNumber?: number | null

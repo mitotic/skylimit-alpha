@@ -26,8 +26,140 @@ interface AccountStatistics {
   isSelf: boolean
 }
 
-type SortField = 'username' | 'postsPerDay' | 'shownPerDay' | 'probability' | 'name'
+type SortField = 'username' | 'postsPerDay' | 'shownPerDay' | 'probability' | 'amp' | 'name'
 type SortDirection = 'asc' | 'desc'
+
+interface ChartDataPoint {
+  index: number
+  username: string
+  normalizedDaily: number
+  actualDaily: number
+  allowedShowRate: number
+}
+
+function CurationChart({ data, highlightUsername }: { data: ChartDataPoint[], highlightUsername?: string | null }) {
+  const margin = { top: 20, right: 2, bottom: 40, left: 28 }
+  const width = 640
+  const height = 300
+  const plotW = width - margin.left - margin.right
+  const plotH = height - margin.top - margin.bottom
+
+  const xMax = data.length
+  const yMin = 1 // log scale floor (avoid log(0))
+  const allValues = data.flatMap(d => [d.normalizedDaily, d.actualDaily, d.allowedShowRate]).filter(v => v > 0)
+  const yMaxData = Math.max(...allValues, 1)
+  const logMin = Math.log(yMin)
+  const logMax = Math.log(Math.max(yMaxData * 1.1, 100, yMin + 1))
+
+  const xScale = (i: number) => margin.left + ((i - 1) / Math.max(xMax - 1, 1)) * plotW
+  const yScale = (v: number) => {
+    const clamped = Math.max(v, yMin)
+    return margin.top + plotH - ((Math.log(clamped) - logMin) / (logMax - logMin)) * plotH
+  }
+
+  // Y-axis ticks: fixed labels, data may overflow above 100
+  const yTicks = [2, 3, 5, 10, 20, 30, 40, 60, 100]
+
+  // X-axis ticks: round numbers (~8 ticks)
+  const xRawStep = xMax / 8
+  const xMag = Math.pow(10, Math.floor(Math.log10(xRawStep || 1)))
+  const xNorm = xRawStep / xMag
+  const xNiceStep = xNorm <= 1 ? xMag : xNorm <= 2 ? 2 * xMag : xNorm <= 5 ? 5 * xMag : 10 * xMag
+  const xTicks: number[] = []
+  for (let i = Math.max(xNiceStep, 1); i <= xMax; i += xNiceStep || 1) xTicks.push(Math.round(i))
+
+  // Polyline points for normalized daily rate
+  const normalizedPoints = data.map(d => `${xScale(d.index)},${yScale(d.normalizedDaily)}`).join(' ')
+
+  return (
+    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+      <h3 className="text-lg font-semibold mb-2">Curation Rate Distribution</h3>
+      <svg viewBox={`-12 0 ${width + 12} ${height}`} width="100%" className="max-h-[250px]">
+        {/* Grid lines */}
+        {yTicks.map(v => (
+          <line key={`grid-${v}`} x1={margin.left} x2={width - margin.right}
+            y1={yScale(v)} y2={yScale(v)}
+            className="stroke-gray-200 dark:stroke-gray-700" strokeWidth={0.5} />
+        ))}
+
+        {/* Y-axis */}
+        <line x1={margin.left} x2={margin.left}
+          y1={margin.top} y2={margin.top + plotH}
+          className="stroke-gray-400 dark:stroke-gray-500" strokeWidth={1} />
+        {yTicks.map(v => (
+          <text key={`y-${v}`} x={margin.left - 6} y={yScale(v) + 5}
+            textAnchor="end" fontSize={13}
+            className="fill-gray-600 dark:fill-gray-400">{v}</text>
+        ))}
+        <text x={-8} y={margin.top + plotH / 2}
+          textAnchor="middle" fontSize={13} transform={`rotate(-90, -8, ${margin.top + plotH / 2})`}
+          className="fill-gray-600 dark:fill-gray-400">Posts / day</text>
+
+        {/* X-axis */}
+        <line x1={margin.left} x2={width - margin.right}
+          y1={margin.top + plotH} y2={margin.top + plotH}
+          className="stroke-gray-400 dark:stroke-gray-500" strokeWidth={1} />
+        {xTicks.map(i => (
+          <text key={`x-${i}`} x={xScale(i)} y={margin.top + plotH + 18}
+            textAnchor="middle" fontSize={13}
+            className="fill-gray-600 dark:fill-gray-400">{i}</text>
+        ))}
+        <text x={margin.left + plotW / 2} y={height - 2}
+          textAnchor="middle" fontSize={13}
+          className="fill-gray-600 dark:fill-gray-400">Followee (sorted by normalized rate)</text>
+
+        {/* Normalized daily rate - line */}
+        <polyline points={normalizedPoints} fill="none"
+          className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
+
+        {/* Posting rate - solid triangles (amber) */}
+        {data.map(d => {
+          const cx = xScale(d.index)
+          const cy = yScale(d.actualDaily)
+          const s = 3
+          const points = `${cx},${cy - s} ${cx - s},${cy + s} ${cx + s},${cy + s}`
+          return (
+            <polygon key={`actual-${d.index}`} points={points}
+              className="fill-amber-500 dark:fill-amber-400" />
+          )
+        })}
+
+        {/* Show rate - filled circles (green) */}
+        {data.map(d => (
+          <circle key={`allowed-${d.index}`} cx={xScale(d.index)} cy={yScale(d.allowedShowRate)}
+            r={3} className="fill-green-600 dark:fill-green-400" />
+        ))}
+
+        {/* Legend */}
+        <line x1={margin.left + 10} x2={margin.left + 28} y1={margin.top + 8} y2={margin.top + 8}
+          className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
+        <text x={margin.left + 32} y={margin.top + 13} fontSize={13}
+          className="fill-gray-700 dark:fill-gray-300">Normalized rate</text>
+
+        <polygon points={`${margin.left + 19},${margin.top + 21} ${margin.left + 15},${margin.top + 28} ${margin.left + 23},${margin.top + 28}`}
+          className="fill-amber-500 dark:fill-amber-400" />
+        <text x={margin.left + 32} y={margin.top + 29} fontSize={13}
+          className="fill-gray-700 dark:fill-gray-300">Posting rate</text>
+
+        <circle cx={margin.left + 19} cy={margin.top + 40} r={3.5}
+          className="fill-green-600 dark:fill-green-400" />
+        <text x={margin.left + 32} y={margin.top + 45} fontSize={13}
+          className="fill-gray-700 dark:fill-gray-300">Show rate</text>
+
+        {/* Highlight vertical line for selected user */}
+        {highlightUsername && (() => {
+          const point = data.find(d => d.username === highlightUsername)
+          if (!point) return null
+          const x = xScale(point.index)
+          return (
+            <line x1={x} x2={x} y1={margin.top} y2={margin.top + plotH}
+              className="stroke-red-500 dark:stroke-red-400" strokeWidth={1.5} strokeDasharray="4 3" />
+          )
+        })()}
+      </svg>
+    </div>
+  )
+}
 
 export default function SkylimitStatistics() {
   const { session } = useSession()
@@ -325,6 +457,26 @@ export default function SkylimitStatistics() {
     }
   }
 
+  // Chart data: users sorted by normalized daily rate ascending
+  const chartData = useMemo(() => {
+    if (!accountStats.length || !stats) return null
+
+    const users = accountStats.filter(a => !a.isSelf && !a.isHashtag && a.postsPerDay > 0)
+    const sorted = [...users].sort((a, b) => {
+      const normA = a.userEntry.total_daily / (a.amplificationFactor || 1)
+      const normB = b.userEntry.total_daily / (b.amplificationFactor || 1)
+      return normA - normB
+    })
+
+    return sorted.map((a, i) => ({
+      index: i + 1,
+      username: a.username,
+      normalizedDaily: a.userEntry.total_daily / (a.amplificationFactor || 1),
+      actualDaily: a.userEntry.total_daily,
+      allowedShowRate: stats.skylimit_number * (a.amplificationFactor || 1),
+    }))
+  }, [accountStats, stats])
+
   // Sorted account stats
   const sortedAccountStats = useMemo(() => {
     return [...accountStats].sort((a, b) => {
@@ -345,6 +497,9 @@ export default function SkylimitStatistics() {
         }
         case 'probability':
           comparison = a.displayProbability - b.displayProbability
+          break
+        case 'amp':
+          comparison = a.amplificationFactor - b.amplificationFactor
           break
         case 'name': {
           const nameA = a.followInfo?.displayName || a.username
@@ -475,6 +630,11 @@ export default function SkylimitStatistics() {
         </div>
       </div>
 
+      {/* Curation Rate Distribution Chart */}
+      {chartData && chartData.length > 0 && (
+        <CurationChart data={chartData} highlightUsername={showPopup} />
+      )}
+
       {/* Active Followee Statistics Table */}
       <div className="w-full">
         <h3 className="text-lg font-semibold mb-1">Active Followees</h3>
@@ -492,6 +652,12 @@ export default function SkylimitStatistics() {
                 </th>
                 <th
                   className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
+                  onClick={() => handleSort('amp')}
+                >
+                  Amp{getSortIndicator('amp')}
+                </th>
+                <th
+                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
                   onClick={() => handleSort('postsPerDay')}
                 >
                   Posts{getSortIndicator('postsPerDay')}
@@ -500,7 +666,7 @@ export default function SkylimitStatistics() {
                   className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
                   onClick={() => handleSort('shownPerDay')}
                 >
-                  Shown{getSortIndicator('shownPerDay')}
+                  Show{getSortIndicator('shownPerDay')}
                 </th>
                 <th
                   className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
@@ -596,16 +762,12 @@ export default function SkylimitStatistics() {
                         {account.isSelf && <span className="text-gray-500 dark:text-gray-400 ml-1">(self)</span>}
                       </div>
                     </td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">{formatPostCount(account.postsPerDay)}</td>
-                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
-                      {formatPostCount(shownPerDay)}
-                    </td>
                     <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm relative">
                       <button
                         onClick={handleProbabilityClick}
                         className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                       >
-                        {formatPercentage(probabilityPercent)}%{account.followInfo?.amp_factor_changed_at && (clientNow() - account.followInfo.amp_factor_changed_at < 7 * 24 * 60 * 60 * 1000) ? '*' : ''}
+                        {account.amplificationFactor >= 1 ? account.amplificationFactor.toFixed(1) : account.amplificationFactor.toFixed(2)}{account.followInfo?.amp_factor_changed_at && (clientNow() - account.followInfo.amp_factor_changed_at < 7 * 24 * 60 * 60 * 1000) ? '*' : ''}
                       </button>
                       {isPopupOpen && (
                         <CurationPopup
@@ -640,6 +802,13 @@ export default function SkylimitStatistics() {
                           onClose={() => setShowPopup(null)}
                         />
                       )}
+                    </td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">{formatPostCount(account.postsPerDay)}</td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
+                      {formatPostCount(shownPerDay)}
+                    </td>
+                    <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
+                      {formatPercentage(probabilityPercent)}%
                     </td>
                     <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
                       <div className="max-w-[120px] truncate" title={name}>{name}</div>

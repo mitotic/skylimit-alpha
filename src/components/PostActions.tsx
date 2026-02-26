@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import RepostMenu from './RepostMenu'
 import { getBlueSkyPostUrl } from '../curation/skylimitGeneral'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 interface PostActionsProps {
   post: AppBskyFeedDefs.PostView
@@ -28,6 +29,7 @@ export default function PostActions({
   const [showCopied, setShowCopied] = useState(false)
   const repostButtonRef = useRef<HTMLButtonElement>(null)
 
+
   const replyCount = post.replyCount ?? 0
   const repostCount = post.repostCount ?? 0
   const likeCount = post.likeCount ?? 0
@@ -37,6 +39,7 @@ export default function PostActions({
 
   const handleReplyClick = (e: React.MouseEvent) => {
     e.stopPropagation()
+    if (isReadOnlyMode()) { onReply?.(post.uri); return }
     onReply?.(post.uri)
     if (post.uri) {
       const encodedUri = encodeURIComponent(post.uri)
@@ -46,6 +49,7 @@ export default function PostActions({
 
   const handleRepostClick = (e: React.MouseEvent) => {
     e.stopPropagation()
+    if (isReadOnlyMode()) { onRepost?.(post.uri, post.cid); return }
     if (repostButtonRef.current) {
       setShowRepostMenu(true)
     }

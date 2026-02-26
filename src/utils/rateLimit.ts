@@ -4,7 +4,7 @@
 
 import { throttleRequest } from './requestThrottle'
 import { updateRateLimitState, clearRateLimitState } from './rateLimitState'
-import { clientNow, clientTimeout } from './clientClock'
+// Rate limiting uses real clock — accelerated clock is not designed for rate limit behavior
 
 /** Real wall-clock time as hh:mm:ss for log prefixes */
 function realTime(): string {
@@ -124,7 +124,7 @@ export function getRetryAfter(error: RateLimitError): number | undefined {
   // Try parsing as date
   const date = new Date(String(retryAfter))
   if (!isNaN(date.getTime())) {
-    const secondsUntil = Math.max(0, Math.ceil((date.getTime() - clientNow()) / 1000))
+    const secondsUntil = Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
     if (secondsUntil > 0) {
       console.log(`[Rate Limit ${realTime()}] Found retry-after date: ${secondsUntil}s until clear`)
       return secondsUntil
@@ -155,7 +155,7 @@ export function getRateLimitInfo(error: unknown): RateLimitInfo {
  * Sleep for specified milliseconds
  */
 export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => clientTimeout(resolve, ms))
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 /**

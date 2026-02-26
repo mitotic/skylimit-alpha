@@ -135,6 +135,7 @@ if (urlParams.has('server')) {
 
   if (serverParam === '') {
     // Empty ?server= resets to default (bsky.social)
+    localStorage.removeItem('websky_login_debug_mode')
     console.log('[Server] Resetting to default server (bsky.social)')
     if (previousServer) {
       // Server is changing from non-standard back to default - need reset

@@ -9,6 +9,14 @@ vi.mock('date-fns', () => ({
   formatDistance: () => '2 hours ago',
 }))
 
+// Mock useTheme
+vi.mock('../../contexts/ThemeContext', () => ({
+  useTheme: () => ({
+    theme: 'light',
+    toggleTheme: vi.fn(),
+  }),
+}))
+
 // Mock react-router-dom navigate
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async () => {

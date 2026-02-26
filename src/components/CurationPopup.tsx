@@ -185,13 +185,18 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       {/* Amp buttons */}
       {showAmpButtons && (
         <div className="px-3 py-1.5 leading-snug">
-          {skylimitNumber !== undefined && ampFactor !== undefined && (
-            <div className="text-sm font-semibold">
-              Guaranteed posts shown: {(skylimitNumber * ampFactor).toFixed(1)}/day
-            </div>
-          )}
+          {skylimitNumber !== undefined && ampFactor !== undefined && (() => {
+            const postsPerDay = skylimitNumber * ampFactor;
+            return (
+              <div className="text-sm font-semibold">
+                Guaranteed posts shown: {postsPerDay < 0.5
+                  ? `${(postsPerDay * 7).toFixed(1)}/week`
+                  : `${postsPerDay.toFixed(1)}/day`}
+              </div>
+            );
+          })()}
           <div className="text-sm font-semibold mb-1">
-            Amplification Factor: {ampFactor !== undefined ? ampFactor.toFixed(1) : '1.0'}
+            Amplification Factor: {ampFactor !== undefined ? (ampFactor < 1 ? ampFactor.toFixed(2) : ampFactor.toFixed(1)) : '1.0'}
           </div>
           <div className="flex gap-2">
             <button

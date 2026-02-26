@@ -10,6 +10,7 @@ import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import AggregatedNotificationComponent from '../components/AggregatedNotification'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 type Notification = AppBskyNotificationListNotifications.Notification
 
@@ -227,11 +228,15 @@ export default function NotificationsPage() {
         setNotifications(prev => [...prev, ...notificationsWithPosts])
       } else {
         setNotifications(notificationsWithPosts)
-        // Mark notifications as seen when first loading
-        try {
-          await updateSeenNotifications(agent, new Date().toISOString())
-        } catch (error) {
-          console.warn('Failed to mark notifications as seen:', error)
+        // Mark notifications as seen when first loading (skip in read-only mode)
+        if (isReadOnlyMode()) {
+          console.warn('Read-only mode: skipping updateSeenNotifications')
+        } else {
+          try {
+            await updateSeenNotifications(agent, new Date().toISOString())
+          } catch (error) {
+            console.warn('Failed to mark notifications as seen:', error)
+          }
         }
       }
 

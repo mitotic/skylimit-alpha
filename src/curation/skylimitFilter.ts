@@ -11,9 +11,6 @@ import {
   FollowInfo,
   MOTD_TAG,
   MOT_TAGS,
-  MOTX_TAG,
-  DIGEST_TAG,
-  NODIGEST_TAG,
   PRIORITY_TAG,
   MOTD_MIN_SKYLIMIT_NUMBER,
   USER_TOPICS_KEY,
@@ -32,8 +29,6 @@ import {
 import { saveFollow, wasRepostOrOriginalDisplayedWithinInterval } from './skylimitCache'
 import { clientNow } from '../utils/clientClock'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
-
-const DIGEST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000  // 7 days - posts within this window are digestible
 
 /**
  * Count total posts per day for a user entry.
@@ -109,6 +104,31 @@ export async function curateSinglePost(
     return modStatus
   }
 
+  // Edition matching runs before stats check — posts must be held during initial lookback
+  // so they're available when transferSecondaryToPrimary assembles editions
+  const editionEligible = editionCount > 0 &&
+    !summary.repostUri &&
+    !summary.inReplyToUri
+
+  if (editionEligible) {
+    const { getParsedEditions } = await import('./skylimitEditions')
+    const { matchPost } = await import('./skylimitEditionMatcher')
+    const parsedEditions = await getParsedEditions()
+    const { getSettings: getSettingsForTz } = await import('./skylimitStore')
+    const settingsForTz = await getSettingsForTz()
+
+    const editionMatch = matchPost(summary, parsedEditions, settingsForTz?.timezone)
+    if (editionMatch) {
+      modStatus.curation_status = 'edition_post_drop'
+      modStatus.edition_tag = editionMatch.editionTag
+      modStatus.edition_pattern = editionMatch.editionPattern
+      modStatus.edition_status = 'hold'
+      modStatus.curation_msg = `[Dropped edition hold [${editionMatch.editionTag}] ${editionMatch.editionPattern}]`
+      console.log(`[Edition/DEBUG] Hold: @${summary.username} post=${new Date(summary.postTimestamp).toLocaleString()} tag=${editionMatch.editionTag} pattern="${editionMatch.editionPattern}"`)
+      return modStatus
+    }
+  }
+
   // If no stats/probs available, use temp_show during initial lookback
   // Posts will be re-curated once stats are computed
   if (!currentProbs || !currentStats) {
@@ -123,20 +143,10 @@ export async function curateSinglePost(
     return modStatus
   }
   
-  const { getEditionLayout } = await import('./skylimitGeneral')
-  const editionLayout = await getEditionLayout()
   // Use FeedViewPost timestamp (repost time for reposts, creation time for originals)
   const statusTime = getFeedViewPostTimestamp(post)
-  
-  // Check if post is digestible (not a repost, not a reply, not too old)
-  const digestible = editionCount > 0 && 
-    !summary.repostUri && 
-    !summary.inReplyToUri && 
-    !summary.tags.includes(NODIGEST_TAG) &&
-    (statusTime.getTime() >= (clientNow() - DIGEST_WINDOW_MS))
-  
+
   let handledStatus = ''
-  let userSave = ''
   
   if (summary.username in currentProbs) {
     // Currently tracking user
@@ -301,21 +311,6 @@ export async function curateSinglePost(
           modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
           if (regularDrop) dropReason = 'random (regular)'
         }
-      }
-    }
-
-    // Check if should save for edition (only for shown posts)
-    if (modStatus.curation_status?.endsWith('_show') && digestible) {
-      const editionUser = editionLayout[summary.username] || null
-      if (editionUser && (!editionUser.tag || summary.tags.includes(editionUser.tag) || (motxAccept && editionUser.tag === MOTX_TAG))) {
-        userSave = editionUser.section
-      } else if (motxAccept && summary.tags.includes(DIGEST_TAG)) {
-        userSave = '#' + MOTX_TAG
-      }
-      if (userSave) {
-        modStatus.curation_status = 'edition_drop'
-        modStatus.curation_save = userSave
-        dropReason = 'saved for edition ' + userSave
       }
     }
 

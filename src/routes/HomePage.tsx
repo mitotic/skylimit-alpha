@@ -15,12 +15,13 @@ import { getBrowserTimezone, timezonesAreDifferent } from '../utils/timezoneUtil
 import { fetchToSecondaryFeedCache, transferSecondaryToPrimary, getCachedFeedAfterPosts } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost } from '../curation/types'
-import { countUnviewedOlderThan, getUnviewedPostsInfo, onUnviewedChange } from '../curation/skylimitUnviewedTracker'
+import { countUnviewedOlderThan, countUnviewedYesterdayOlderThan, getUnviewedPostsInfo, getUnviewedPostsYesterdayInfo, onUnviewedChange } from '../curation/skylimitUnviewedTracker'
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import InstallHelp from '../components/InstallHelp'
 import { clientNow, clientDate } from '../utils/clientClock'
 import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, FAST_FORWARD_CHUNK_SIZE, SavedFeedState, findLowestVisiblePostTimestamp } from '../hooks/homePageTypes'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 import { usePostInteractions } from '../hooks/usePostInteractions'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { usePullToRefresh } from '../hooks/usePullToRefresh'
@@ -800,11 +801,36 @@ export default function HomePage() {
     if (boundary === 0) return null
     if (totalUnviewed === 0) return null
     if (!oldestDisplayedPostTimestamp) {
-      return `${totalUnviewed} unread posts below, for today`
+      return `${totalUnviewed} unread posts below (today)`
     }
     const below = countUnviewedOlderThan(oldestDisplayedPostTimestamp)
     if (below === 0) return null
-    return `${below} unread posts below, for today`
+    return `${below} unread posts below (today)`
+  }, [previousPageFeed, oldestDisplayedPostTimestamp, feed, unviewedRevision, showViewedStatus])
+
+  // Compute label for unviewed posts from yesterday
+  const prevPageUnviewedYesterdayLabel: string | null = useMemo(() => {
+    if (!showViewedStatus) return null
+    if (previousPageFeed.length === 0) return null
+    const { count: totalUnviewed, boundary } = getUnviewedPostsYesterdayInfo()
+    if (boundary === 0) return null
+    if (totalUnviewed === 0) return null
+    // Only show yesterday label once user has scrolled past today's posts
+    const { boundary: todayBoundary } = getUnviewedPostsInfo()
+    if (todayBoundary > 0 && (!oldestDisplayedPostTimestamp || oldestDisplayedPostTimestamp > todayBoundary)) {
+      // Exception: if oldest displayed post is curation #1, we've reached
+      // the bottom of today's posts — show yesterday label
+      const oldestPost = feed[feed.length - 1] as CurationFeedViewPost | undefined
+      if (!oldestPost || oldestPost.curation?.curationNumber !== 1) {
+        return null
+      }
+    }
+    if (!oldestDisplayedPostTimestamp) {
+      return `${totalUnviewed} unread posts below (yesterday)`
+    }
+    const below = countUnviewedYesterdayOlderThan(oldestDisplayedPostTimestamp)
+    if (below === 0) return null
+    return `${below} unread posts below (yesterday)`
   }, [previousPageFeed, oldestDisplayedPostTimestamp, feed, unviewedRevision, showViewedStatus])
 
   // Handle tab change
@@ -931,6 +957,11 @@ export default function HomePage() {
                 <li>Posts are numbered, starting at midnight. Click on the post number to adjust whether you want to see more (or fewer) posts from that poster.</li>
                 <li>You can see posting and curation statistics for all those you follow in <em>Settings/Following</em>.</li>
               </ul>
+              {isReadOnlyMode() && (
+                <p className="text-red-600 dark:text-red-400 mt-2">
+                  Skylimit is running in a read-only mode that will not modify your Bluesky state/configuration. You can disable it in Settings.
+                </p>
+              )}
             </div>
             <button
               onClick={() => {
@@ -1220,10 +1251,11 @@ export default function HomePage() {
                     </>
                   )}
                 </button>
-                {prevPageUnviewedLabel && (
-                  <span className="text-sm text-gray-500 dark:text-gray-400">
-                    {prevPageUnviewedLabel}
-                  </span>
+                {(prevPageUnviewedLabel || prevPageUnviewedYesterdayLabel) && (
+                  <div className="flex flex-col text-sm text-gray-500 dark:text-gray-400">
+                    {prevPageUnviewedLabel && <span>{prevPageUnviewedLabel}</span>}
+                    {prevPageUnviewedYesterdayLabel && <span>{prevPageUnviewedYesterdayLabel}</span>}
+                  </div>
                 )}
               </>
             ) : !isLoading && feed.length > 0 ? (
@@ -1264,11 +1296,20 @@ export default function HomePage() {
       {/* Floating compose button in bottom right (only for curated tab) */}
       {activeTab === 'curated' && (
         <button
-          onClick={() => setShowCompose(true)}
+          onClick={() => {
+            if (isReadOnlyMode()) {
+              addToast('Disable Read-only mode in Settings to do this', 'error')
+              return
+            }
+            setShowCompose(true)
+          }}
           className="fixed bottom-20 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
           aria-label="Compose new post"
         >
           <span className="text-2xl">✏️</span>
+          {isReadOnlyMode() && (
+            <span className="absolute inset-0 flex items-center justify-center text-red-500 text-6xl font-thin pointer-events-none -mt-1">&times;</span>
+          )}
         </button>
       )}
 

@@ -13,7 +13,6 @@ const DB_VERSION = 9 // Increment version: migrated summaries to post_summaries 
 const STORE_POST_SUMMARIES = 'post_summaries'
 const STORE_FOLLOWS = 'follows'
 const STORE_FILTER = 'filter'
-const STORE_EDITIONS = 'editions'
 const STORE_SETTINGS = 'settings'
 export const STORE_PARENT_POSTS = 'parent_posts'
 export const STORE_FEED_CACHE_SECONDARY = 'feed_cache_secondary'
@@ -76,12 +75,6 @@ function openDB(): Promise<IDBDatabase> {
       // Filter store: single entry
       if (!database.objectStoreNames.contains(STORE_FILTER)) {
         database.createObjectStore(STORE_FILTER, { keyPath: 'id' })
-      }
-
-      // Editions store: indexed by section
-      if (!database.objectStoreNames.contains(STORE_EDITIONS)) {
-        const editionsStore = database.createObjectStore(STORE_EDITIONS, { keyPath: 'uri' })
-        editionsStore.createIndex('section', 'section', { unique: false })
       }
 
       // Settings store: single entry
@@ -163,6 +156,28 @@ export async function getDB(): Promise<IDBDatabase> {
     db = await initDB()
   }
   return db
+}
+
+/**
+ * Execute a function with a DB connection, auto-reconnecting on InvalidStateError.
+ * This handles the race condition where closeDB() (from React StrictMode cleanup)
+ * closes the connection while other components are trying to use it.
+ */
+export async function withDB<T>(fn: (db: IDBDatabase) => T): Promise<T> {
+  const database = await getDB()
+  try {
+    return fn(database)
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'InvalidStateError') {
+      // Connection was closing — force reconnect and retry once
+      db = null
+      pendingInit = null
+      const freshDb = await initDB()
+      db = freshDb
+      return fn(freshDb)
+    }
+    throw err
+  }
 }
 
 /**
@@ -757,47 +772,6 @@ export async function getFilterWithTimestamp(): Promise<[GlobalStats, UserFilter
 }
 
 /**
- * Save edition post
- */
-export async function saveEditionPost(uri: string, post: any, section: string): Promise<void> {
-  const database = await getDB()
-  const transaction = database.transaction([STORE_EDITIONS], 'readwrite')
-  const store = transaction.objectStore(STORE_EDITIONS)
-  await store.put({ uri, post, section, timestamp: clientNow() })
-}
-
-/**
- * Get edition posts for a section
- */
-export async function getEditionPosts(section?: string): Promise<any[]> {
-  const database = await getDB()
-  const transaction = database.transaction([STORE_EDITIONS], 'readonly')
-  const store = transaction.objectStore(STORE_EDITIONS)
-  
-  return new Promise((resolve, reject) => {
-    const request = section
-      ? store.index('section').getAll(section)
-      : store.getAll()
-    
-    request.onsuccess = () => {
-      const results = request.result || []
-      resolve(results.map(r => r.post))
-    }
-    request.onerror = () => reject(request.error)
-  })
-}
-
-/**
- * Clear edition posts
- */
-export async function clearEditionPosts(): Promise<void> {
-  const database = await getDB()
-  const transaction = database.transaction([STORE_EDITIONS], 'readwrite')
-  const store = transaction.objectStore(STORE_EDITIONS)
-  await store.clear()
-}
-
-/**
  * Remove old post summaries before a given timestamp
  * Uses the postTimestamp index for efficient deletion
  */
@@ -828,75 +802,38 @@ export async function removePostSummariesBefore(beforeTimestamp: number): Promis
 }
 
 /**
- * Remove old edition posts before a given timestamp
- */
-export async function removeOldEditionPosts(beforeTimestamp: number): Promise<number> {
-  const database = await getDB()
-  const transaction = database.transaction([STORE_EDITIONS], 'readwrite')
-  const store = transaction.objectStore(STORE_EDITIONS)
-  
-  return new Promise((resolve, reject) => {
-    const request = store.getAll()
-    request.onsuccess = () => {
-      const results = request.result || []
-      let deletedCount = 0
-      
-      // Delete all edition posts older than beforeTimestamp
-      const deletePromises = results
-        .filter(item => item.timestamp < beforeTimestamp)
-        .map(item => {
-          return new Promise<void>((resolveDelete, rejectDelete) => {
-            const deleteRequest = store.delete(item.uri)
-            deleteRequest.onsuccess = () => {
-              deletedCount++
-              resolveDelete()
-            }
-            deleteRequest.onerror = () => rejectDelete(deleteRequest.error)
-          })
-        })
-      
-      Promise.all(deletePromises)
-        .then(() => {
-          console.log(`Removed ${deletedCount} old edition posts before ${new Date(beforeTimestamp).toISOString()}`)
-          resolve(deletedCount)
-        })
-        .catch(reject)
-    }
-    request.onerror = () => reject(request.error)
-  })
-}
-
-/**
  * Save settings
  */
 export async function saveSettings(settings: any): Promise<void> {
-  const database = await getDB()
-  const transaction = database.transaction([STORE_SETTINGS], 'readwrite')
-  const store = transaction.objectStore(STORE_SETTINGS)
-  await store.put({ id: 'current', ...settings, timestamp: clientNow() })
+  await withDB(database => {
+    const transaction = database.transaction([STORE_SETTINGS], 'readwrite')
+    const store = transaction.objectStore(STORE_SETTINGS)
+    store.put({ id: 'current', ...settings, timestamp: clientNow() })
+  })
 }
 
 /**
  * Get settings
  */
 export async function getSettings(): Promise<any> {
-  const database = await getDB()
-  const transaction = database.transaction([STORE_SETTINGS], 'readonly')
-  const store = transaction.objectStore(STORE_SETTINGS)
-  
-  return new Promise((resolve, reject) => {
-    const request = store.get('current')
-    request.onsuccess = () => {
-      const result = request.result
-      if (result) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id, timestamp, ...settings } = result
-        resolve(settings)
-      } else {
-        resolve(null)
+  return withDB(database => {
+    const transaction = database.transaction([STORE_SETTINGS], 'readonly')
+    const store = transaction.objectStore(STORE_SETTINGS)
+
+    return new Promise((resolve, reject) => {
+      const request = store.get('current')
+      request.onsuccess = () => {
+        const result = request.result
+        if (result) {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { id, timestamp, ...settings } = result
+          resolve(settings)
+        } else {
+          resolve(null)
+        }
       }
-    }
-    request.onerror = () => reject(request.error)
+      request.onerror = () => reject(request.error)
+    })
   })
 }
 
@@ -1234,5 +1171,51 @@ export async function savePostSummariesForce(summaries: PostSummary[]): Promise<
 export function resetEverything(): void {
   console.log('[Reset] Redirecting to /?reset=1 for clean reset')
   window.location.href = '/?reset=1'
+}
+
+/**
+ * Clear all time-variant IndexedDB stores (post_summaries, feed_cache,
+ * feed_metadata, parent_posts, filter, follows), scrub lastBrowserTimezone
+ * from settings, clear the login session, and redirect to /login.
+ * Skylimit settings (viewsPerDay, editionLayout, etc.) are preserved.
+ */
+export async function clearAllTimeVariantDataAndLogout(): Promise<void> {
+  console.log('[Debug] clearAllTimeVariantDataAndLogout: Starting...')
+
+  const database = await getDB()
+
+  const storesToClear = [
+    'post_summaries', 'feed_cache', 'feed_metadata',
+    'parent_posts', 'filter', 'follows'
+  ]
+
+  for (const storeName of storesToClear) {
+    const tx = database.transaction([storeName], 'readwrite')
+    await new Promise<void>((resolve, reject) => {
+      const req = tx.objectStore(storeName).clear()
+      req.onsuccess = () => resolve()
+      req.onerror = () => reject(req.error)
+    })
+    console.log(`[Debug] Cleared ${storeName}`)
+  }
+
+  // Scrub lastBrowserTimezone from settings (saveSettings resets timestamp)
+  const { updateSettings } = await import('./skylimitStore')
+  await updateSettings({ lastBrowserTimezone: undefined })
+  console.log('[Debug] Scrubbed lastBrowserTimezone from settings')
+
+  // Clear edition tracking
+  localStorage.removeItem('lastCreatedEditionTimestamp')
+  console.log('[Debug] Cleared lastCreatedEditionTimestamp')
+
+  // Close DB so in-flight React effects get a fresh connection instead of a closing one
+  closeDB()
+  console.log('[Debug] Closed DB connection')
+
+  // Clear session and redirect to login
+  const { clearSession } = await import('../auth/session-storage')
+  clearSession()
+  console.log('[Debug] Cleared session, redirecting to /login')
+  window.location.href = '/login'
 }
 

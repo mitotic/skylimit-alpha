@@ -17,7 +17,6 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   curationSuspended: false,
   daysOfData: 30,
   secretKey: 'default',
-  editionTimes: '',
   editionLayout: '',
   anonymizeUsernames: false,
   debugMode: false,
@@ -28,6 +27,7 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   minFolloweeDayCount: 1, // minimum followee day count (debug setting)
   hideUnfollowedReplies: false, // hide all replies to non-followees, default false
   showViewedStatus: true, // show viewed-post visual indicators, default true
+  quietMode: false, // suppress [Paged Updates] and [Idle Timer] console logs
   repostDisplayIntervalHours: REPOST_DISPLAY_INTERVAL_DEFAULT, // hide reposts shown within this interval
 }
 
