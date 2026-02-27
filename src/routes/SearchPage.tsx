@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
@@ -63,12 +63,32 @@ export default function SearchPage() {
   const [isLoadingMoreLocal, setIsLoadingMoreLocal] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [isScrolledDown, setIsScrolledDown] = useState(false)
+  const [inputFocused, setInputFocused] = useState(false)
 
   // Refs for state preservation
   const scrollRestoredRef = useRef(false)
   const isProgrammaticScrollRef = useRef(false)
   const scrollSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isRestoringRef = useRef(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
+
+  // Whether to show an implicit wildcard asterisk after the search text
+  const showImplicitWildcard = useMemo(
+    () => activeTab === 'local' && inputFocused && query.length > 0 && /[a-zA-Z0-9]$/.test(query),
+    [activeTab, inputFocused, query]
+  )
+
+  // Sync overlay scroll with input scroll so asterisk stays visible on long text
+  useEffect(() => {
+    if (inputRef.current && overlayRef.current && showImplicitWildcard) {
+      requestAnimationFrame(() => {
+        if (inputRef.current && overlayRef.current) {
+          overlayRef.current.scrollLeft = inputRef.current.scrollLeft
+        }
+      })
+    }
+  }, [query, showImplicitWildcard])
 
   // Ref to capture latest state for saving on unmount
   const stateRef = useRef({ query, activeTab, results, postResults, postCursor, localResults, localDisplayNames, localTotal, localOffset, shownOnly })
@@ -374,7 +394,7 @@ export default function SearchPage() {
     if (localOffset >= localTotal || !query.trim()) return
     setIsLoadingMoreLocal(true)
     try {
-      const { results: r } = await searchLocalCache(query, {
+      const { results: r } = await searchLocalCache(withImplicitWildcard(query), {
         shownOnly,
         offset: localOffset,
         limit: 50,
@@ -389,11 +409,15 @@ export default function SearchPage() {
     }
   }
 
+  // Append implicit wildcard for local cache search when last char is alphanumeric
+  const withImplicitWildcard = (q: string) =>
+    /[a-zA-Z0-9]$/.test(q) ? q + '*' : q
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
     setQuery(value)
     if (activeTab === 'local') {
-      debouncedSearchLocal(value)
+      debouncedSearchLocal(withImplicitWildcard(value))
     } else if (activeTab === 'people') {
       debouncedSearchActors(value)
     } else {
@@ -406,7 +430,7 @@ export default function SearchPage() {
     setActiveTab(tab)
     if (query.trim()) {
       if (tab === 'local') {
-        debouncedSearchLocal(query)
+        debouncedSearchLocal(withImplicitWildcard(query))
       } else if (tab === 'people') {
         debouncedSearchActors(query)
       } else {
@@ -466,13 +490,35 @@ export default function SearchPage() {
           </div>
         </div>
         <div className="px-4 py-3">
-          <input
-            type="text"
-            value={query}
-            onChange={handleSearchChange}
-            placeholder={activeTab === 'local' ? "Search cache: @handle*(name*): *text" : activeTab === 'people' ? "Search for people..." : "Search for posts..."}
-            className="input w-full"
-          />
+          <div className="relative">
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={handleSearchChange}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              onScroll={() => {
+                if (inputRef.current && overlayRef.current) {
+                  overlayRef.current.scrollLeft = inputRef.current.scrollLeft
+                }
+              }}
+              placeholder={activeTab === 'local' ? "Search cache: @handle*(name*): *text" : activeTab === 'people' ? "Search for people..." : "Search for posts..."}
+              className="input w-full"
+            />
+            {/* Overlay that shows gray asterisk after the typed text */}
+            {showImplicitWildcard && (
+              <div
+                ref={overlayRef}
+                className="absolute inset-0 px-4 py-2 border border-transparent pointer-events-none overflow-hidden whitespace-pre rounded-lg"
+                style={{ font: inputRef.current ? getComputedStyle(inputRef.current).font : 'inherit' }}
+                aria-hidden="true"
+              >
+                <span className="invisible">{query}</span>
+                <span className="text-gray-400 dark:text-gray-500">*</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Tab bar */}
@@ -518,7 +564,7 @@ export default function SearchPage() {
                   const newShownOnly = !e.target.checked
                   setShownOnly(newShownOnly)
                   if (query.trim()) {
-                    debouncedSearchLocal(query, newShownOnly)
+                    debouncedSearchLocal(withImplicitWildcard(query), newShownOnly)
                   }
                 }}
                 className="rounded border-gray-300 dark:border-gray-600"
@@ -562,7 +608,7 @@ export default function SearchPage() {
                     const newShownOnly = !e.target.checked
                     setShownOnly(newShownOnly)
                     if (query.trim()) {
-                      debouncedSearchLocal(query, newShownOnly)
+                      debouncedSearchLocal(withImplicitWildcard(query), newShownOnly)
                     }
                   }}
                   className="rounded border-gray-300 dark:border-gray-600"

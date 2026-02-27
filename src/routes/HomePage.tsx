@@ -4,6 +4,7 @@ import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
 import { onSkyspeedCommand, offSkyspeedCommand, type SkyspeedCommand } from '../api/feed'
 import PostCard from '../components/PostCard'
+import EditionView from '../components/EditionView'
 import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
@@ -42,6 +43,7 @@ export default function HomePage() {
   const scrollRestoredRef = useRef(false)
   const [unviewedRevision, setUnviewedRevision] = useState(0)
   const [showViewedStatus, setShowViewedStatus] = useState(true)
+  const [showEditionsInFeed, setShowEditionsInFeed] = useState(false)
   const [storedTimezone, setStoredTimezone] = useState<string | null>(null)
   const [timezoneMismatch, setTimezoneMismatch] = useState(false)
   const [timezoneBannerDismissed, setTimezoneBannerDismissed] = useState(false)
@@ -790,7 +792,10 @@ export default function HomePage() {
 
   // Load showViewedStatus setting on mount
   useEffect(() => {
-    getSettings().then(s => setShowViewedStatus(s?.showViewedStatus !== false))
+    getSettings().then(s => {
+      setShowViewedStatus(s?.showViewedStatus !== false)
+      setShowEditionsInFeed(!!s?.showEditionsInFeed)
+    })
   }, [])
 
   // Compute label for unviewed posts next to Prev Page button
@@ -870,7 +875,7 @@ export default function HomePage() {
     setActiveTab(newTab)
   }, [activeTab, feed, previousPageFeed, newestDisplayedPostTimestamp, oldestDisplayedPostTimestamp, hasMorePosts, cursor, newPostsCount, showNewPostsButton, session])
 
-  if (isLoading) {
+  if (isLoading && activeTab === 'curated') {
     return (
       <div className="flex items-center justify-center h-64">
         <Spinner size="lg" />
@@ -1016,7 +1021,8 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Tab Bar */}
+      {/* Tab Bar — hidden when editions are shown inline in the feed */}
+      {!showEditionsInFeed && (
       <div className="flex border-b border-gray-200 dark:border-gray-700">
         {(['curated', 'editions'] as HomeTab[]).map((tab) => (
           <button
@@ -1041,6 +1047,7 @@ export default function HomePage() {
           </button>
         ))}
       </div>
+      )}
 
       {/* Tab Content */}
       {activeTab === 'curated' ? (
@@ -1275,11 +1282,15 @@ export default function HomePage() {
         )}
       </div>
       ) : (
-        /* Periodic Editions placeholder */
-        <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-          <p className="text-lg font-medium mb-2">Periodic Editions</p>
-          <p>(To be implemented)</p>
-        </div>
+        /* Periodic Editions tab */
+        <EditionView
+          agent={agent}
+          onReply={handleReply}
+          onRepost={handleRepost}
+          onQuotePost={handleQuotePost}
+          onLike={handleLike}
+          onBookmark={handleBookmark}
+        />
       )}
 
       {/* Scroll to top arrow - shown when scrolled down (only for curated tab) */}

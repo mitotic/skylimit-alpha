@@ -719,6 +719,7 @@ export function useFeedPipeline({
             const oldestCachedTs = getFeedViewPostTimestamp(cachedPosts[cachedPosts.length - 1], clientDate()).getTime()
             await updateFeedCacheOldestPostTimestamp(oldestCachedTs)
           }
+          setInitialPrefetchDone(true)
           return
         }
         // Cache metadata said fresh but no posts found — switch to idle return

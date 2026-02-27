@@ -8,6 +8,7 @@ import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { parseEditionFile, invalidateEditionsCache } from '../curation/skylimitEditions'
+import { rematchHeldPosts } from '../curation/skylimitEditionMatcher'
 import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
 import { getBrowserTimezone } from '../utils/timezoneUtils'
@@ -18,7 +19,7 @@ import ConfirmModal from '../components/ConfirmModal'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 
-type Tab = 'basic' | 'curation' | 'following'
+type Tab = 'general' | 'curation' | 'following'
 
 const SCROLL_STATE_KEY = 'websky_skylimit_settings_scroll'
 const TAB_STATE_KEY = 'websky_settings_active_tab'
@@ -91,11 +92,11 @@ export default function SettingsPage() {
     const urlTab = searchParams.get('tab')
     if (urlTab === 'curation') return 'curation'
     if (urlTab === 'following') return 'following'
-    if (urlTab === 'basic') return 'basic'
+    if (urlTab === 'general' || urlTab === 'basic') return 'general'
     // No URL param - check sessionStorage for preserved tab
     const savedTab = sessionStorage.getItem(TAB_STATE_KEY)
     if (savedTab === 'curation' || savedTab === 'following') return savedTab as Tab
-    return 'basic'
+    return 'general'
   }
   const [activeTab, setActiveTab] = useState<Tab>(getInitialTab)
 
@@ -625,6 +626,28 @@ export default function SettingsPage() {
                 The average number of posts you want to see per day (statistical limit)
               </p>
             </div>
+
+            <div className="mb-4">
+              <label className="block mb-2 font-medium">
+                Feed Page Length (posts per page):
+              </label>
+              <div className="flex gap-1">
+                {([10, 20, 25, 50] as const).map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => updateSetting('feedPageLength', size)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      (settings.feedPageLength || 25) === size
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+
           </section>
 
           <DisclosureSection title="Advanced Settings">
@@ -652,21 +675,11 @@ export default function SettingsPage() {
               <label className="flex items-center space-x-3">
                 <input
                   type="checkbox"
-                  checked={settings.showAllPosts}
-                  onChange={(e) => updateSetting('showAllPosts', e.target.checked)}
+                  checked={settings.showEditionsInFeed || false}
+                  onChange={(e) => updateSetting('showEditionsInFeed', e.target.checked)}
                   className="w-5 h-5"
                 />
-                <span>Show dropped posts (grayed out)</span>
-              </label>
-
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={settings.curationSuspended}
-                  onChange={(e) => updateSetting('curationSuspended', e.target.checked)}
-                  className="w-5 h-5"
-                />
-                <span>Suspend curation (temporarily turn off Skylimit)</span>
+                <span>Show periodic editions in home feed</span>
               </label>
 
               <label className="flex items-center space-x-3">
@@ -678,27 +691,6 @@ export default function SettingsPage() {
                 />
                 <span>Enable "infinite" scroll down</span>
               </label>
-
-              <div>
-                <label className="block mb-2 font-medium">
-                  Feed Page Length (posts per page):
-                </label>
-                <div className="flex gap-1">
-                  {([10, 20, 25, 50] as const).map((size) => (
-                    <button
-                      key={size}
-                      onClick={() => updateSetting('feedPageLength', size)}
-                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                        (settings.feedPageLength || 25) === size
-                          ? 'bg-blue-500 text-white'
-                          : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100'
-                      }`}
-                    >
-                      {size}
-                    </button>
-                  ))}
-                </div>
-              </div>
 
               <div>
                 <label className="block mb-2 font-medium">
@@ -815,15 +807,6 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={settings.anonymizeUsernames}
-                  onChange={(e) => updateSetting('anonymizeUsernames', e.target.checked)}
-                  className="w-5 h-5"
-                />
-                <span>Anonymize usernames (for screenshots)</span>
-              </label>
             </div>
           </DisclosureSection>
 
@@ -847,6 +830,36 @@ export default function SettingsPage() {
                   className="w-5 h-5"
                 />
                 <span>Quiet mode (suppress [Paged Updates] and [Idle Timer] console logs)</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={settings.showAllPosts}
+                  onChange={(e) => updateSetting('showAllPosts', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Show dropped posts (grayed out)</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={settings.curationSuspended}
+                  onChange={(e) => updateSetting('curationSuspended', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Suspend curation (temporarily turn off Skylimit)</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={settings.anonymizeUsernames}
+                  onChange={(e) => updateSetting('anonymizeUsernames', e.target.checked)}
+                  className="w-5 h-5"
+                />
+                <span>Anonymize usernames (for screenshots)</span>
               </label>
 
               <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
@@ -994,7 +1007,7 @@ export default function SettingsPage() {
             <div className="space-y-4">
               <div>
                 <label className="block mb-2 font-medium">
-                  Edition description:
+                  Edition layout:
                 </label>
                 <textarea
                   value={settings.editionLayout}
@@ -1004,11 +1017,12 @@ export default function SettingsPage() {
                   }}
                   className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
                   rows={12}
-                  placeholder={"@user1.bsky.social\n@user2*: #topic1, #topic2\n\n## Section1\n@prefix*\n@*suffix: keyword*\n\n# 08:00 [Morning Edition]\n\n## Tech\n@tech*: #programming\n\n# 18:00 [Evening Edition]"}
+                  placeholder={"@*: #breaking\n@always.interesting.bsky.social\n@sometimes.interesting*: topic1, compound topic2\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n## Humor\n@xkcd.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding"}
                 />
                 <p className="text-sm text-gray-500 mt-1">
-                  Configure edition patterns. Lines starting with @ define user patterns
-                  (with optional text patterns after colon). ## marks sections, # hh:mm marks editions.
+                  Configure edition layout patterns. Lines starting with @ define user patterns
+                  (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks editions.
+                  * denotes wildcard match to word boundary. Sections defined above first edition apply to all editions.
                 </p>
                 <div className="mt-2 flex items-center gap-3">
                   <Button
@@ -1016,12 +1030,34 @@ export default function SettingsPage() {
                     onClick={async () => {
                       const text = settings.editionLayout.trim()
                       if (!text) {
-                        // Empty layout: clear editions
+                        // Empty layout: clear editions — check for held posts first
+                        const { EDITION_LOOKBACK_HOURS } = await import('../curation/skylimitEditionAssembly')
+                        const now = Date.now()
+                        const lookbackStart = now - EDITION_LOOKBACK_HOURS * 60 * 60 * 1000
+                        const summaries = await getPostSummariesInRange(lookbackStart, now)
+                        const heldCount = summaries.filter(s => s.edition_status === 'hold').length
+
+                        if (heldCount > 0) {
+                          const confirmed = window.confirm(
+                            `${heldCount} post${heldCount !== 1 ? 's' : ''} scheduled for editions will be released and redisplayed in the home feed. Continue?`
+                          )
+                          if (!confirmed) {
+                            // Restore original edition layout text
+                            updateSetting('editionLayout', originalSettings?.editionLayout || '')
+                            setEditionFeedback(null)
+                            return
+                          }
+                        }
+
                         updateSetting('editionLayout', '')
                         await updateSettings({ ...settings, editionLayout: '' })
                         invalidateEditionsCache()
+                        await rematchHeldPosts()
                         setOriginalSettings({ ...settings, editionLayout: '' })
-                        setEditionFeedback({ type: 'success', message: 'Edition description cleared.' })
+                        setEditionFeedback({ type: 'success', message: `Edition layout cleared.` })
+                        if (heldCount > 0 && typeof (window as any).resetFeedAndReloadHomePage === 'function') {
+                          (window as any).resetFeedAndReloadHomePage()
+                        }
                         return
                       }
                       const result = parseEditionFile(text)
@@ -1037,14 +1073,23 @@ export default function SettingsPage() {
                       // Save to settings
                       await updateSettings({ ...settings, editionLayout: text })
                       invalidateEditionsCache()
+                      const rematchResult = await rematchHeldPosts()
                       setOriginalSettings({ ...settings, editionLayout: text })
                       const parts: string[] = []
                       if (editionCount > 0) parts.push(`${editionCount} edition${editionCount > 1 ? 's' : ''}`)
                       parts.push(`${patternCount} pattern${patternCount !== 1 ? 's' : ''}`)
-                      setEditionFeedback({ type: 'success', message: `Edition description updated: ${parts.join(', ')}.` })
+                      let debugInfo = ''
+                      if (settings.debugMode && (rematchResult.total > 0 || rematchResult.released > 0)) {
+                        const rematchParts: string[] = []
+                        if (rematchResult.rematched > 0) rematchParts.push(`${rematchResult.rematched} re-matched`)
+                        if (rematchResult.fallback > 0) rematchParts.push(`${rematchResult.fallback} assigned to default`)
+                        if (rematchResult.released > 0) rematchParts.push(`${rematchResult.released} released`)
+                        debugInfo = ` [${rematchResult.total} held post${rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
+                      }
+                      setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo}` })
                     }}
                   >
-                    Update Editions
+                    Update Edition Layout
                   </Button>
                   {editionFeedback && (
                     <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
@@ -1375,7 +1420,7 @@ This cannot be undone.`}
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 dark:border-gray-700">
-        {(['basic', 'curation', 'following'] as Tab[]).map((tab) => (
+        {(['general', 'curation', 'following'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1385,14 +1430,14 @@ This cannot be undone.`}
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
-            {tab === 'basic' ? 'Basic' : tab === 'curation' ? 'Curation' : 'Following'}
+            {tab === 'general' ? 'General' : tab === 'curation' ? 'Curation' : 'Following'}
           </button>
         ))}
       </div>
 
       {/* Tab Content */}
       <div className={`p-4 ${hasUnsavedChanges && activeTab === 'curation' ? 'pb-20' : ''}`}>
-        {activeTab === 'basic' && renderBasicTab()}
+        {activeTab === 'general' && renderBasicTab()}
         {activeTab === 'curation' && renderCurationTab()}
         {activeTab === 'following' && renderFollowingTab()}
       </div>

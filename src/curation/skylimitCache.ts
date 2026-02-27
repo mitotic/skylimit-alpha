@@ -674,7 +674,11 @@ export async function saveFollow(follow: FollowInfo): Promise<void> {
   const database = await getDB()
   const transaction = database.transaction([STORE_FOLLOWS], 'readwrite')
   const store = transaction.objectStore(STORE_FOLLOWS)
-  await store.put(follow)
+  return new Promise<void>((resolve, reject) => {
+    const request = store.put(follow)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
 }
 
 /**
@@ -714,7 +718,11 @@ export async function deleteFollow(username: string): Promise<void> {
   const database = await getDB()
   const transaction = database.transaction([STORE_FOLLOWS], 'readwrite')
   const store = transaction.objectStore(STORE_FOLLOWS)
-  await store.delete(username)
+  return new Promise<void>((resolve, reject) => {
+    const request = store.delete(username)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
 }
 
 /**

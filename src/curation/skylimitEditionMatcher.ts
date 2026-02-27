@@ -334,3 +334,75 @@ function matchSinglePattern(
   // User matched but no text pattern matched → no match
   return null
 }
+
+/**
+ * Re-match all held posts against the current edition layout.
+ *
+ * Called when the edition layout changes in Settings. Queries held posts
+ * from IndexedDB within the edition lookback window and re-runs matchPost()
+ * against the new parsed editions. Posts that no longer match any pattern
+ * are assigned the fallback tag '0.0.00' with edition_pattern = '' to flag
+ * the non-standard assignment. These posts will be picked up by the next
+ * edition assembly as edition0 default-section posts.
+ *
+ * @returns Summary of how many posts were re-matched vs fell back to default
+ */
+export async function rematchHeldPosts(): Promise<{ total: number; rematched: number; fallback: number; released: number }> {
+  const { EDITION_LOOKBACK_HOURS } = await import('./skylimitEditionAssembly')
+  const { getParsedEditions } = await import('./skylimitEditions')
+  const { getPostSummariesInRange, savePostSummariesForce } = await import('./skylimitCache')
+  const { getSettings } = await import('./skylimitStore')
+  const { assignAllNumbers } = await import('./skylimitNumbering')
+
+  const parsedEditions = await getParsedEditions()
+  const settings = await getSettings()
+  const timezone = settings?.timezone
+
+  const now = Date.now()
+  const lookbackStart = now - EDITION_LOOKBACK_HOURS * 60 * 60 * 1000
+  const summaries = await getPostSummariesInRange(lookbackStart, now)
+  const heldPosts = summaries.filter(s => s.edition_status === 'hold')
+
+  if (heldPosts.length === 0) {
+    console.log('[Edition/Rematch] No held posts to re-match')
+    return { total: 0, rematched: 0, fallback: 0, released: 0 }
+  }
+
+  const hasNamedEditions = parsedEditions.editions.some(e => e.editionNumber > 0)
+
+  // No editions remain: release all held posts as regular shown posts
+  if (!hasNamedEditions) {
+    for (const summary of heldPosts) {
+      summary.curation_status = 'regular_show'
+      summary.curation_msg = '[Edition hold released]'
+      summary.edition_status = undefined
+      summary.edition_tag = undefined
+      summary.edition_pattern = undefined
+    }
+    await savePostSummariesForce(heldPosts)
+    await assignAllNumbers()
+    console.log(`[Edition/Rematch] Released ${heldPosts.length} held posts (no editions remain)`)
+    return { total: heldPosts.length, rematched: 0, fallback: 0, released: heldPosts.length }
+  }
+
+  let rematched = 0
+  let fallback = 0
+
+  for (const summary of heldPosts) {
+    const match = matchPost(summary, parsedEditions, timezone)
+    if (match) {
+      summary.edition_tag = match.editionTag
+      summary.edition_pattern = match.editionPattern
+      rematched++
+    } else {
+      summary.edition_tag = '0.0.00'
+      summary.edition_pattern = ''
+      fallback++
+    }
+  }
+
+  await savePostSummariesForce(heldPosts)
+
+  console.log(`[Edition/Rematch] Re-matched ${heldPosts.length} held posts: ${rematched} matched new patterns, ${fallback} assigned fallback tag 0.0.00`)
+  return { total: heldPosts.length, rematched, fallback, released: 0 }
+}

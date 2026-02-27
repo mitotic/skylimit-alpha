@@ -9,7 +9,7 @@ import PostMedia from './PostMedia'
 import RootPost from './RootPost'
 import { getCurationNumber, getPostNumberFromSummary } from '../curation/skylimitCounter'
 import { getSettings } from '../curation/skylimitStore'
-import { getFeedViewPostTimestamp, isRepost, getBlueSkyPostUrl, getBlueSkyProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
+import { getFeedViewPostTimestamp, isRepost, isPeriodicEdition, getBlueSkyPostUrl, getBlueSkyProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo } from '../curation/types'
 import { getTimeInTimezone, getBrowserTimezone, timezonesAreDifferent, getTimezoneAbbreviation } from '../utils/timezoneUtils'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
@@ -344,7 +344,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           : 'linear-gradient(to bottom, rgba(168,162,158,0.18) 0%, transparent 6%, transparent 94%, rgba(168,162,158,0.18) 100%), linear-gradient(to right, rgba(168,162,158,0.18) 0%, transparent 48px, transparent calc(100% - 48px), rgba(168,162,158,0.18) 100%)'
       } : undefined}
     >
-      {repostedBy && (
+      {repostedBy && !isPeriodicEdition(curation) && (
         <div className={`px-4 pt-4 pb-2 text-sm text-gray-500 dark:text-gray-400 flex items-center justify-between relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}>
           <span
             onClick={handleReposterClick}

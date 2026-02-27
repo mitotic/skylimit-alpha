@@ -1098,17 +1098,21 @@ export async function transferSecondaryToPrimary(
         const insertTimestamp = getFeedViewPostTimestamp(syntheticPost).getTime()
         const syntheticUniqueId = getPostUniqueId(syntheticPost)
 
+        // Follow repost convention: username = reposter (editor), orig_username = original author
+        const editorBy = (syntheticPost.reason as any)?.by
         const syntheticSummary: PostSummary = {
           uniqueId: syntheticUniqueId,
           cid: syntheticPost.post.cid,
-          username: syntheticPost.post.author.handle,
-          accountDid: syntheticPost.post.author.did,
+          username: editorBy?.handle || syntheticPost.post.author.handle,
+          accountDid: editorBy?.did || syntheticPost.post.author.did,
+          orig_username: syntheticPost.post.author.handle,
+          repostUri: syntheticPost.post.uri,
           tags: [],
           repostCount: syntheticPost.post.repostCount ?? 0,
           timestamp: new Date(insertTimestamp),
           postTimestamp: insertTimestamp,
           engaged: false,
-          curation_status: 'edition_publish_show',
+          curation_status: settings.showEditionsInFeed ? 'edition_publish_show' : 'edition_publish_drop',
           curation_msg: syntheticPost.curation?.curation_msg,
           edition_status: 'synthetic',
           postNumber: null,

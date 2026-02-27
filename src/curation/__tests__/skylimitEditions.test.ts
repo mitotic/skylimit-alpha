@@ -53,9 +53,9 @@ describe('parseEditionFile', () => {
 
   it('should parse edition headers with time and name', () => {
     const input = `@default*
-# 08:00 [Morning Edition]
+# 08:00 Morning Edition
 @morning*
-# 18:00 [Evening Edition]
+# 18:00 Evening Edition
 @evening*`
     const result = parseEditionFile(input)
     expect(result.errors).toHaveLength(0)
@@ -111,7 +111,7 @@ describe('parseEditionFile', () => {
 
   it('should assign letter codes to edition sections', () => {
     const input = `@default*
-# 08:00 [Morning]
+# 08:00 Morning
 @section0*
 ## News
 @news*
@@ -145,7 +145,7 @@ describe('parseEditionFile', () => {
   it('should reject edition section names that conflict with edition0', () => {
     const input = `## Tech
 @a*
-# 08:00 [Morning]
+# 08:00 Morning
 ## Tech
 @b*`
     const result = parseEditionFile(input)
@@ -160,9 +160,16 @@ describe('parseEditionFile', () => {
     expect(result.errors.some(e => e.includes('at most 10'))).toBe(true)
   })
 
+  it('should limit named edition sections to 26', () => {
+    const sections = Array.from({ length: 27 }, (_, i) => `## Section${i}\n@user${i}*`)
+    const input = `@default*\n# 08:00 Morning\n${sections.join('\n')}`
+    const result = parseEditionFile(input)
+    expect(result.errors.some(e => e.includes('at most 26'))).toBe(true)
+  })
+
   it('should limit to 9 editions', () => {
     const editions = Array.from({ length: 10 }, (_, i) =>
-      `# ${String(i + 8).padStart(2, '0')}:00 [Ed${i + 1}]\n@user${i}*`
+      `# ${String(i + 8).padStart(2, '0')}:00 Ed${i + 1}\n@user${i}*`
     )
     const input = `@default*\n${editions.join('\n')}`
     const result = parseEditionFile(input)
@@ -186,7 +193,7 @@ describe('parseEditionFile', () => {
     const input = `@default*
 ## Section1
 @section1*
-# 08:00 [Morning Edition]
+# 08:00 Morning Edition
 ## News
 @news*`
     const result = parseEditionFile(input)

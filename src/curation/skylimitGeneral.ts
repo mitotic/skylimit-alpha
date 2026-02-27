@@ -3,8 +3,15 @@
  */
 
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
-import { PostSummary } from './types'
+import { CurationMetadata, PostSummary } from './types'
 import { clientNow, clientDate } from '../utils/clientClock'
+
+/**
+ * Check if a post is a periodic edition (synthetic repost created by edition assembly)
+ */
+export function isPeriodicEdition(curation: CurationMetadata | undefined): boolean {
+  return curation?.edition_status === 'synthetic'
+}
 
 /**
  * Extract hashtags from Bluesky post text and facets

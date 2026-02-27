@@ -5,11 +5,14 @@
  * and inserts them into the feed during secondary-to-primary cache transfer.
  */
 
-import { CurationFeedViewPost, PostSummary } from './types'
+import { AppBskyFeedDefs } from '@atproto/api'
+import type { BskyAgent } from '@atproto/api'
+import { CurationFeedViewPost, FeedCacheEntry, PostSummary } from './types'
 import { getPostSummariesInRange } from './skylimitCache'
-import { getEditorHandle, getEditorUser, editorUserToProfileView } from './skylimitEditions'
+import { getEditorHandle, getEditorUser, editorUserToProfileView, getParsedEditions } from './skylimitEditions'
+import { clientNow } from '../utils/clientClock'
 
-const EDITION_LOOKBACK_HOURS = 25
+export const EDITION_LOOKBACK_HOURS = 25
 const EDITION_LOOKBACK_MS = EDITION_LOOKBACK_HOURS * 60 * 60 * 1000
 
 /**
@@ -138,7 +141,6 @@ export async function tryCreateEdition(
       curation: {
         curation_status: 'edition_publish_show',
         curation_msg: `Edition ${editionTime}: ${editorUser.displayName}`,
-        curation_edition: true,
         edition_status: 'synthetic',
       },
     }
@@ -160,4 +162,252 @@ export async function tryCreateEdition(
   console.log(`[Edition] Created ${syntheticPosts.length} synthetic reposts for edition ${editionNumber} (${editionTime})`)
 
   return syntheticPosts
+}
+
+// --- Edition display data retrieval ---
+
+export interface EditionDisplaySection {
+  code: string            // section code: "a", "b", etc.
+  name: string            // "" for default, "Tech" for named sections
+  posts: CurationFeedViewPost[]
+}
+
+export interface EditionDisplayData {
+  editionTime: string     // "08:00"
+  editionDate: Date       // date derived from synthetic post timestamps
+  editionName: string     // "Morning Edition"
+  sections: EditionDisplaySection[]
+}
+
+/**
+ * Parse an editor handle to extract edition time and section code.
+ * Handle format: "editor_HH_MM_X" where X is the section code.
+ * Returns null if the handle doesn't match the expected format.
+ */
+function parseEditorHandle(handle: string): { editionTime: string; sectionCode: string } | null {
+  const match = handle.match(/^editor_(\d{2})_(\d{2})_([a-z0-9])$/)
+  if (!match) return null
+  return {
+    editionTime: `${match[1]}:${match[2]}`,
+    sectionCode: match[3],
+  }
+}
+
+/**
+ * Retrieve assembled editions from the cache for display in the Editions tab.
+ *
+ * Queries PostSummaries for synthetic edition posts, groups them by edition
+ * and section, then retrieves the full original post data from the feed cache
+ * (or server) for complete rendering with media.
+ *
+ * @param agent - BskyAgent for fetching posts not found in cache
+ * @returns Array of editions ordered chronologically (newest first)
+ */
+export async function getAssembledEditions(agent: BskyAgent | null): Promise<EditionDisplayData[]> {
+  const now = clientNow()
+  const lookbackStart = now - EDITION_LOOKBACK_MS
+
+  // Step 1: Get all synthetic summaries from the lookback window
+  const allSummaries = await getPostSummariesInRange(lookbackStart, now)
+  const syntheticSummaries = allSummaries.filter(s => s.edition_status === 'synthetic')
+
+  if (syntheticSummaries.length === 0) {
+    return []
+  }
+
+  // Step 2: Group summaries by edition date+time using editor handle
+  // Key is "YYYY-MM-DD_HH:MM" to distinguish same-time editions on different days
+  // Map: editionKey -> { editionTime, sectionMap: Map<sectionCode, PostSummary[]> }
+  const editionMap = new Map<string, { editionTime: string; sectionMap: Map<string, PostSummary[]> }>()
+
+  for (const summary of syntheticSummaries) {
+    const parsed = parseEditorHandle(summary.username)
+    if (!parsed) continue
+
+    // Derive date from the synthetic post's timestamp
+    const postDate = new Date(summary.postTimestamp)
+    const dateStr = `${postDate.getFullYear()}-${String(postDate.getMonth() + 1).padStart(2, '0')}-${String(postDate.getDate()).padStart(2, '0')}`
+    const editionKey = `${dateStr}_${parsed.editionTime}`
+
+    let entry = editionMap.get(editionKey)
+    if (!entry) {
+      entry = { editionTime: parsed.editionTime, sectionMap: new Map() }
+      editionMap.set(editionKey, entry)
+    }
+
+    let sectionPosts = entry.sectionMap.get(parsed.sectionCode)
+    if (!sectionPosts) {
+      sectionPosts = []
+      entry.sectionMap.set(parsed.sectionCode, sectionPosts)
+    }
+    sectionPosts.push(summary)
+  }
+
+  // Step 3: Get edition metadata from parsed layout
+  const parsedEditions = await getParsedEditions()
+  const editionsByTime = new Map<string, { name: string; sectionNames: Map<string, string> }>()
+  for (const edition of parsedEditions.editions) {
+    if (edition.editionNumber === 0) continue // skip default edition (edition0 has no time)
+    const sectionNames = new Map<string, string>()
+    for (const section of edition.sections) {
+      sectionNames.set(section.code, section.name)
+    }
+    editionsByTime.set(edition.time, { name: edition.name, sectionNames })
+  }
+
+  // Step 4: Retrieve full original posts for rendering
+  // The synthetic posts in the feed cache lack embed data. The ORIGINAL posts
+  // (which were held for the edition) should still be in the feed cache with
+  // full data including embeds. Look up by repostUri (the original post URI).
+  const { getDB } = await import('./skylimitCache')
+  const database = await getDB()
+
+  // Collect original post URIs from repostUri field
+  const originalPostUris = new Set<string>()
+  for (const summary of syntheticSummaries) {
+    if (summary.repostUri) {
+      originalPostUris.add(summary.repostUri)
+    }
+  }
+
+  // Batch fetch original posts from feed cache
+  const originalPostMap = new Map<string, AppBskyFeedDefs.PostView>()
+  if (originalPostUris.size > 0) {
+    const transaction = database.transaction(['feed_cache'], 'readonly')
+    const store = transaction.objectStore('feed_cache')
+
+    await Promise.all([...originalPostUris].map(uri =>
+      new Promise<void>((resolve) => {
+        const request = store.get(uri)
+        request.onsuccess = () => {
+          if (request.result) {
+            const entry = request.result as FeedCacheEntry
+            originalPostMap.set(uri, entry.post.post)
+          }
+          resolve()
+        }
+        request.onerror = () => resolve()
+      })
+    ))
+  }
+
+  // Fetch missing posts from server (older editions where originals were evicted)
+  const missingUris = [...originalPostUris].filter(uri => !originalPostMap.has(uri))
+  if (missingUris.length > 0 && agent) {
+    console.log(`[Edition] Fetching ${missingUris.length} posts from server (not in feed cache)`)
+    try {
+      // agent.getPosts accepts up to 25 URIs at a time
+      for (let i = 0; i < missingUris.length; i += 25) {
+        const batch = missingUris.slice(i, i + 25)
+        const response = await agent.getPosts({ uris: batch })
+        for (const post of response.data.posts) {
+          originalPostMap.set(post.uri, post)
+        }
+      }
+    } catch (error) {
+      console.warn('[Edition] Failed to fetch posts from server:', error)
+    }
+  }
+
+  // Also fetch synthetic posts from feed cache (for the reason/curation metadata)
+  const syntheticPostMap = new Map<string, CurationFeedViewPost>()
+  {
+    const transaction = database.transaction(['feed_cache'], 'readonly')
+    const store = transaction.objectStore('feed_cache')
+
+    await Promise.all(syntheticSummaries.map(s =>
+      new Promise<void>((resolve) => {
+        const request = store.get(s.uniqueId)
+        request.onsuccess = () => {
+          if (request.result) {
+            const entry = request.result as FeedCacheEntry
+            syntheticPostMap.set(s.uniqueId, entry.post as CurationFeedViewPost)
+          }
+          resolve()
+        }
+        request.onerror = () => resolve()
+      })
+    ))
+  }
+
+  // Step 5: Build EditionDisplayData array
+  const editions: EditionDisplayData[] = []
+
+  for (const [, { editionTime, sectionMap }] of editionMap) {
+    const editionMeta = editionsByTime.get(editionTime)
+    const editionName = editionMeta?.name || editionTime
+
+    const sections: EditionDisplaySection[] = []
+
+    // Sort section codes: 'a' (default) first, then alphabetically
+    const sortedCodes = [...sectionMap.keys()].sort((a, b) => {
+      if (a === 'a') return -1
+      if (b === 'a') return 1
+      return a.localeCompare(b)
+    })
+
+    for (const code of sortedCodes) {
+      const summaries = sectionMap.get(code)!
+      // Sort by postTimestamp descending (newest first) — timestamps preserve edition ordering
+      summaries.sort((a, b) => b.postTimestamp - a.postTimestamp)
+
+      const posts: CurationFeedViewPost[] = []
+      for (const summary of summaries) {
+        // Get the synthetic post (for reason/curation metadata)
+        const syntheticPost = syntheticPostMap.get(summary.uniqueId)
+
+        // Get the original post (for full post data with embeds)
+        const originalPost = summary.repostUri ? originalPostMap.get(summary.repostUri) : undefined
+
+        if (originalPost && syntheticPost) {
+          // Combine: original post data + synthetic edition metadata
+          const editionPost: CurationFeedViewPost = {
+            post: originalPost,
+            reason: syntheticPost.reason,
+            curation: {
+              curation_status: 'edition_publish_show',
+              edition_status: 'synthetic',
+              edition_summary_id: summary.uniqueId,
+            },
+          }
+          posts.push(editionPost)
+        } else if (syntheticPost) {
+          // Fallback: use synthetic post as-is (text only, no embeds)
+          if (!syntheticPost.curation) {
+            syntheticPost.curation = {
+              curation_status: 'edition_publish_show',
+              edition_status: 'synthetic',
+              edition_summary_id: summary.uniqueId,
+            }
+          }
+          posts.push(syntheticPost)
+        }
+      }
+
+      const sectionName = code === 'a'
+        ? ''
+        : editionMeta?.sectionNames.get(code) || `Section ${code.toUpperCase()}`
+
+      if (posts.length > 0) {
+        sections.push({ code, name: sectionName, posts })
+      }
+    }
+
+    if (sections.length > 0) {
+      // Derive edition date from actual assembly time of synthetic posts
+      const allSummariesForEdition = [...sectionMap.values()].flat()
+      const earliestTimestamp = Math.min(...allSummariesForEdition.map(s => s.postTimestamp))
+      const editionDate = new Date(earliestTimestamp)
+
+      editions.push({ editionTime, editionDate, editionName, sections })
+    }
+  }
+
+  // Sort editions chronologically, newest first
+  editions.sort((a, b) => b.editionDate.getTime() - a.editionDate.getTime())
+
+  const cachedCount = syntheticSummaries.filter(s => s.repostUri && originalPostMap.has(s.repostUri)).length
+  const fetchedCount = missingUris.filter(uri => originalPostMap.has(uri)).length
+  console.log(`[Edition] Retrieved ${editions.length} editions for display (${syntheticSummaries.length} synthetic posts, ${cachedCount} from cache, ${fetchedCount} from server)`)
+  return editions
 }

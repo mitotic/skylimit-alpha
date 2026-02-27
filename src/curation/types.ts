@@ -243,7 +243,6 @@ export interface FollowInfo {
 export interface CurationResult {
   curation_status?: CurationStatus
   curation_msg?: string
-  curation_edition?: boolean
   curation_id?: string
   edition_tag?: string
   edition_pattern?: string
@@ -309,6 +308,7 @@ export interface SkylimitSettings {
   quietMode?: boolean // Suppress [Paged Updates] and [Idle Timer] console logs, default false
   timezone?: string // Stored timezone for consistent day boundaries (e.g., "America/New_York")
   lastBrowserTimezone?: string // Browser timezone when user last saved/confirmed timezone setting
+  showEditionsInFeed?: boolean // Show periodic editions in home feed, default false
 }
 
 /**
@@ -317,9 +317,9 @@ export interface SkylimitSettings {
 export interface CurationMetadata {
   curation_status?: CurationStatus
   curation_msg?: string
-  curation_edition?: boolean
   curation_id?: string
   edition_status?: string
+  edition_summary_id?: string  // Original post summary uniqueId (for view tracking in EditionView)
   // Number fields to avoid IndexedDB lookups in PostCard
   postNumber?: number | null
   curationNumber?: number | null

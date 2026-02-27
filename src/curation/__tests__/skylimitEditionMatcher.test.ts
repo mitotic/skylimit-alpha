@@ -194,7 +194,7 @@ describe('matchPost', () => {
 
   it('should return null when no patterns match', () => {
     const parsed = parseEditionFile(`@specific.user
-# 08:00 [Morning]
+# 08:00 Morning
 @another.user`)
     const summary = makeSummary({ username: 'nomatch.bsky.social' })
     expect(matchPost(summary, parsed)).toBeNull()
@@ -202,7 +202,7 @@ describe('matchPost', () => {
 
   it('should match user pattern in edition-specific section', () => {
     const parsed = parseEditionFile(`@default*
-# 08:00 [Morning]
+# 08:00 Morning
 @testuser*`)
     const summary = makeSummary({ username: 'testuser.bsky.social' })
     const result = matchPost(summary, parsed)
@@ -214,7 +214,7 @@ describe('matchPost', () => {
 
   it('should match edition0 pattern and assign to nearest edition', () => {
     const parsed = parseEditionFile(`@testuser*
-# 08:00 [Morning]
+# 08:00 Morning
 @other*`)
     const summary = makeSummary({ username: 'testuser.bsky.social' })
     const result = matchPost(summary, parsed)
@@ -225,7 +225,7 @@ describe('matchPost', () => {
 
   it('should generate correct edition_tag format', () => {
     const parsed = parseEditionFile(`@default.user
-# 08:00 [Morning]
+# 08:00 Morning
 ## News
 @testuser*: #tech`)
     const summary = makeSummary({
@@ -241,7 +241,7 @@ describe('matchPost', () => {
   })
 
   it('should match with text pattern including hashtag', () => {
-    const parsed = parseEditionFile(`# 08:00 [Morning]
+    const parsed = parseEditionFile(`# 08:00 Morning
 @*: #programming`)
     const summary = makeSummary({
       username: 'anyone.bsky.social',
@@ -254,7 +254,7 @@ describe('matchPost', () => {
   })
 
   it('should not match when user matches but text pattern does not', () => {
-    const parsed = parseEditionFile(`# 08:00 [Morning]
+    const parsed = parseEditionFile(`# 08:00 Morning
 @testuser*: #specific`)
     const summary = makeSummary({
       username: 'testuser.bsky.social',
@@ -265,7 +265,7 @@ describe('matchPost', () => {
   })
 
   it('should match bottom-to-top within edition', () => {
-    const parsed = parseEditionFile(`# 08:00 [Morning]
+    const parsed = parseEditionFile(`# 08:00 Morning
 @testuser*
 @*: #tech`)
     // Both patterns match, but bottom-to-top means @*: #tech (last/bottom) is checked first
@@ -278,7 +278,7 @@ describe('matchPost', () => {
   })
 
   it('should reject bare @* without text patterns', () => {
-    const parsed = parseEditionFile(`# 08:00 [Morning]
+    const parsed = parseEditionFile(`# 08:00 Morning
 @*`)
     expect(parsed.errors.length).toBeGreaterThan(0)
     expect(parsed.errors[0]).toContain('@* requires')

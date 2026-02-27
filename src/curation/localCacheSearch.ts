@@ -101,7 +101,14 @@ export function matchPostSummary(
     let mode: 'contains' | 'startsWith' | 'endsWith' = 'contains'
     let searchStr = pattern
 
-    if (pattern.endsWith('*')) {
+    if (pattern.startsWith('*') && pattern.endsWith('*') && pattern.length > 2) {
+      // *text* — pure substring match, no word boundary constraints
+      searchStr = pattern.slice(1, -1)
+      if (!text.includes(searchStr)) {
+        return false
+      }
+      return true
+    } else if (pattern.endsWith('*')) {
       mode = 'startsWith'
       searchStr = pattern.slice(0, -1)
     } else if (pattern.startsWith('*')) {

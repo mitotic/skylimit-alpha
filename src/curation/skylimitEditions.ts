@@ -243,13 +243,13 @@ export function parseEditionFile(text: string): ParsedEditions {
   edition0SectionCount = 1
 
   for (const line of lines) {
-    // Edition header: # hh:mm [EditionName]
+    // Edition header: # hh:mm or # hh:mm EditionName (spaces allowed in name)
     if (line.startsWith('# ') && !line.startsWith('## ')) {
       // Finish current section/edition
       finishCurrentEdition()
 
       // Parse edition header
-      const headerMatch = line.match(/^#\s+(\d{2}:\d{2})\s*(?:\[(.+?)\])?/)
+      const headerMatch = line.match(/^#\s+(\d{2}:\d{2})(?:\s+(.+))?/)
       if (!headerMatch) {
         errors.push(`Invalid edition header: "${line}"`)
         continue
@@ -317,6 +317,11 @@ export function parseEditionFile(text: string): ParsedEditions {
           continue
         }
         edSections.add(sectionName)
+
+        if (currentEdition.sections.length >= 26) {
+          errors.push(`Edition${currentEdition.editionNumber} can have at most 26 sections: "${sectionName}"`)
+          continue
+        }
 
         // Letter code: a=default (already used), b, c, ...
         const sectionIndex = currentEdition.sections.length
