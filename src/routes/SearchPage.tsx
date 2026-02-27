@@ -134,7 +134,14 @@ export default function SearchPage() {
       setResults(savedState.results)
       setPostResults(savedState.postResults)
       setPostCursor(savedState.postCursor)
-      if (savedState.localResults) setLocalResults(savedState.localResults)
+      if (savedState.localResults) {
+        // Rehydrate Date objects that were serialized to strings by JSON.stringify
+        const rehydrated = savedState.localResults.map(r => ({
+          ...r,
+          timestamp: new Date(r.timestamp),
+        }))
+        setLocalResults(rehydrated)
+      }
       if (savedState.localDisplayNames) setLocalDisplayNames(new Map(savedState.localDisplayNames))
       if (savedState.localTotal !== undefined) setLocalTotal(savedState.localTotal)
       if (savedState.localOffset !== undefined) setLocalOffset(savedState.localOffset)
