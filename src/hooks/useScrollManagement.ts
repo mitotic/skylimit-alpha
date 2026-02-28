@@ -6,7 +6,7 @@ interface UseScrollManagementParams {
   isLoading: boolean
   feedLength: number
   activeTab: HomeTab
-  firstPostRef: React.RefObject<HTMLDivElement | null>
+  firstPostRef?: React.RefObject<HTMLDivElement | null>
   scrollRestoredRef?: React.MutableRefObject<boolean>  // Optional: if provided, shared with other hooks
 }
 
@@ -15,7 +15,7 @@ export function useScrollManagement({
   isLoading,
   feedLength,
   activeTab,
-  firstPostRef,
+  firstPostRef: _firstPostRef,
   scrollRestoredRef: externalScrollRestoredRef,
 }: UseScrollManagementParams) {
   const [isScrolledDown, setIsScrolledDown] = useState(false)
