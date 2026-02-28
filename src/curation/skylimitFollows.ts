@@ -45,7 +45,7 @@ async function saveLastFollowRefreshTime(): Promise<void> {
  * Only refreshes if force=true or if it's been more than 1 hour since last refresh
  * Only fetches profiles for new follows or when topics/timezone are missing
  */
-export async function refreshFollows(agent: BskyAgent, myDid: string, force: boolean = false): Promise<void> {
+export async function refreshFollows(agent: BskyAgent, myDid: string, force: boolean = false, onProgress?: (percent: number) => void): Promise<void> {
   try {
     // Check if we need to refresh (unless forced)
     if (!force) {
@@ -93,7 +93,9 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
         await new Promise(resolve => setTimeout(resolve, 100))
       }
     } while (cursor)
-    
+
+    onProgress?.(10)
+
     // Get existing follows from cache
     const existingFollows = await getAllFollows()
     const existingMap = new Map<string, FollowInfo>()
@@ -133,6 +135,8 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
           console.warn(`[Follows] Batch ${batchNum}/${numBatches} failed:`, err)
         }
 
+        onProgress?.(10 + Math.round(90 * batchNum / numBatches))
+
         // Small delay between batches to avoid rate limits
         if (i + BATCH_SIZE < didsNeedingProfiles.length) {
           await new Promise(resolve => setTimeout(resolve, 200))
@@ -140,6 +144,8 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
       }
 
       console.log(`[Follows] Completed batch fetching: ${profileMap.size} profiles retrieved`)
+    } else {
+      onProgress?.(100)
     }
 
     // Update or create follow entries using the fetched profiles

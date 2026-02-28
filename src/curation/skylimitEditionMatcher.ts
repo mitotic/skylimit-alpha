@@ -5,17 +5,18 @@
  * should be held for an edition. Generates edition_tag values.
  *
  * Edition tag format:
- *   <match_edition_number (1 digit: 0-9)>.<section_code>.<userpattern_code (2 digits: 00-99)><textpattern_letter?>
+ *   <edition_letter (a-z)>.<section_code>.<userpattern_code (2 digits: 00-99)><textpattern_letter?>
+ *
+ * Edition letters: editionA='a' (HEAD), timed='b'-'y', editionZ='z' (TAIL)
  *
  * Matching order:
- *   1. Iterate editions 1-9 cyclically starting from nearest upcoming edition
- *   2. Within each edition, match patterns bottom-to-top
- *   3. If no edition-specific match, check edition0 patterns (bottom-to-top)
- *   4. If edition0 matches, tag starts with 0 (deferred to assembly)
+ *   1. Match editionA (HEAD) patterns first, top-to-bottom
+ *   2. Iterate timed editions cyclically starting from nearest upcoming, top-to-bottom
+ *   3. Match editionZ (TAIL) patterns last, top-to-bottom
  */
 
 import { PostSummary } from './types'
-import { Edition, EditionPattern, TextPattern, ParsedEditions } from './skylimitEditions'
+import { Edition, EditionPattern, TextPattern, ParsedEditions, HEAD_EDITION_NUMBER, TAIL_EDITION_NUMBER, editionLetter } from './skylimitEditions'
 import { clientDate } from '../utils/clientClock'
 
 /**
@@ -24,7 +25,7 @@ import { clientDate } from '../utils/clientClock'
 export interface EditionMatchResult {
   editionTag: string           // the full edition_tag
   editionPattern: string       // string representation of matched pattern, e.g. "@user*: #tech"
-  matchedEditionNumber: number // which edition's pattern matched (0-9)
+  matchedEditionNumber: number // which edition's pattern matched (0=HEAD, 1-24=timed, 25=TAIL)
   sectionCode: string          // section code within matched edition
   editionTime: string          // hh:mm of the nearest edition (for logging)
 }
@@ -160,10 +161,10 @@ export function matchTextPattern(
 
 /**
  * Get the nearest upcoming edition index, for cyclical iteration
- * Returns the index into the namedEditions array (editions with editionNumber > 0)
+ * Returns the index into the timedEditions array (editions with editionNumber 1-24)
  */
-export function getNearestUpcomingEditionIndex(namedEditions: Edition[], timezone?: string): number {
-  if (namedEditions.length === 0) return -1
+export function getNearestUpcomingEditionIndex(timedEditions: Edition[], timezone?: string): number {
+  if (timedEditions.length === 0) return -1
 
   const now = clientDate()
   let currentTime: string
@@ -186,8 +187,8 @@ export function getNearestUpcomingEditionIndex(namedEditions: Edition[], timezon
   let nearestIdx = 0
   let found = false
 
-  for (let i = 0; i < namedEditions.length; i++) {
-    if (namedEditions[i].time >= currentTime) {
+  for (let i = 0; i < timedEditions.length; i++) {
+    if (timedEditions[i].time >= currentTime) {
       nearestIdx = i
       found = true
       break
@@ -203,7 +204,8 @@ export function getNearestUpcomingEditionIndex(namedEditions: Edition[], timezon
 }
 
 /**
- * Match a post against all edition patterns
+ * Match a post against all edition patterns.
+ * Order: editionA (HEAD) first → timed editions cyclically → editionZ (TAIL) last.
  *
  * @param summary - The post summary to match
  * @param parsedEditions - The parsed edition configuration
@@ -218,26 +220,41 @@ export function matchPost(
   const { editions } = parsedEditions
   if (editions.length === 0) return null
 
-  const edition0 = editions.find(e => e.editionNumber === 0)
-  const namedEditions = editions.filter(e => e.editionNumber > 0)
+  const editionA = editions.find(e => e.editionNumber === HEAD_EDITION_NUMBER)
+  const editionZ = editions.find(e => e.editionNumber === TAIL_EDITION_NUMBER)
+  const timedEditions = editions.filter(e => e.editionNumber > 0 && e.editionNumber < TAIL_EDITION_NUMBER)
 
-  if (namedEditions.length === 0) return null
+  if (timedEditions.length === 0) return null
 
   // Determine nearest upcoming edition for cyclical iteration
-  const nearestIdx = getNearestUpcomingEditionIndex(namedEditions, timezone)
+  const nearestIdx = getNearestUpcomingEditionIndex(timedEditions, timezone)
   if (nearestIdx < 0) return null
 
-  const nearestEdition = namedEditions[nearestIdx]
+  const nearestEdition = timedEditions[nearestIdx]
 
-  // 1. Iterate editions 1-9 cyclically starting from nearest upcoming
-  for (let offset = 0; offset < namedEditions.length; offset++) {
-    const idx = (nearestIdx + offset) % namedEditions.length
-    const edition = namedEditions[idx]
+  // 1. Match editionA (HEAD) FIRST
+  if (editionA) {
+    const match = matchPostAgainstEdition(summary, editionA)
+    if (match) {
+      return {
+        editionTag: `a.${match.sectionCode}.${match.patternTag}`,
+        editionPattern: match.patternString,
+        matchedEditionNumber: HEAD_EDITION_NUMBER,
+        sectionCode: match.sectionCode,
+        editionTime: nearestEdition.time,
+      }
+    }
+  }
+
+  // 2. Iterate timed editions cyclically starting from nearest upcoming
+  for (let offset = 0; offset < timedEditions.length; offset++) {
+    const idx = (nearestIdx + offset) % timedEditions.length
+    const edition = timedEditions[idx]
 
     const match = matchPostAgainstEdition(summary, edition)
     if (match) {
       return {
-        editionTag: `${edition.editionNumber}.${match.sectionCode}.${match.patternTag}`,
+        editionTag: `${editionLetter(edition.editionNumber)}.${match.sectionCode}.${match.patternTag}`,
         editionPattern: match.patternString,
         matchedEditionNumber: edition.editionNumber,
         sectionCode: match.sectionCode,
@@ -246,14 +263,14 @@ export function matchPost(
     }
   }
 
-  // 2. Check edition0 patterns if no edition-specific match
-  if (edition0) {
-    const match = matchPostAgainstEdition(summary, edition0)
+  // 3. Match editionZ (TAIL) LAST
+  if (editionZ) {
+    const match = matchPostAgainstEdition(summary, editionZ)
     if (match) {
       return {
-        editionTag: `0.${match.sectionCode}.${match.patternTag}`,
+        editionTag: `z.${match.sectionCode}.${match.patternTag}`,
         editionPattern: match.patternString,
-        matchedEditionNumber: 0,
+        matchedEditionNumber: TAIL_EDITION_NUMBER,
         sectionCode: match.sectionCode,
         editionTime: nearestEdition.time,
       }
@@ -264,17 +281,17 @@ export function matchPost(
 }
 
 /**
- * Match a post against a single edition's patterns
- * Iterates sections, and within each section matches bottom-to-top
+ * Match a post against a single edition's patterns.
+ * Iterates sections and patterns top-to-bottom (first match wins).
  */
 function matchPostAgainstEdition(
   summary: PostSummary,
   edition: Edition
 ): { sectionCode: string; patternTag: string; patternString: string } | null {
-  // Match bottom-to-top: iterate sections in reverse, patterns in reverse
-  for (let si = edition.sections.length - 1; si >= 0; si--) {
+  // Match top-to-bottom: iterate sections forward, patterns forward
+  for (let si = 0; si < edition.sections.length; si++) {
     const section = edition.sections[si]
-    for (let pi = section.patterns.length - 1; pi >= 0; pi--) {
+    for (let pi = 0; pi < section.patterns.length; pi++) {
       const pattern = section.patterns[pi]
       const match = matchSinglePattern(summary, pattern)
       if (match !== null) {
@@ -336,19 +353,21 @@ function matchSinglePattern(
 }
 
 /**
- * Re-match all held posts against the current edition layout.
+ * Re-match held and orphaned posts against the current edition layout.
  *
- * Called when the edition layout changes in Settings. Queries held posts
- * from IndexedDB within the edition lookback window and re-runs matchPost()
- * against the new parsed editions. Posts that no longer match any pattern
- * are assigned the fallback tag '0.0.00' with edition_pattern = '' to flag
- * the non-standard assignment. These posts will be picked up by the next
- * edition assembly as edition0 default-section posts.
+ * Called when the edition layout changes in Settings. Queries held and
+ * orphaned posts from IndexedDB within the edition lookback window and
+ * re-runs matchPost() against the new parsed editions.
+ *
+ * - Matched posts are set to 'hold' (orphaned posts are re-held).
+ * - Unmatched held posts get fallback tag 'a.0.00' (editionA default section).
+ * - Unmatched orphaned posts are left as-is (already in the feed).
+ * - If no timed editions remain, all held posts are released as orphaned.
  *
  * @returns Summary of how many posts were re-matched vs fell back to default
  */
 export async function rematchHeldPosts(): Promise<{ total: number; rematched: number; fallback: number; released: number }> {
-  const { EDITION_LOOKBACK_HOURS } = await import('./skylimitEditionAssembly')
+  const { getEditionLookbackMs } = await import('./skylimitEditionAssembly')
   const { getParsedEditions } = await import('./skylimitEditions')
   const { getPostSummariesInRange, savePostSummariesForce } = await import('./skylimitCache')
   const { getSettings } = await import('./skylimitStore')
@@ -359,50 +378,69 @@ export async function rematchHeldPosts(): Promise<{ total: number; rematched: nu
   const timezone = settings?.timezone
 
   const now = Date.now()
-  const lookbackStart = now - EDITION_LOOKBACK_HOURS * 60 * 60 * 1000
+  const lookbackStart = now - await getEditionLookbackMs()
   const summaries = await getPostSummariesInRange(lookbackStart, now)
-  const heldPosts = summaries.filter(s => s.edition_status === 'hold')
+  // Include both held and orphaned posts — orphaned get a second chance with new layout
+  const postsToRematch = summaries.filter(s => s.edition_status === 'hold' || s.edition_status === 'orphaned')
 
-  if (heldPosts.length === 0) {
-    console.log('[Edition/Rematch] No held posts to re-match')
+  if (postsToRematch.length === 0) {
+    console.log('[Edition/Rematch] No held or orphaned posts to re-match')
     return { total: 0, rematched: 0, fallback: 0, released: 0 }
   }
 
-  const hasNamedEditions = parsedEditions.editions.some(e => e.editionNumber > 0)
+  const heldCount = postsToRematch.filter(s => s.edition_status === 'hold').length
+  const orphanedCount = postsToRematch.filter(s => s.edition_status === 'orphaned').length
+  const hasTimedEditions = parsedEditions.editions.some(e => e.editionNumber > 0 && e.editionNumber < TAIL_EDITION_NUMBER)
 
-  // No editions remain: release all held posts as regular shown posts
-  if (!hasNamedEditions) {
+  // No timed editions remain: release held posts (orphaned already released)
+  if (!hasTimedEditions) {
+    const heldPosts = postsToRematch.filter(s => s.edition_status === 'hold')
     for (const summary of heldPosts) {
-      summary.curation_status = 'regular_show'
+      summary.curation_status = 'edition_post_show'
       summary.curation_msg = '[Edition hold released]'
-      summary.edition_status = undefined
+      summary.edition_status = 'orphaned'
       summary.edition_tag = undefined
       summary.edition_pattern = undefined
     }
-    await savePostSummariesForce(heldPosts)
-    await assignAllNumbers()
-    console.log(`[Edition/Rematch] Released ${heldPosts.length} held posts (no editions remain)`)
+    if (heldPosts.length > 0) {
+      await savePostSummariesForce(heldPosts)
+      await assignAllNumbers()
+    }
+    console.log(`[Edition/Rematch] Released ${heldPosts.length} held posts (no timed editions remain)`)
     return { total: heldPosts.length, rematched: 0, fallback: 0, released: heldPosts.length }
   }
 
   let rematched = 0
   let fallback = 0
+  const changed: PostSummary[] = []
 
-  for (const summary of heldPosts) {
+  for (const summary of postsToRematch) {
     const match = matchPost(summary, parsedEditions, timezone)
     if (match) {
       summary.edition_tag = match.editionTag
       summary.edition_pattern = match.editionPattern
+      // Restore orphaned posts back to hold status
+      if (summary.edition_status === 'orphaned') {
+        summary.edition_status = 'hold'
+        summary.curation_status = 'edition_post_drop'
+        summary.curation_msg = '[Re-held from orphaned]'
+      }
+      changed.push(summary)
       rematched++
-    } else {
-      summary.edition_tag = '0.0.00'
+    } else if (summary.edition_status === 'hold') {
+      // Held post with no match: assign fallback tag
+      summary.edition_tag = 'a.0.00'
       summary.edition_pattern = ''
+      changed.push(summary)
       fallback++
     }
+    // Orphaned post with no match: leave as-is (already in feed)
   }
 
-  await savePostSummariesForce(heldPosts)
+  if (changed.length > 0) {
+    await savePostSummariesForce(changed)
+  }
 
-  console.log(`[Edition/Rematch] Re-matched ${heldPosts.length} held posts: ${rematched} matched new patterns, ${fallback} assigned fallback tag 0.0.00`)
-  return { total: heldPosts.length, rematched, fallback, released: 0 }
+  console.log(`[Edition/Rematch] Re-matched ${postsToRematch.length} posts (${heldCount} held, ${orphanedCount} orphaned): ${rematched} matched, ${fallback} fallback`)
+  return { total: postsToRematch.length, rematched, fallback, released: 0 }
 }

@@ -11,13 +11,15 @@ import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
 import PostCard from './PostCard'
-import { getAssembledEditions, EditionDisplayData } from '../curation/skylimitEditionAssembly'
+import { getEditionList, getEditionContent, EditionDisplayData } from '../curation/skylimitEditionAssembly'
 import { getPostUniqueId } from '../curation/skylimitGeneral'
 import { getSettings } from '../curation/skylimitStore'
 import { useSwipeNavigation } from '../hooks/useSwipeNavigation'
 import { useViewTracking } from '../hooks/useViewTracking'
-import { CurationFeedViewPost } from '../curation/types'
+import { CurationFeedViewPost, EditionRegistryEntry } from '../curation/types'
 import { getPostSummariesByIds } from '../curation/skylimitCache'
+import { markEditionViewed } from '../curation/editionRegistry'
+import { clientNow } from '../utils/clientClock'
 
 interface EditionViewProps {
   agent: BskyAgent | null
@@ -26,6 +28,7 @@ interface EditionViewProps {
   onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
   onLike?: (uri: string, cid: string) => void
   onBookmark?: (uri: string, cid: string) => void
+  onEditionViewed?: () => void
 }
 
 const EDITION_INDEX_KEY = 'websky_edition_current_index'
@@ -43,18 +46,21 @@ export default function EditionView({
   onQuotePost,
   onLike,
   onBookmark,
+  onEditionViewed,
 }: EditionViewProps) {
   const navigate = useNavigate()
-  const [editions, setEditions] = useState<EditionDisplayData[]>([])
+  const [registryEntries, setRegistryEntries] = useState<EditionRegistryEntry[]>([])
+  const [currentEdition, setCurrentEdition] = useState<EditionDisplayData | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [sectionsExpanded, setSectionsExpanded] = useState(true)
   const [loading, setLoading] = useState(true)
+  const [editionLoading, setEditionLoading] = useState(false)
   const [hasLayout, setHasLayout] = useState(true)
 
   // View tracking: map from summary uniqueId → viewedAt timestamp
   const [viewedAtMap, setViewedAtMap] = useState<Map<string, number>>(new Map())
 
-  // Load editions on mount
+  // Load edition registry on mount (lightweight, no post loading)
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -66,30 +72,61 @@ export default function EditionView({
           return
         }
 
-        const data = await getAssembledEditions(agent)
+        const entries = getEditionList()
         if (cancelled) return
-        setEditions(data)
+        setRegistryEntries(entries)
 
         // Restore saved index if valid
         const savedIndex = sessionStorage.getItem(EDITION_INDEX_KEY)
         if (savedIndex !== null) {
           const idx = parseInt(savedIndex, 10)
-          if (!isNaN(idx) && idx >= 0 && idx < data.length) {
+          if (!isNaN(idx) && idx >= 0 && idx < entries.length) {
             setCurrentIndex(idx)
           }
         }
+      } catch (error) {
+        console.error('[EditionView] Failed to load edition registry:', error)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
 
-        // Hydrate viewedAt from IndexedDB for all edition posts
-        const allSummaryIds = data.flatMap(ed =>
-          ed.sections.flatMap(s => s.posts.map(getSummaryId))
-        )
-        if (allSummaryIds.length > 0) {
-          const summaries = await getPostSummariesByIds(allSummaryIds)
-          const hydrated = new Map<string, number>()
-          for (const [id, summary] of summaries) {
-            if (summary.viewedAt) hydrated.set(id, summary.viewedAt)
+  // Load edition content on demand when index or registry changes
+  useEffect(() => {
+    if (registryEntries.length === 0) return
+    const entry = registryEntries[currentIndex]
+    if (!entry) return
+
+    let cancelled = false
+    setEditionLoading(true)
+
+    async function loadEdition() {
+      try {
+        const content = await getEditionContent(entry, agent)
+        if (cancelled) return
+        setCurrentEdition(content)
+
+        // Mark this edition as viewed in the registry
+        if (content && !entry.viewedAt) {
+          markEditionViewed(entry.editionKey, clientNow())
+          entry.viewedAt = clientNow()
+          onEditionViewed?.()
+        }
+
+        // Hydrate viewedAt from IndexedDB for this edition's posts
+        if (content) {
+          const summaryIds = content.sections.flatMap(s => s.posts.map(getSummaryId))
+          if (summaryIds.length > 0) {
+            const summaries = await getPostSummariesByIds(summaryIds)
+            const hydrated = new Map<string, number>()
+            for (const [id, summary] of summaries) {
+              if (summary.viewedAt) hydrated.set(id, summary.viewedAt)
+            }
+            if (!cancelled && hydrated.size > 0) setViewedAtMap(hydrated)
           }
-          if (!cancelled && hydrated.size > 0) setViewedAtMap(hydrated)
         }
 
         // Restore scroll position after content renders
@@ -118,14 +155,14 @@ export default function EditionView({
           }
         }
       } catch (error) {
-        console.error('[EditionView] Failed to load editions:', error)
+        console.error('[EditionView] Failed to load edition content:', error)
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setEditionLoading(false)
       }
     }
-    load()
+    loadEdition()
     return () => { cancelled = true }
-  }, [])
+  }, [registryEntries, currentIndex, agent])
 
   // Persist current index
   useEffect(() => {
@@ -155,11 +192,13 @@ export default function EditionView({
 
   const goToPrev = useCallback(() => {
     sessionStorage.removeItem(EDITION_SCROLL_KEY)
-    setCurrentIndex(i => Math.min(i + 1, editions.length - 1))
-  }, [editions.length])
+    setViewedAtMap(new Map())
+    setCurrentIndex(i => Math.min(i + 1, registryEntries.length - 1))
+  }, [registryEntries.length])
 
   const goToNext = useCallback(() => {
     sessionStorage.removeItem(EDITION_SCROLL_KEY)
+    setViewedAtMap(new Map())
     setCurrentIndex(i => Math.max(i - 1, 0))
   }, [])
 
@@ -173,11 +212,11 @@ export default function EditionView({
     containerRef,
     onSwipeLeft: goToNext,
     onSwipeRight: goToPrev,
-    enabled: editions.length > 1,
+    enabled: registryEntries.length > 1,
   })
 
   // View tracking: build flat feed with viewedAt injected for current edition
-  const edition = editions[currentIndex] || null
+  const edition = currentEdition
 
   const currentFeed = useMemo(() => {
     if (!edition) return []
@@ -259,7 +298,7 @@ export default function EditionView({
     )
   }
 
-  if (editions.length === 0) {
+  if (registryEntries.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500 dark:text-gray-400">
         <p className="text-lg font-medium mb-2">Periodic Editions</p>
@@ -268,12 +307,20 @@ export default function EditionView({
     )
   }
 
-  if (!edition) return null
+  if (editionLoading || !edition) {
+    return (
+      <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+        <p>Loading edition...</p>
+      </div>
+    )
+  }
 
-  const defaultSection = edition.sections.find(s => s.code === 'a')
-  const namedSections = edition.sections.filter(s => s.code !== 'a')
-  const hasPrev = currentIndex < editions.length - 1  // older editions
-  const hasNext = currentIndex > 0                     // newer editions
+  const defaultSection = edition.sections.find(s => s.code === '0')
+  const namedSections = edition.sections.filter(s => s.code !== '0')
+  const hasPrev = currentIndex < registryEntries.length - 1  // older editions
+  const hasNext = currentIndex > 0                            // newer editions
+  const prevUnviewed = hasPrev && !registryEntries[currentIndex + 1]?.viewedAt
+  const nextUnviewed = hasNext && !registryEntries[currentIndex - 1]?.viewedAt
 
   return (
     <div ref={containerRef} className="pb-8">
@@ -283,9 +330,10 @@ export default function EditionView({
           <button
             onClick={goToPrev}
             disabled={!hasPrev}
-            className="p-2 text-gray-500 dark:text-gray-400 disabled:opacity-30 hover:text-gray-700 dark:hover:text-gray-200"
+            className="p-2 text-gray-500 dark:text-gray-400 disabled:opacity-30 hover:text-gray-700 dark:hover:text-gray-200 flex items-center"
             aria-label="Previous edition (older)"
           >
+            {prevUnviewed && <span className="text-red-500 text-xs mr-0.5">●</span>}
             <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
               <path d="M13 4l-6 6 6 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -306,12 +354,13 @@ export default function EditionView({
           <button
             onClick={goToNext}
             disabled={!hasNext}
-            className="p-2 text-gray-500 dark:text-gray-400 disabled:opacity-30 hover:text-gray-700 dark:hover:text-gray-200"
+            className="p-2 text-gray-500 dark:text-gray-400 disabled:opacity-30 hover:text-gray-700 dark:hover:text-gray-200 flex items-center"
             aria-label="Next edition (newer)"
           >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
               <path d="M7 4l6 6-6 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
+            {nextUnviewed && <span className="text-red-500 text-xs ml-0.5">●</span>}
           </button>
         </div>
 
@@ -364,7 +413,7 @@ export default function EditionView({
               <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
             </div>
             <span className="text-xs text-gray-400 dark:text-gray-500">
-              {section.posts.length}
+              viewed {section.posts.filter(p => viewedAtMap.has(getSummaryId(p))).length}/{section.posts.length}
             </span>
           </div>
 

@@ -13,7 +13,7 @@ import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, SecondaryEntry, getIntervalHoursSync, isStatusShow } from '../curation/types'
 import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
-import { numberUnnumberedPostsForDay, assignNumbersForDay } from '../curation/skylimitNumbering'
+import { numberUnnumberedPostsForDay, assignNumbersForDay, assignAllNumbers } from '../curation/skylimitNumbering'
 import { clientNow, clientDate, clientTimeout, clearClientTimeout, clientInterval, clearClientInterval } from '../utils/clientClock'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { HomeTab, getFeedStateKey, getScrollStateKey, HOME_TAB_STATE_KEY, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary, RefreshDisplayedFeedOptions, RefreshDisplayedFeedResult } from './homePageTypes'
@@ -57,6 +57,7 @@ export interface UseFeedPipelineReturn {
   isInitialLoad: boolean
   lookingBack: boolean
   lookbackProgress: number | null
+  initPhase: 'posts' | 'follows' | null
   showCurationInitModal: boolean
   setShowCurationInitModal: React.Dispatch<React.SetStateAction<boolean>>
   curationInitStats: CurationInitStatsDisplay | null
@@ -130,6 +131,7 @@ export function useFeedPipeline({
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [lookingBack, setLookingBack] = useState(false)
   const [lookbackProgress, setLookbackProgress] = useState<number | null>(null)
+  const [initPhase, setInitPhase] = useState<'posts' | 'follows' | null>(null)
   const [showCurationInitModal, setShowCurationInitModal] = useState(false)
   const [curationInitStats, setCurationInitStats] = useState<CurationInitStatsDisplay | null>(null)
   // Paged updates state
@@ -424,7 +426,7 @@ export function useFeedPipeline({
       const settings = await getSettings()
       const pageLength = settings?.feedPageLength || 25
       const effectivePageLength = targetSize ?? pageLength
-      const lookbackDays = settings?.lookbackDays || 1
+      const lookbackDays = settings?.initialLookbackDays ?? 1
 
       const newestCachedTimestamp = await getNewestCachedPostTimestamp()
       if (!isCacheWithinLookback(newestCachedTimestamp, lookbackDays, settings?.timezone)) {
@@ -667,7 +669,7 @@ export function useFeedPipeline({
     try {
       const settings = await getSettings()
       const pageLength = settings?.feedPageLength || 25
-      const lookbackDays = settings?.lookbackDays || 1
+      const lookbackDays = settings?.initialLookbackDays ?? 1
       const initialCacheLength = pageLength * 2
 
       setRateLimitStatus(null)
@@ -875,6 +877,7 @@ export function useFeedPipeline({
 
             setLookingBack(true)
             setLookbackProgress(0)
+            setInitPhase('posts')
 
             fetchToSecondaryFeedCache(
               agent,
@@ -908,7 +911,9 @@ export function useFeedPipeline({
                 if (isInitialCurationRef.current) {
                   try {
                     console.log('[Curation Init] Computing filter statistics...')
-                    await computeStatsInBackground(agent, myUsername, myDid, true)
+                    setInitPhase('follows')
+                    setLookbackProgress(0)
+                    await computeStatsInBackground(agent, myUsername, myDid, true, (p) => setLookbackProgress(p))
 
                     console.log('[Curation Init] Updating curation decisions for cached posts...')
                     await recomputeCurationDecisions(agent, myUsername, myDid)
@@ -945,16 +950,19 @@ export function useFeedPipeline({
                     console.log('[Curation Init] Reloading feed with curation data...')
                     await refreshDisplayedFeed({ triggerProbe: false, showAllNewPosts: false })
 
+                    setInitPhase(null)
                     setShowCurationInitModal(true)
                     isInitialCurationRef.current = false
                     console.log('[Curation Init] Modal displayed')
                   } catch (err) {
                     console.error('[Curation Init] Failed to compute stats:', err)
+                    setInitPhase(null)
                     isInitialCurationRef.current = false
                   }
                 } else {
                   try {
-                    console.log('[Lookback] Non-initial lookback complete, redisplaying...')
+                    console.log('[Lookback] Non-initial lookback complete, assigning numbers and redisplaying...')
+                    await assignAllNumbers()
                     await refreshDisplayedFeed({ triggerProbe: false, showAllNewPosts: false })
                     setInitialPrefetchDone(true)
                   } catch (err) {
@@ -971,6 +979,7 @@ export function useFeedPipeline({
               console.error('[Background Lookback] Failed:', err)
               setLookingBack(false)
               setLookbackProgress(null)
+              setInitPhase(null)
               setInitialPrefetchDone(true)
             })
           } else if (skipIdleReturnLookback) {
@@ -1716,6 +1725,7 @@ export function useFeedPipeline({
     isInitialLoad,
     lookingBack,
     lookbackProgress,
+    initPhase,
     showCurationInitModal, setShowCurationInitModal,
     curationInitStats,
     newPostsCount, setNewPostsCount,

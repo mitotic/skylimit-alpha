@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { matchUserPattern, matchTextPattern, matchPost, matchAtWordBoundary, normalizeText } from '../skylimitEditionMatcher'
-import { parseEditionFile } from '../skylimitEditions'
+import { parseEditionFile, HEAD_EDITION_NUMBER, TAIL_EDITION_NUMBER } from '../skylimitEditions'
 import { PostSummary } from '../types'
 import { TextPattern } from '../skylimitEditions'
 
@@ -200,7 +200,7 @@ describe('matchPost', () => {
     expect(matchPost(summary, parsed)).toBeNull()
   })
 
-  it('should match user pattern in edition-specific section', () => {
+  it('should match user pattern in timed edition section', () => {
     const parsed = parseEditionFile(`@default*
 # 08:00 Morning
 @testuser*`)
@@ -212,7 +212,7 @@ describe('matchPost', () => {
     expect(result!.editionTime).toBe('08:00')
   })
 
-  it('should match edition0 pattern and assign to nearest edition', () => {
+  it('should match editionA (HEAD) pattern and assign to HEAD', () => {
     const parsed = parseEditionFile(`@testuser*
 # 08:00 Morning
 @other*`)
@@ -220,10 +220,12 @@ describe('matchPost', () => {
     const result = matchPost(summary, parsed)
 
     expect(result).not.toBeNull()
-    expect(result!.matchedEditionNumber).toBe(0) // matched in edition0
+    expect(result!.matchedEditionNumber).toBe(HEAD_EDITION_NUMBER)
+    // EditionA tag starts with 'a.'
+    expect(result!.editionTag).toMatch(/^a\./)
   })
 
-  it('should generate correct edition_tag format', () => {
+  it('should generate correct edition_tag format with letter codes', () => {
     const parsed = parseEditionFile(`@default.user
 # 08:00 Morning
 ## News
@@ -236,8 +238,8 @@ describe('matchPost', () => {
     const result = matchPost(summary, parsed)
 
     expect(result).not.toBeNull()
-    // match_edition=1, section_code=b (News is 2nd section), userpattern=00, textpattern=a
-    expect(result!.editionTag).toBe('1.b.00a')
+    // match_edition=1 → letter 'b', section_code=a (News is 2nd section → 'a'), userpattern=00, textpattern=a
+    expect(result!.editionTag).toBe('b.a.00a')
   })
 
   it('should match with text pattern including hashtag', () => {
@@ -264,17 +266,68 @@ describe('matchPost', () => {
     expect(result).toBeNull()
   })
 
-  it('should match bottom-to-top within edition', () => {
+  it('should match top-to-bottom within edition (first match wins)', () => {
     const parsed = parseEditionFile(`# 08:00 Morning
 @testuser*
 @*: #tech`)
-    // Both patterns match, but bottom-to-top means @*: #tech (last/bottom) is checked first
+    // Both patterns match, but top-to-bottom means @testuser* (first/top) is checked first
     const summary = makeSummary({ username: 'testuser.bsky.social', tags: ['tech'] })
     const result = matchPost(summary, parsed)
 
     expect(result).not.toBeNull()
-    // @*: #tech is pattern index 01 (second in list), matched bottom-to-top
-    expect(result!.editionTag).toContain('01')
+    // @testuser* is pattern index 00 (first in list), matched top-to-bottom
+    expect(result!.editionTag).toContain('00')
+  })
+
+  it('should match HEAD patterns before timed editions', () => {
+    const parsed = parseEditionFile(`@testuser*
+# 08:00 Morning
+@testuser*: #tech`)
+    // HEAD has @testuser* (matches without text), timed has @testuser*: #tech
+    const summary = makeSummary({ username: 'testuser.bsky.social', tags: ['tech'] })
+    const result = matchPost(summary, parsed)
+
+    expect(result).not.toBeNull()
+    // HEAD matches first, so matchedEditionNumber should be 0
+    expect(result!.matchedEditionNumber).toBe(HEAD_EDITION_NUMBER)
+    expect(result!.editionTag).toMatch(/^a\./)
+  })
+
+  it('should match TAIL patterns only if HEAD and timed do not match', () => {
+    const parsed = parseEditionFile(`@specific.user
+# 08:00 Morning
+@another.specific.user
+# TAIL
+@testuser*`)
+    const summary = makeSummary({ username: 'testuser.bsky.social' })
+    const result = matchPost(summary, parsed)
+
+    expect(result).not.toBeNull()
+    expect(result!.matchedEditionNumber).toBe(TAIL_EDITION_NUMBER)
+    expect(result!.editionTag).toMatch(/^z\./)
+  })
+
+  it('should produce correct tags for HEAD, timed, and TAIL', () => {
+    const parsed = parseEditionFile(`@head.user
+# 08:00 Morning
+@timed.user
+# TAIL
+@tail.user`)
+
+    // HEAD match
+    const headResult = matchPost(makeSummary({ username: 'head.user' }), parsed)
+    expect(headResult).not.toBeNull()
+    expect(headResult!.editionTag).toBe('a.0.00')
+
+    // Timed match
+    const timedResult = matchPost(makeSummary({ username: 'timed.user' }), parsed)
+    expect(timedResult).not.toBeNull()
+    expect(timedResult!.editionTag).toBe('b.0.00')
+
+    // TAIL match
+    const tailResult = matchPost(makeSummary({ username: 'tail.user' }), parsed)
+    expect(tailResult).not.toBeNull()
+    expect(tailResult!.editionTag).toBe('z.0.00')
   })
 
   it('should reject bare @* without text patterns', () => {

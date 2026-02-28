@@ -3,17 +3,26 @@
  *
  * Assembles held posts into synthetic reposts by fictitious editor users
  * and inserts them into the feed during secondary-to-primary cache transfer.
+ *
+ * Edition tag format after remapping:
+ *   a.0 = editionA (HEAD) default, a.1 = timed default, a.2 = editionZ (TAIL) default
+ *   a.a-z = editionA named sections, b-y.a-z = timed named, z.a-z = editionZ named
  */
 
 import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
-import { CurationFeedViewPost, FeedCacheEntry, PostSummary } from './types'
+import { CurationFeedViewPost, EditionRegistryEntry, FeedCacheEntry, PostSummary } from './types'
 import { getPostSummariesInRange } from './skylimitCache'
-import { getEditorHandle, getEditorUser, editorUserToProfileView, getParsedEditions } from './skylimitEditions'
+import { getEditorHandle, getEditorUser, editorUserToProfileView, getParsedEditions, editionLetter, HEAD_EDITION_NUMBER, TAIL_EDITION_NUMBER } from './skylimitEditions'
 import { clientNow } from '../utils/clientClock'
+import { getSettings } from './skylimitStore'
+import { getEditionRegistry } from './editionRegistry'
 
-export const EDITION_LOOKBACK_HOURS = 25
-const EDITION_LOOKBACK_MS = EDITION_LOOKBACK_HOURS * 60 * 60 * 1000
+export async function getEditionLookbackMs(): Promise<number> {
+  const settings = await getSettings()
+  const days = settings?.initialLookbackDays ?? 1
+  return (24 * days + 1) * 60 * 60 * 1000
+}
 
 /**
  * Assemble an edition: collect held posts, sort them, and create synthetic reposts.
@@ -21,7 +30,7 @@ const EDITION_LOOKBACK_MS = EDITION_LOOKBACK_HOURS * 60 * 60 * 1000
  * This function is designed for reuse during secondary-to-primary cache transfer
  * for missed editions.
  *
- * @param editionNumber - The edition number (1-9)
+ * @param editionNumber - The edition number (1-24 for timed editions)
  * @param editionTime - The edition time string ("hh:mm")
  * @param gapStart - Timestamp of the post before the gap
  * @param gapEnd - Timestamp of the post after the gap
@@ -32,12 +41,13 @@ export async function tryCreateEdition(
   editionTime: string,
   gapStart: number,
   _gapEnd: number,
-  pendingSummaries: PostSummary[] = []
+  pendingSummaries: PostSummary[] = [],
+  editionTimestamp: number
 ): Promise<CurationFeedViewPost[]> {
   // Query held summaries older than the gap boundary.
   // In-memory pendingSummaries are filtered to <= gapStart and deduped
   // against IndexedDB results before concatenation.
-  const lookbackStart = gapStart - EDITION_LOOKBACK_MS
+  const lookbackStart = gapStart - await getEditionLookbackMs()
   const dbSummaries = await getPostSummariesInRange(lookbackStart, gapStart)
   const inMemoryHeld = pendingSummaries.filter(s => s.postTimestamp <= gapStart)
 
@@ -52,11 +62,12 @@ export async function tryCreateEdition(
   const heldCount = summaries.filter(s => s.edition_status === 'hold').length
   console.log(`[Edition] Lookback window: ${new Date(lookbackStart).toLocaleString()} to ${new Date(gapStart).toLocaleString()} | sources: ${dedupedInMemory.length} in-memory, ${dbSummaries.length} IndexedDB (${summaries.length} total, ${heldCount} held)`)
 
-  const editionStr = String(editionNumber)
+  // Collect held posts: match timed edition letter, editionA ('a'), and editionZ ('z')
+  const edLetter = editionLetter(editionNumber)
   const heldPosts = summaries.filter(s =>
     s.edition_status === 'hold' &&
     s.edition_tag &&
-    (s.edition_tag.startsWith(editionStr) || s.edition_tag.startsWith('0'))
+    (s.edition_tag.startsWith(edLetter) || s.edition_tag.startsWith('a') || s.edition_tag.startsWith('z'))
   )
 
   if (heldPosts.length === 0) {
@@ -66,17 +77,22 @@ export async function tryCreateEdition(
 
   console.log(`[Edition] Assembling edition ${editionNumber} (${editionTime}) with ${heldPosts.length} held posts`)
 
-  // Remap edition_tag first character to control sort order:
-  // - Edition-N default section (section 'a') → change to '0' (combined default, sorts last)
-  // - Edition0 named sections (digit 1-9) → change to '1' (sorts between default and edition-specific)
+  // Remap edition_tag to control sort order (only 2 rules):
+  // - Timed edition default (N.0 where N=b-y) → 'a.1' (combined default)
+  // - EditionZ default (z.0) → 'a.2' (combined default)
+  // Everything else stays as-is:
+  //   EditionA default (a.0), editionA named (a.a-z), timed named (b-y.a-z), editionZ named (z.a-z)
   for (const post of heldPosts) {
     const tag = post.edition_tag!
-    const firstChar = tag.charAt(0)
-    const sectionCode = tag.charAt(2) // format: <digit>.<section>.<pattern>
-    if (firstChar !== '0' && sectionCode === 'a') {
-      post.edition_tag = '0' + tag.substring(1)
-    } else if (firstChar === '0' && sectionCode >= '1' && sectionCode <= '9') {
-      post.edition_tag = '1' + tag.substring(1)
+    const tagLetter = tag.charAt(0)
+    const sectionCode = tag.charAt(2)
+
+    if (tagLetter >= 'b' && tagLetter <= 'y' && sectionCode === '0') {
+      // Timed edition default → combined default position 1
+      post.edition_tag = 'a.1' + tag.substring(3)
+    } else if (tagLetter === 'z' && sectionCode === '0') {
+      // EditionZ default → combined default position 2
+      post.edition_tag = 'a.2' + tag.substring(3)
     }
   }
 
@@ -98,14 +114,25 @@ export async function tryCreateEdition(
     const summary = heldPosts[i]
     const insertTime = insertStartTime + i // 1ms spacing
 
-    // Determine the section code from the edition_tag
-    // Tag format: <edition>.<section_code>.<pattern_code>
-    let sectionCode = summary.edition_tag!.charAt(2) // char after first period is section code
-    // Edition0 default section (code '0') uses the target edition's default section user (code 'a')
-    if (sectionCode === '0') sectionCode = 'a'
+    // Derive editor handle from the remapped edition_tag
+    const tagEdLetter = summary.edition_tag!.charAt(0)
+    const sectionCode = summary.edition_tag!.charAt(2)
+    let editorHandle: string
 
-    // Get the editor user for this section
-    const editorHandle = getEditorHandle(editionTime, sectionCode)
+    if (sectionCode === '0' || sectionCode === '1' || sectionCode === '2') {
+      // All defaults (editionA, timed, editionZ) use timed edition's default user
+      editorHandle = getEditorHandle(editionTime, '0')
+    } else if (tagEdLetter === 'a') {
+      // EditionA named section
+      editorHandle = getEditorHandle(editionTime, sectionCode, 'head')
+    } else if (tagEdLetter === 'z') {
+      // EditionZ named section
+      editorHandle = getEditorHandle(editionTime, sectionCode, 'tail')
+    } else {
+      // Timed named section
+      editorHandle = getEditorHandle(editionTime, sectionCode)
+    }
+
     const editorUser = getEditorUser(editorHandle)
 
     if (!editorUser) {
@@ -159,6 +186,31 @@ export async function tryCreateEdition(
     await savePostSummaries(heldPosts)
   }
 
+  // Save edition to registry for navigation
+  if (syntheticPosts.length > 0) {
+    const { saveEditionToRegistry } = await import('./editionRegistry')
+    const parsedEditions = await getParsedEditions()
+    const editionMeta = parsedEditions.editions.find(e => e.time === editionTime)
+    const editionName = editionMeta?.name || editionTime
+
+    // Use editionTimestamp (nominal edition time) for the date portion of the key,
+    // NOT gapStart, to match the key constructed in feedCacheFetch.ts for duplicate checks.
+    // gapStart could differ from editionTimestamp by 15+ minutes, crossing a date boundary.
+    const keyDate = new Date(editionTimestamp)
+    const dateStr = `${keyDate.getFullYear()}-${String(keyDate.getMonth() + 1).padStart(2, '0')}-${String(keyDate.getDate()).padStart(2, '0')}`
+    const editionKey = `${dateStr}_${editionTime}`
+
+    saveEditionToRegistry({
+      editionKey,
+      editionName,
+      createdAt: clientNow(),
+      startPostTimestamp: insertStartTime,
+      endPostTimestamp: insertStartTime + syntheticPosts.length - 1,
+      oldestOriginalTimestamp: Math.min(...heldPosts.map(s => s.postTimestamp)),
+    })
+    console.log(`[Edition] Saved registry entry: ${editionKey} (${editionName}), ${syntheticPosts.length} posts`)
+  }
+
   console.log(`[Edition] Created ${syntheticPosts.length} synthetic reposts for edition ${editionNumber} (${editionTime})`)
 
   return syntheticPosts
@@ -167,7 +219,7 @@ export async function tryCreateEdition(
 // --- Edition display data retrieval ---
 
 export interface EditionDisplaySection {
-  code: string            // section code: "a", "b", etc.
+  code: string            // section code or composite key: "0", "a", "head_a", "tail_b"
   name: string            // "" for default, "Tech" for named sections
   posts: CurationFeedViewPost[]
 }
@@ -180,65 +232,84 @@ export interface EditionDisplayData {
 }
 
 /**
- * Parse an editor handle to extract edition time and section code.
- * Handle format: "editor_HH_MM_X" where X is the section code.
- * Returns null if the handle doesn't match the expected format.
+ * Parsed editor handle with edition type information
  */
-function parseEditorHandle(handle: string): { editionTime: string; sectionCode: string } | null {
-  const match = handle.match(/^editor_(\d{2})_(\d{2})_([a-z0-9])$/)
-  if (!match) return null
-  return {
-    editionTime: `${match[1]}:${match[2]}`,
-    sectionCode: match[3],
-  }
+interface ParsedEditorHandle {
+  editionTime: string
+  sectionCode: string
+  editionType: 'head' | 'timed' | 'tail'
 }
 
 /**
- * Retrieve assembled editions from the cache for display in the Editions tab.
- *
- * Queries PostSummaries for synthetic edition posts, groups them by edition
- * and section, then retrieves the full original post data from the feed cache
- * (or server) for complete rendering with media.
- *
- * @param agent - BskyAgent for fetching posts not found in cache
- * @returns Array of editions ordered chronologically (newest first)
+ * Parse an editor handle to extract edition time, section code, and edition type.
+ * Handle formats:
+ *   "editor_HH_MM_X"        — timed section (editionType='timed')
+ *   "editor_HH_MM_head_X"   — editionA named section (editionType='head')
+ *   "editor_HH_MM_tail_X"   — editionZ named section (editionType='tail')
+ * Returns null if the handle doesn't match any expected format.
  */
-export async function getAssembledEditions(agent: BskyAgent | null): Promise<EditionDisplayData[]> {
-  const now = clientNow()
-  const lookbackStart = now - EDITION_LOOKBACK_MS
+function parseEditorHandle(handle: string): ParsedEditorHandle | null {
+  const lower = handle.toLowerCase()
+  // EditionA: editor_hh_mm_head_x
+  const headMatch = lower.match(/^editor_(\d{2})_(\d{2})_head_([a-z0-9])$/)
+  if (headMatch) {
+    return { editionTime: `${headMatch[1]}:${headMatch[2]}`, sectionCode: headMatch[3], editionType: 'head' }
+  }
+  // EditionZ: editor_hh_mm_tail_x
+  const tailMatch = lower.match(/^editor_(\d{2})_(\d{2})_tail_([a-z0-9])$/)
+  if (tailMatch) {
+    return { editionTime: `${tailMatch[1]}:${tailMatch[2]}`, sectionCode: tailMatch[3], editionType: 'tail' }
+  }
+  // Timed: editor_hh_mm_x
+  const match = lower.match(/^editor_(\d{2})_(\d{2})_([a-z0-9])$/)
+  if (!match) return null
+  return { editionTime: `${match[1]}:${match[2]}`, sectionCode: match[3], editionType: 'timed' }
+}
 
-  // Step 1: Get all synthetic summaries from the lookback window
-  const allSummaries = await getPostSummariesInRange(lookbackStart, now)
+/**
+ * Get the list of all editions from the registry (lightweight, no post loading).
+ * Used by EditionView for navigation.
+ */
+export function getEditionList(): EditionRegistryEntry[] {
+  return getEditionRegistry()
+}
+
+/**
+ * Load content for a single edition on demand.
+ *
+ * Queries PostSummaries within the registry entry's timestamp range,
+ * groups them by section, and retrieves the full original post data
+ * from the feed cache (or server) for complete rendering with media.
+ *
+ * @param registryEntry - The edition registry entry to load content for
+ * @param agent - BskyAgent for fetching posts not found in cache
+ * @returns EditionDisplayData or null if no content found
+ */
+export async function getEditionContent(registryEntry: EditionRegistryEntry, agent: BskyAgent | null): Promise<EditionDisplayData | null> {
+  // Step 1: Get synthetic summaries for this specific edition
+  const allSummaries = await getPostSummariesInRange(registryEntry.startPostTimestamp, registryEntry.endPostTimestamp)
   const syntheticSummaries = allSummaries.filter(s => s.edition_status === 'synthetic')
 
   if (syntheticSummaries.length === 0) {
-    return []
+    return null
   }
 
-  // Step 2: Group summaries by edition date+time using editor handle
-  // Key is "YYYY-MM-DD_HH:MM" to distinguish same-time editions on different days
-  // Map: editionKey -> { editionTime, sectionMap: Map<sectionCode, PostSummary[]> }
-  const editionMap = new Map<string, { editionTime: string; sectionMap: Map<string, PostSummary[]> }>()
+  // Step 2: Group summaries by section using editor handle
+  const sectionMap = new Map<string, PostSummary[]>()
 
   for (const summary of syntheticSummaries) {
     const parsed = parseEditorHandle(summary.username)
     if (!parsed) continue
 
-    // Derive date from the synthetic post's timestamp
-    const postDate = new Date(summary.postTimestamp)
-    const dateStr = `${postDate.getFullYear()}-${String(postDate.getMonth() + 1).padStart(2, '0')}-${String(postDate.getDate()).padStart(2, '0')}`
-    const editionKey = `${dateStr}_${parsed.editionTime}`
+    // Composite grouping key: timed sections use raw code, head/tail get prefix
+    const groupKey = parsed.editionType === 'timed'
+      ? parsed.sectionCode
+      : `${parsed.editionType}_${parsed.sectionCode}`
 
-    let entry = editionMap.get(editionKey)
-    if (!entry) {
-      entry = { editionTime: parsed.editionTime, sectionMap: new Map() }
-      editionMap.set(editionKey, entry)
-    }
-
-    let sectionPosts = entry.sectionMap.get(parsed.sectionCode)
+    let sectionPosts = sectionMap.get(groupKey)
     if (!sectionPosts) {
       sectionPosts = []
-      entry.sectionMap.set(parsed.sectionCode, sectionPosts)
+      sectionMap.set(groupKey, sectionPosts)
     }
     sectionPosts.push(summary)
   }
@@ -247,7 +318,7 @@ export async function getAssembledEditions(agent: BskyAgent | null): Promise<Edi
   const parsedEditions = await getParsedEditions()
   const editionsByTime = new Map<string, { name: string; sectionNames: Map<string, string> }>()
   for (const edition of parsedEditions.editions) {
-    if (edition.editionNumber === 0) continue // skip default edition (edition0 has no time)
+    if (edition.editionNumber === HEAD_EDITION_NUMBER || edition.editionNumber === TAIL_EDITION_NUMBER) continue
     const sectionNames = new Map<string, string>()
     for (const section of edition.sections) {
       sectionNames.set(section.code, section.name)
@@ -255,10 +326,32 @@ export async function getAssembledEditions(agent: BskyAgent | null): Promise<Edi
     editionsByTime.set(edition.time, { name: edition.name, sectionNames })
   }
 
+  // EditionA and editionZ metadata for section name lookup
+  const editionAMeta = parsedEditions.editions.find(e => e.editionNumber === HEAD_EDITION_NUMBER)
+  const editionZMeta = parsedEditions.editions.find(e => e.editionNumber === TAIL_EDITION_NUMBER)
+
+  // Extract editionTime from the registry entry key (format: "YYYY-MM-DD_HH:MM")
+  const editionTime = registryEntry.editionKey.split('_').slice(1).join('_')
+  const editionMeta = editionsByTime.get(editionTime)
+
+  // Section name resolution using composite groupKey
+  function getSectionName(groupKey: string): string {
+    if (groupKey === '0') return ''  // combined default
+    if (groupKey.startsWith('head_')) {
+      const code = groupKey.substring(5)
+      const section = editionAMeta?.sections.find(s => s.code === code)
+      return section?.name || `Section ${code}`
+    }
+    if (groupKey.startsWith('tail_')) {
+      const code = groupKey.substring(5)
+      const section = editionZMeta?.sections.find(s => s.code === code)
+      return section?.name || `Section ${code}`
+    }
+    // Timed section
+    return editionMeta?.sectionNames.get(groupKey) || `Section ${groupKey}`
+  }
+
   // Step 4: Retrieve full original posts for rendering
-  // The synthetic posts in the feed cache lack embed data. The ORIGINAL posts
-  // (which were held for the edition) should still be in the feed cache with
-  // full data including embeds. Look up by repostUri (the original post URI).
   const { getDB } = await import('./skylimitCache')
   const database = await getDB()
 
@@ -296,7 +389,6 @@ export async function getAssembledEditions(agent: BskyAgent | null): Promise<Edi
   if (missingUris.length > 0 && agent) {
     console.log(`[Edition] Fetching ${missingUris.length} posts from server (not in feed cache)`)
     try {
-      // agent.getPosts accepts up to 25 URIs at a time
       for (let i = 0; i < missingUris.length; i += 25) {
         const batch = missingUris.slice(i, i + 25)
         const response = await agent.getPosts({ uris: batch })
@@ -330,84 +422,97 @@ export async function getAssembledEditions(agent: BskyAgent | null): Promise<Edi
     ))
   }
 
-  // Step 5: Build EditionDisplayData array
-  const editions: EditionDisplayData[] = []
+  // Step 5: Build sections
+  const sections: EditionDisplaySection[] = []
 
-  for (const [, { editionTime, sectionMap }] of editionMap) {
-    const editionMeta = editionsByTime.get(editionTime)
-    const editionName = editionMeta?.name || editionTime
+  // Sort section codes: '0' (combined default) first,
+  // then editionA named (head_*), timed (*), editionZ named (tail_*)
+  const sortedCodes = [...sectionMap.keys()].sort((a, b) => {
+    if (a === '0') return -1
+    if (b === '0') return 1
+    const rank = (k: string) => k.startsWith('head_') ? 0 : k.startsWith('tail_') ? 2 : 1
+    const ra = rank(a), rb = rank(b)
+    if (ra !== rb) return ra - rb
+    return a.localeCompare(b)
+  })
 
-    const sections: EditionDisplaySection[] = []
+  for (const code of sortedCodes) {
+    const summaries = sectionMap.get(code)!
+    // Sort by postTimestamp descending (newest first) — timestamps preserve edition ordering
+    summaries.sort((a, b) => b.postTimestamp - a.postTimestamp)
 
-    // Sort section codes: 'a' (default) first, then alphabetically
-    const sortedCodes = [...sectionMap.keys()].sort((a, b) => {
-      if (a === 'a') return -1
-      if (b === 'a') return 1
-      return a.localeCompare(b)
-    })
+    const posts: CurationFeedViewPost[] = []
+    for (const summary of summaries) {
+      // Get the synthetic post (for reason/curation metadata)
+      const syntheticPost = syntheticPostMap.get(summary.uniqueId)
 
-    for (const code of sortedCodes) {
-      const summaries = sectionMap.get(code)!
-      // Sort by postTimestamp descending (newest first) — timestamps preserve edition ordering
-      summaries.sort((a, b) => b.postTimestamp - a.postTimestamp)
+      // Get the original post (for full post data with embeds)
+      const originalPost = summary.repostUri ? originalPostMap.get(summary.repostUri) : undefined
 
-      const posts: CurationFeedViewPost[] = []
-      for (const summary of summaries) {
-        // Get the synthetic post (for reason/curation metadata)
-        const syntheticPost = syntheticPostMap.get(summary.uniqueId)
-
-        // Get the original post (for full post data with embeds)
-        const originalPost = summary.repostUri ? originalPostMap.get(summary.repostUri) : undefined
-
-        if (originalPost && syntheticPost) {
-          // Combine: original post data + synthetic edition metadata
-          const editionPost: CurationFeedViewPost = {
-            post: originalPost,
-            reason: syntheticPost.reason,
-            curation: {
-              curation_status: 'edition_publish_show',
-              edition_status: 'synthetic',
-              edition_summary_id: summary.uniqueId,
-            },
-          }
-          posts.push(editionPost)
-        } else if (syntheticPost) {
-          // Fallback: use synthetic post as-is (text only, no embeds)
-          if (!syntheticPost.curation) {
-            syntheticPost.curation = {
-              curation_status: 'edition_publish_show',
-              edition_status: 'synthetic',
-              edition_summary_id: summary.uniqueId,
-            }
-          }
-          posts.push(syntheticPost)
+      if (originalPost && syntheticPost) {
+        // Combine: original post data + synthetic edition metadata
+        const editionPost: CurationFeedViewPost = {
+          post: originalPost,
+          reason: syntheticPost.reason,
+          curation: {
+            curation_status: 'edition_publish_show',
+            edition_status: 'synthetic',
+            edition_summary_id: summary.uniqueId,
+          },
         }
-      }
-
-      const sectionName = code === 'a'
-        ? ''
-        : editionMeta?.sectionNames.get(code) || `Section ${code.toUpperCase()}`
-
-      if (posts.length > 0) {
-        sections.push({ code, name: sectionName, posts })
+        posts.push(editionPost)
+      } else if (syntheticPost) {
+        // Fallback: use synthetic post as-is (text only, no embeds)
+        if (!syntheticPost.curation) {
+          syntheticPost.curation = {
+            curation_status: 'edition_publish_show',
+            edition_status: 'synthetic',
+            edition_summary_id: summary.uniqueId,
+          }
+        }
+        posts.push(syntheticPost)
       }
     }
 
-    if (sections.length > 0) {
-      // Derive edition date from actual assembly time of synthetic posts
-      const allSummariesForEdition = [...sectionMap.values()].flat()
-      const earliestTimestamp = Math.min(...allSummariesForEdition.map(s => s.postTimestamp))
-      const editionDate = new Date(earliestTimestamp)
+    const sectionName = getSectionName(code)
 
-      editions.push({ editionTime, editionDate, editionName, sections })
+    if (posts.length > 0) {
+      sections.push({ code, name: sectionName, posts })
     }
+  }
+
+  if (sections.length === 0) {
+    return null
+  }
+
+  const editionDate = new Date(registryEntry.startPostTimestamp)
+  const editionName = registryEntry.editionName
+
+  const cachedCount = syntheticSummaries.filter(s => s.repostUri && originalPostMap.has(s.repostUri)).length
+  const fetchedCount = missingUris.filter(uri => originalPostMap.has(uri)).length
+  console.log(`[Edition] Loaded ${editionName} (${registryEntry.editionKey}): ${syntheticSummaries.length} synthetic posts, ${cachedCount} from cache, ${fetchedCount} from server`)
+
+  return { editionTime, editionDate, editionName, sections }
+}
+
+/**
+ * Retrieve assembled editions from the cache for display in the Editions tab.
+ * Legacy wrapper that loads all editions. Prefer getEditionList() + getEditionContent() for on-demand loading.
+ *
+ * @param agent - BskyAgent for fetching posts not found in cache
+ * @returns Array of editions ordered chronologically (newest first)
+ */
+export async function getAssembledEditions(agent: BskyAgent | null): Promise<EditionDisplayData[]> {
+  const entries = getEditionList()
+  if (entries.length === 0) return []
+
+  const editions: EditionDisplayData[] = []
+  for (const entry of entries) {
+    const content = await getEditionContent(entry, agent)
+    if (content) editions.push(content)
   }
 
   // Sort editions chronologically, newest first
   editions.sort((a, b) => b.editionDate.getTime() - a.editionDate.getTime())
-
-  const cachedCount = syntheticSummaries.filter(s => s.repostUri && originalPostMap.has(s.repostUri)).length
-  const fetchedCount = missingUris.filter(uri => originalPostMap.has(uri)).length
-  console.log(`[Edition] Retrieved ${editions.length} editions for display (${syntheticSummaries.length} synthetic posts, ${cachedCount} from cache, ${fetchedCount} from server)`)
   return editions
 }

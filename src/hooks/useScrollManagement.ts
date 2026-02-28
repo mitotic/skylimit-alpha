@@ -265,19 +265,14 @@ export function useScrollManagement({
   // Scroll to top handler
   const handleScrollToTop = useCallback(() => {
     isProgrammaticScrollRef.current = true
-
-    if (firstPostRef.current) {
-      firstPostRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    } else {
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
 
     // Reset flag after scroll completes
     setTimeout(() => {
       isProgrammaticScrollRef.current = false
       lastScrollTopRef.current = window.scrollY
     }, 1000)
-  }, [firstPostRef])
+  }, [])
 
   return {
     isScrolledDown,

@@ -909,6 +909,28 @@ export default function SettingsPage() {
                   </p>
                 </div>
 
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">
+                    Initial Lookback Days
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="7"
+                    value={settings.initialLookbackDays ?? 1}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value, 10)
+                      if (!isNaN(value) && value >= 1 && value <= 7) {
+                        updateSetting('initialLookbackDays', value)
+                      }
+                    }}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Number of days to look back on initial load for curation stats (default: 1). A longer lookback helps build better initial curation statistics.
+                  </p>
+                </div>
+
                 <h3 className="text-lg font-semibold mb-4 mt-6">Paged Fresh Updates</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
                   Delay viewing new posts so popularity metrics have time to accumulate, enabling better curation.
@@ -1017,12 +1039,13 @@ export default function SettingsPage() {
                   }}
                   className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
                   rows={12}
-                  placeholder={"@*: #breaking\n@always.interesting.bsky.social\n@sometimes.interesting*: topic1, compound topic2\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n## Humor\n@xkcd.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding"}
+                  placeholder={"# HEAD\n@*: #breaking\n@always.interesting.bsky.social\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding\n\n# TAIL\n@*: longform*"}
                 />
                 <p className="text-sm text-gray-500 mt-1">
                   Configure edition layout patterns. Lines starting with @ define user patterns
-                  (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks editions.
-                  * denotes wildcard match to word boundary. Sections defined above first edition apply to all editions.
+                  (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
+                  # HEAD and # TAIL mark leading/trailing sections that apply to all editions.
+                  * denotes wildcard match to word boundary. Patterns are matched top-to-bottom (first match wins).
                 </p>
                 <div className="mt-2 flex items-center gap-3">
                   <Button
@@ -1031,9 +1054,9 @@ export default function SettingsPage() {
                       const text = settings.editionLayout.trim()
                       if (!text) {
                         // Empty layout: clear editions — check for held posts first
-                        const { EDITION_LOOKBACK_HOURS } = await import('../curation/skylimitEditionAssembly')
+                        const { getEditionLookbackMs } = await import('../curation/skylimitEditionAssembly')
                         const now = Date.now()
-                        const lookbackStart = now - EDITION_LOOKBACK_HOURS * 60 * 60 * 1000
+                        const lookbackStart = now - await getEditionLookbackMs()
                         const summaries = await getPostSummariesInRange(lookbackStart, now)
                         const heldCount = summaries.filter(s => s.edition_status === 'hold').length
 
@@ -1066,7 +1089,7 @@ export default function SettingsPage() {
                         return
                       }
                       // Count editions and patterns for confirmation
-                      const editionCount = result.editions.filter(e => e.editionNumber > 0).length
+                      const editionCount = result.editions.filter(e => e.editionNumber > 0 && e.editionNumber < 25).length
                       const patternCount = result.editions.reduce(
                         (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
                       )

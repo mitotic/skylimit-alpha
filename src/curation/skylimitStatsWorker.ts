@@ -17,7 +17,8 @@ export async function computeStatsInBackground(
   agent: BskyAgent,
   myUsername: string,
   myDid: string,
-  forceRefreshFollows: boolean = false
+  forceRefreshFollows: boolean = false,
+  onFollowsProgress?: (percent: number) => void
 ): Promise<void> {
   try {
     const settings = await getSettings()
@@ -25,7 +26,7 @@ export async function computeStatsInBackground(
     // Refresh follows first (only if forced or it's been more than an hour)
     // Wait for completion so cached follows are available for stats computation
     try {
-      await refreshFollows(agent, myDid, forceRefreshFollows)
+      await refreshFollows(agent, myDid, forceRefreshFollows, onFollowsProgress)
     } catch (err) {
       console.warn('[Stats Worker] refreshFollows failed (non-critical):', err)
     }

@@ -35,6 +35,7 @@ import {
   tryCreateEdition,
 } from './skylimitEditionAssembly'
 import { getParsedEditions, EDITION_PRE_OFFSET_MS } from './skylimitEditions'
+import { isEditionInRegistry } from './editionRegistry'
 
 /**
  * Save posts to feed cache AND curate them (save summaries)
@@ -659,10 +660,13 @@ export async function fetchToSecondaryFeedCache(
   const editionCount = editionTimeStrs.length
   const secretKey = settings?.secretKey || 'default'
 
-  // Calculate midnight boundary: yesterday's midnight per clientDate()
+  // Calculate midnight boundary using mode-appropriate lookback days
   const today = clientDate()
   const todayMidnight = getLocalMidnight(today, settings?.timezone)
-  const midnightBoundary = todayMidnight.getTime() - 24 * 60 * 60 * 1000
+  const lookbackDays = mode === 'initial'
+    ? (settings?.initialLookbackDays ?? 1)
+    : (settings?.refillLookbackDays ?? 1)
+  const midnightBoundary = todayMidnight.getTime() - lookbackDays * 24 * 60 * 60 * 1000
   console.log(`${label} Midnight boundary: ${new Date(midnightBoundary).toLocaleString()}`)
 
   // For non-initial modes, get primary cache newest timestamp for overlap detection
@@ -890,15 +894,10 @@ function computeEditionTimestampForDay(
   return new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate() + dayOffset, hours, minutes, 0, 0).getTime()
 }
 
-const LAST_CREATED_EDITION_KEY = 'lastCreatedEditionTimestamp'
-
-function isEditionAlreadyCreated(editionTimestamp: number): boolean {
-  const stored = localStorage.getItem(LAST_CREATED_EDITION_KEY)
-  return stored !== null && parseInt(stored) === editionTimestamp
-}
-
-function markEditionCreated(editionTimestamp: number): void {
-  localStorage.setItem(LAST_CREATED_EDITION_KEY, String(editionTimestamp))
+function makeEditionKey(editionTime: string, editionTimestamp: number): string {
+  const d = new Date(editionTimestamp)
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return `${dateStr}_${editionTime}`
 }
 
 /**
@@ -975,8 +974,10 @@ export async function transferSecondaryToPrimary(
   for (let dayOffset = 0; dayOffset <= 1 && !pastRange; dayOffset++) {
     for (const edition of editionTimes) {
       const editionTimestamp = computeEditionTimestampForDay(edition.time, newestPrimaryTimestamp, timezone, dayOffset)
+      // If the current newest post is older than the edition time, postpone edition
+      // creation because a future newer post closer to the edition time may arrive
       if (editionTimestamp >= newestEntryTimestamp) { pastRange = true; break }
-      if (isEditionAlreadyCreated(editionTimestamp)) continue
+      if (isEditionInRegistry(makeEditionKey(edition.time, editionTimestamp))) continue
       if (editionTimestamp < newestPrimaryTimestamp - EDITION_PRE_OFFSET_MS) continue
       pendingEditions.push({ editionNumber: edition.editionNumber, editionTime: edition.time, editionTimestamp })
     }
@@ -1008,7 +1009,6 @@ export async function transferSecondaryToPrimary(
   // aren't in IndexedDB yet — they're only in the sorted entries being transferred.
   const inMemorySummaries = sorted.map(s => s.summary)
 
-  let tempLastCreatedEditionTimestamp: number | null = null
   const now = clientNow()
   const STALENESS_MS = 48 * 60 * 60 * 1000
 
@@ -1087,7 +1087,8 @@ export async function transferSecondaryToPrimary(
       pending.editionTime,
       gapBeforeTs,
       gapAfterTs,
-      inMemorySummaries
+      inMemorySummaries,
+      pending.editionTimestamp
     )
 
     if (syntheticPosts.length > 0) {
@@ -1139,7 +1140,6 @@ export async function transferSecondaryToPrimary(
       console.log(`[Transfer/edition] Injected ${syntheticPosts.length} synthetic edition posts`)
     }
 
-    tempLastCreatedEditionTimestamp = pending.editionTimestamp
   }
 
   // --- Main transfer loop ---
@@ -1210,11 +1210,6 @@ export async function transferSecondaryToPrimary(
 
   // Batch save summaries (numbers assigned inline unless skipNumbering)
   await savePostSummariesForce(summariesToSave)
-
-  // Commit lastCreatedEditionTimestamp after successful IndexedDB write
-  if (tempLastCreatedEditionTimestamp !== null) {
-    markEditionCreated(tempLastCreatedEditionTimestamp)
-  }
 
   // Update primary cache metadata
   await updateFeedCacheNewestPostTimestamp()

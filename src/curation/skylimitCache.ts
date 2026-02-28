@@ -1212,9 +1212,11 @@ export async function clearAllTimeVariantDataAndLogout(): Promise<void> {
   await updateSettings({ lastBrowserTimezone: undefined })
   console.log('[Debug] Scrubbed lastBrowserTimezone from settings')
 
-  // Clear edition tracking
-  localStorage.removeItem('lastCreatedEditionTimestamp')
-  console.log('[Debug] Cleared lastCreatedEditionTimestamp')
+  // Clear edition registry and legacy edition tracking
+  const { clearEditionRegistry } = await import('./editionRegistry')
+  clearEditionRegistry()
+  localStorage.removeItem('lastCreatedEditionTimestamp') // legacy cleanup
+  console.log('[Debug] Cleared edition registry')
 
   // Close DB so in-flight React effects get a fresh connection instead of a closing one
   closeDB()

@@ -6,6 +6,7 @@
 import { removePostSummariesBefore } from './skylimitCache'
 import { getSettings } from './skylimitStore'
 import { clientNow, clientTimeout, clearClientTimeout } from '../utils/clientClock'
+import { cullEditionRegistry } from './editionRegistry'
 
 // Cleanup constants (matching Mahoot's approach)
 const CURATION_DELAY = 5 * 60 * 1000 // 5 minutes debounce delay
@@ -29,7 +30,10 @@ export async function performCleanup(): Promise<void> {
     // Remove post summaries older than cutoff
     const deletedSummaries = await removePostSummariesBefore(cutoffTimestamp)
 
-    console.log(`Cleanup complete: removed ${deletedSummaries} post summaries`)
+    // Cull edition registry entries whose original posts are past retention
+    const culledEditions = cullEditionRegistry(cutoffTimestamp)
+
+    console.log(`Cleanup complete: removed ${deletedSummaries} post summaries, ${culledEditions} edition registry entries`)
   } catch (error) {
     console.error('Error during cleanup:', error)
   }

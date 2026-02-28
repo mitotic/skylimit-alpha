@@ -58,6 +58,7 @@ interface IntervalDiagnostics {
   // Cache diagnostics
   summariesTotalCached: number
   summariesDroppedCached: number
+  editionPostTotalCached: number
   summariesTotal: number
   summariesAccumulated: number
   // Timestamp range
@@ -182,16 +183,19 @@ export async function computePostStats(
   let intervalStr = oldestIntervalStr
   // Track post counts by interval key (interval key = start time of interval)
   const intervalPostCounts: Record<string, number> = {}
-  // Count dropped summaries across all intervals
+  // Count dropped summaries and edition post summaries across all intervals
   let droppedCount = 0
+  let editionPostCount = 0
 
   while (intervalStr < finalIntervalEndStr) {
     expectedIntervals++
     const summaries = summariesByInterval.get(intervalStr)
     intervalPostCounts[intervalStr] = summaries?.length || 0
-    // Count dropped summaries (curation_status ends in '_drop' when dropped)
     if (summaries) {
+      // Count dropped summaries (curation_status ends in '_drop' when dropped)
       droppedCount += summaries.filter(s => isStatusDrop(s.curation_status)).length
+      // Count edition_post_* summaries (held or released, not synthetic publish posts)
+      editionPostCount += summaries.filter(s => s.curation_status?.startsWith('edition_post_')).length
     }
     intervalStr = nextIntervalGeneral(intervalStr, intervalHours)
   }
@@ -376,6 +380,7 @@ export async function computePostStats(
     // Cache diagnostics
     summariesTotalCached,
     summariesDroppedCached: droppedCount,
+    editionPostTotalCached: editionPostCount,
     summariesTotal,
     summariesAccumulated,
     // Timestamp range
@@ -430,8 +435,8 @@ function computeIntervalStats(
   timestampRange: TimestampRange
 ): void {
   for (const summary of summaries) {
-    // Skip edition posts (held, published, or synthetic) from statistics
-    if (summary.edition_status) continue
+    // Skip all edition posts from probability statistics
+    if (summary.curation_status?.startsWith('edition_')) continue
 
     summaryCache[summary.uniqueId] = {
       username: summary.username,
@@ -757,6 +762,7 @@ function computeUserProbabilities(
     // Cache diagnostics
     summaries_total_cached: intervalDiagnostics.summariesTotalCached,
     summaries_dropped_cached: intervalDiagnostics.summariesDroppedCached,
+    edition_post_total_cached: intervalDiagnostics.editionPostTotalCached,
     summaries_total: intervalDiagnostics.summariesTotal,
     summaries_accumulated: intervalDiagnostics.summariesAccumulated,
 

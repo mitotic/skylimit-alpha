@@ -29,6 +29,8 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   showViewedStatus: true, // show viewed-post visual indicators, default true
   quietMode: false, // suppress [Paged Updates] and [Idle Timer] console logs
   repostDisplayIntervalHours: REPOST_DISPLAY_INTERVAL_DEFAULT, // hide reposts shown within this interval
+  initialLookbackDays: 1, // days to look back on initial load
+  refillLookbackDays: 1, // days to look back for refill fetches
 }
 
 /**

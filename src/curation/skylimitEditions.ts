@@ -3,12 +3,31 @@
  *
  * Parses the markdown-like edition description format and generates
  * fictitious "editor" users for each section in each edition.
+ *
+ * Edition layout format:
+ *   # HEAD          — optional, marks editionA (default/leading patterns)
+ *   # hh:mm Name    — timed editions (b-y), up to 24
+ *   # TAIL          — marks editionZ (trailing/fallback patterns)
+ *
+ * Edition letters: editionA='a' (HEAD), timed='b'-'y', editionZ='z' (TAIL)
+ * Section codes: '0' for default, 'a'-'z' for named sections (uniform across all editions)
  */
 
 import { AppBskyActorDefs } from '@atproto/api'
 
 /** Pre-offset before edition time for gap searching (15 minutes in ms) */
 export const EDITION_PRE_OFFSET_MS = 15 * 60 * 1000
+
+/** Internal editionNumber for HEAD (editionA) */
+export const HEAD_EDITION_NUMBER = 0
+
+/** Internal editionNumber for TAIL (editionZ) */
+export const TAIL_EDITION_NUMBER = 25
+
+/** Convert editionNumber to edition letter: HEAD(0)→'a', timed(1-24)→'b'-'y', TAIL(25)→'z' */
+export function editionLetter(editionNumber: number): string {
+  return String.fromCharCode(97 + editionNumber)
+}
 
 // --- Types ---
 
@@ -27,19 +46,19 @@ export interface TextPattern {
 
 export interface EditionSection {
   name: string                 // section name (empty string for default section)
-  code: string                 // digit (edition0) or letter (editions 1-9)
+  code: string                 // '0' for default, 'a'-'z' for named sections
   patterns: EditionPattern[]
 }
 
 export interface Edition {
-  editionNumber: number        // 0 for default, 1-9 for named editions
-  time: string                 // "hh:mm" for editions 1-9, empty for edition0
+  editionNumber: number        // 0=editionA (HEAD), 1-24=timed, 25=editionZ (TAIL)
+  time: string                 // "hh:mm" for timed editions, empty for editionA/editionZ
   name: string                 // edition name (e.g., "Morning Edition")
   sections: EditionSection[]
 }
 
 export interface EditorUser {
-  handle: string               // e.g., "editor_08_00_a"
+  handle: string               // e.g., "editor_08_00_0", "editor_08_00_head_a"
   displayName: string          // e.g., "Morning Edition: Tech"
   did: string                  // synthetic DID
   editionNumber: number
@@ -219,9 +238,9 @@ export function parseEditionFile(text: string): ParsedEditions {
 
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
 
-  // State tracking
+  // State tracking — start with editionA (HEAD)
   let currentEdition: Edition = {
-    editionNumber: 0,
+    editionNumber: HEAD_EDITION_NUMBER,
     time: '',
     name: 'Default',
     sections: [],
@@ -231,24 +250,44 @@ export function parseEditionFile(text: string): ParsedEditions {
     code: '0',
     patterns: [],
   }
-  let edition0SectionCount = 0
+  let editionASectionCount = 0
   let patternIndexInSection = 0
 
   // Track all section names globally
-  const edition0SectionNames = new Set<string>()
+  const editionASectionNames = new Set<string>()
   const allEditionSectionNames = new Map<number, Set<string>>() // editionNumber → names
 
-  // Start with default section of edition0
+  // Start with default section of editionA
   currentEdition.sections.push(currentSection)
-  edition0SectionCount = 1
+  editionASectionCount = 1
 
   for (const line of lines) {
-    // Edition header: # hh:mm or # hh:mm EditionName (spaces allowed in name)
+    // Edition header: # hh:mm, # HEAD, # TAIL, or # hh:mm EditionName
     if (line.startsWith('# ') && !line.startsWith('## ')) {
+
+      // # HEAD — marks start of editionA (optional, must be before any timed edition)
+      if (/^#\s+HEAD\s*$/i.test(line)) {
+        if (editions.length > 0 || currentEdition.editionNumber !== HEAD_EDITION_NUMBER) {
+          errors.push('# HEAD must appear before any timed edition')
+        }
+        continue  // editionA already initialized — HEAD is a no-op marker
+      }
+
+      // # TAIL — marks start of editionZ
+      if (/^#\s+TAIL\s*$/i.test(line)) {
+        finishCurrentEdition()
+        currentEdition = { editionNumber: TAIL_EDITION_NUMBER, time: '', name: 'Tail', sections: [] }
+        currentSection = { name: '', code: '0', patterns: [] }
+        patternIndexInSection = 0
+        currentEdition.sections.push(currentSection)
+        allEditionSectionNames.set(TAIL_EDITION_NUMBER, new Set<string>())
+        continue
+      }
+
       // Finish current section/edition
       finishCurrentEdition()
 
-      // Parse edition header
+      // Parse timed edition header
       const headerMatch = line.match(/^#\s+(\d{2}:\d{2})(?:\s+(.+))?/)
       if (!headerMatch) {
         errors.push(`Invalid edition header: "${line}"`)
@@ -257,10 +296,10 @@ export function parseEditionFile(text: string): ParsedEditions {
 
       const time = headerMatch[1]
       const name = headerMatch[2]?.trim() || `${time} Edition`
-      const editionNumber = editions.length  // edition0 is at index 0, so first named is 1
+      const editionNumber = editions.length  // editionA is at index 0, so first timed is 1
 
-      if (editionNumber > 9) {
-        errors.push(`Too many editions (max 9): "${line}"`)
+      if (editionNumber > 24) {
+        errors.push(`Too many timed editions (max 24): "${line}"`)
         continue
       }
 
@@ -270,10 +309,10 @@ export function parseEditionFile(text: string): ParsedEditions {
         name,
         sections: [],
       }
-      // Start default section for this edition
+      // Start default section for this timed edition with code '0'
       currentSection = {
         name: '',
-        code: 'a',
+        code: '0',
         patterns: [],
       }
       patternIndexInSection = 0
@@ -291,41 +330,61 @@ export function parseEditionFile(text: string): ParsedEditions {
         continue
       }
 
-      if (currentEdition.editionNumber === 0) {
-        // Edition0 section
-        if (edition0SectionCount >= 10) {
-          errors.push(`Edition0 can have at most 10 sections: "${sectionName}"`)
+      if (currentEdition.editionNumber === HEAD_EDITION_NUMBER) {
+        // EditionA section — uses '0' for default + 'a'-'z' for named
+        if (editionASectionCount >= 27) {  // 1 default + 26 named
+          errors.push(`HEAD can have at most 26 named sections: "${sectionName}"`)
           continue
         }
-        if (edition0SectionNames.has(sectionName)) {
-          errors.push(`Duplicate section name in edition0: "${sectionName}"`)
+        if (editionASectionNames.has(sectionName)) {
+          errors.push(`Duplicate section name in HEAD: "${sectionName}"`)
           continue
         }
-        edition0SectionNames.add(sectionName)
-        const code = String(edition0SectionCount)
+        editionASectionNames.add(sectionName)
+        const sectionIndex = currentEdition.sections.length
+        const code = String.fromCharCode(96 + sectionIndex) // a, b, c, ... (index 1→a, 2→b, ...)
         currentSection = { name: sectionName, code, patterns: [] }
-        edition0SectionCount++
+        editionASectionCount++
+      } else if (currentEdition.editionNumber === TAIL_EDITION_NUMBER) {
+        // EditionZ section — validate against editionA section names
+        if (editionASectionNames.has(sectionName)) {
+          errors.push(`TAIL section "${sectionName}" conflicts with HEAD section`)
+          continue
+        }
+        if (currentEdition.sections.length >= 27) {
+          errors.push(`TAIL can have at most 26 named sections: "${sectionName}"`)
+          continue
+        }
+        const edSections = allEditionSectionNames.get(TAIL_EDITION_NUMBER) || new Set()
+        if (edSections.has(sectionName)) {
+          errors.push(`Duplicate section name in TAIL: "${sectionName}"`)
+          continue
+        }
+        edSections.add(sectionName)
+        const sectionIndex = currentEdition.sections.length
+        const code = String.fromCharCode(96 + sectionIndex) // a, b, c, ...
+        currentSection = { name: sectionName, code, patterns: [] }
       } else {
-        // Edition1-9 section
-        if (edition0SectionNames.has(sectionName)) {
-          errors.push(`Edition${currentEdition.editionNumber} section "${sectionName}" conflicts with edition0 section`)
+        // Timed edition section
+        if (editionASectionNames.has(sectionName)) {
+          errors.push(`Edition ${currentEdition.name} section "${sectionName}" conflicts with HEAD section`)
           continue
         }
         const edSections = allEditionSectionNames.get(currentEdition.editionNumber) || new Set()
         if (edSections.has(sectionName)) {
-          errors.push(`Duplicate section name in edition${currentEdition.editionNumber}: "${sectionName}"`)
+          errors.push(`Duplicate section name in edition ${currentEdition.name}: "${sectionName}"`)
           continue
         }
         edSections.add(sectionName)
 
-        if (currentEdition.sections.length >= 26) {
-          errors.push(`Edition${currentEdition.editionNumber} can have at most 26 sections: "${sectionName}"`)
+        if (currentEdition.sections.length >= 27) {
+          errors.push(`Edition ${currentEdition.name} can have at most 26 named sections: "${sectionName}"`)
           continue
         }
 
-        // Letter code: a=default (already used), b, c, ...
+        // Named section index starts at 1 (index 0 is default section with code '0')
         const sectionIndex = currentEdition.sections.length
-        const code = String.fromCharCode(97 + sectionIndex) // a, b, c, ...
+        const code = String.fromCharCode(96 + sectionIndex) // a, b, c, ... (index 1→a)
         currentSection = { name: sectionName, code, patterns: [] }
       }
 
@@ -360,10 +419,10 @@ export function parseEditionFile(text: string): ParsedEditions {
   finishCurrentEdition()
 
   // --- Validate edition layout ---
-  const namedEditions = editions.filter(e => e.editionNumber > 0)
+  const timedEditions = editions.filter(e => e.editionNumber > 0 && e.editionNumber < TAIL_EDITION_NUMBER)
 
-  // Must have at least one edition time
-  if (namedEditions.length === 0) {
+  // Must have at least one timed edition
+  if (timedEditions.length === 0) {
     errors.push('Edition layout must contain at least one edition time (# hh:mm)')
   }
 
@@ -374,21 +433,21 @@ export function parseEditionFile(text: string): ParsedEditions {
   }
 
   // Edition times must be in chronological order
-  for (let i = 1; i < namedEditions.length; i++) {
-    if (namedEditions[i].time <= namedEditions[i - 1].time) {
-      errors.push(`Edition times must be in chronological order: "${namedEditions[i].time}" is not after "${namedEditions[i - 1].time}"`)
+  for (let i = 1; i < timedEditions.length; i++) {
+    if (timedEditions[i].time <= timedEditions[i - 1].time) {
+      errors.push(`Edition times must be in chronological order: "${timedEditions[i].time}" is not after "${timedEditions[i - 1].time}"`)
     }
   }
 
   // Edition times must be at least 2 × EDITION_PRE_OFFSET apart
   const PRE_OFFSET_MINUTES = EDITION_PRE_OFFSET_MS / 60_000
   const MIN_SPACING_MINUTES = 2 * PRE_OFFSET_MINUTES
-  for (let i = 1; i < namedEditions.length; i++) {
-    const [h1, m1] = namedEditions[i - 1].time.split(':').map(Number)
-    const [h2, m2] = namedEditions[i].time.split(':').map(Number)
+  for (let i = 1; i < timedEditions.length; i++) {
+    const [h1, m1] = timedEditions[i - 1].time.split(':').map(Number)
+    const [h2, m2] = timedEditions[i].time.split(':').map(Number)
     const diffMinutes = (h2 * 60 + m2) - (h1 * 60 + m1)
     if (diffMinutes < MIN_SPACING_MINUTES) {
-      errors.push(`Edition times must be at least ${MIN_SPACING_MINUTES} minutes apart: "${namedEditions[i - 1].time}" and "${namedEditions[i].time}" are ${diffMinutes} minutes apart`)
+      errors.push(`Edition times must be at least ${MIN_SPACING_MINUTES} minutes apart: "${timedEditions[i - 1].time}" and "${timedEditions[i].time}" are ${diffMinutes} minutes apart`)
     }
   }
 
@@ -407,29 +466,42 @@ export function parseEditionFile(text: string): ParsedEditions {
 }
 
 /**
- * Generate fictitious editor users for all editions
+ * Generate fictitious editor users for all editions.
+ * EditionA named sections get 'head_' prefix, editionZ named sections get 'tail_' prefix.
+ * All default sections (code '0') share the timed edition's default user (editor_HH_MM_0).
  */
 function generateEditorUsers(editions: Edition[]): void {
-  const edition0 = editions.find(e => e.editionNumber === 0)
-  const namedEditions = editions.filter(e => e.editionNumber > 0)
+  const editionA = editions.find(e => e.editionNumber === HEAD_EDITION_NUMBER)
+  const editionZ = editions.find(e => e.editionNumber === TAIL_EDITION_NUMBER)
+  const timedEditions = editions.filter(e => e.editionNumber > 0 && e.editionNumber < TAIL_EDITION_NUMBER)
 
-  for (const edition of namedEditions) {
-    const timeStr = edition.time.replace(':', '_')
-
-    // Generate users for edition-specific sections (letter codes)
+  for (const edition of timedEditions) {
+    // Timed edition sections (no prefix)
     for (const section of edition.sections) {
-      const handle = `editor_${timeStr}_${section.code}`
+      const handle = getEditorHandle(edition.time, section.code)
       const displayName = section.name
         ? `${edition.name}: ${section.name}`
         : edition.name
       registerEditorUser(handle, displayName, edition.editionNumber, section.code)
     }
 
-    // Generate users for edition0 sections that may appear in this edition (digit codes)
-    if (edition0) {
-      for (const section of edition0.sections) {
-        if (section.code === '0') continue // edition0 default uses target edition's default section-a user
-        const handle = `editor_${timeStr}_${section.code}`
+    // EditionA named sections (head_ prefix, skip default '0' — uses timed default user)
+    if (editionA) {
+      for (const section of editionA.sections) {
+        if (section.code === '0') continue
+        const handle = getEditorHandle(edition.time, section.code, 'head')
+        const displayName = section.name
+          ? `${edition.name}: ${section.name}`
+          : edition.name
+        registerEditorUser(handle, displayName, edition.editionNumber, section.code)
+      }
+    }
+
+    // EditionZ named sections (tail_ prefix, skip default '0' — uses timed default user)
+    if (editionZ) {
+      for (const section of editionZ.sections) {
+        if (section.code === '0') continue
+        const handle = getEditorHandle(edition.time, section.code, 'tail')
         const displayName = section.name
           ? `${edition.name}: ${section.name}`
           : edition.name
@@ -440,10 +512,14 @@ function generateEditorUsers(editions: Edition[]): void {
 }
 
 /**
- * Get the editor user handle for a given edition time and section code
+ * Get the editor user handle for a given edition time and section code.
+ * Optional prefix 'head' or 'tail' for editionA/editionZ named sections.
  */
-export function getEditorHandle(editionTime: string, sectionCode: string): string {
+export function getEditorHandle(editionTime: string, sectionCode: string, prefix?: 'head' | 'tail'): string {
   const timeStr = editionTime.replace(':', '_')
+  if (prefix) {
+    return `editor_${timeStr}_${prefix}_${sectionCode}`
+  }
   return `editor_${timeStr}_${sectionCode}`
 }
 

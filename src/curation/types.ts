@@ -17,6 +17,7 @@ export type CurationStatus =
   | 'reply_drop'       // Unfollowed reply dropped
   | 'repost_drop'      // Repost/original shown within interval
   | 'edition_post_drop'    // Post matched edition pattern, held for edition
+  | 'edition_post_show'    // Edition held post released (orphaned by layout change)
   | 'edition_publish_drop' // Edition repost dropped (shouldn't normally occur)
   | 'edition_publish_show' // Edition repost shown
   | 'untracked_show'   // User not tracked - shown by default
@@ -42,6 +43,13 @@ export function isStatusDrop(status: CurationStatus | undefined): boolean {
  */
 export function isEditionPublishStatus(status: CurationStatus | undefined): boolean {
   return status !== undefined && status.startsWith('edition_publish_')
+}
+
+/**
+ * Check if a curation status is an edition post status (held or released)
+ */
+export function isEditionPostStatus(status: CurationStatus | undefined): boolean {
+  return status !== undefined && status.startsWith('edition_post_')
 }
 
 // Keys for user profile metadata
@@ -139,6 +147,7 @@ export interface GlobalStats {
   // Cache vs accumulated diagnostics
   summaries_total_cached?: number       // Total summaries across all intervals (complete + incomplete)
   summaries_dropped_cached?: number     // Total dropped summaries across all intervals
+  edition_post_total_cached?: number    // Total edition_post_* summaries across all intervals
   summaries_total?: number              // Total posts in summaries cache (complete intervals only)
   summaries_accumulated?: number        // Posts accumulated (from current followees)
 
@@ -294,8 +303,9 @@ export interface SkylimitSettings {
   pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 30
   // Repost display interval settings
   repostDisplayIntervalHours?: number // hide reposts if original/repost shown within this interval (hours), default 0 (disabled)
-  // Lookback caching settings
-  lookbackDays?: number // number of days to cache back from today, default 1
+  // Lookback settings
+  initialLookbackDays?: number // days to look back on initial load for curation stats, default 1
+  refillLookbackDays?: number // days to look back for refill fetches (idle return, new posts), default 1
   // Feed display settings
   maxDisplayedFeedSize?: number // max posts in displayed feed, default 300
   // Curation interval settings
@@ -423,5 +433,15 @@ export interface SecondaryFetchResult {
   postsFetched: number
   oldestTimestamp: number | null
   newestTimestamp: number | null
+}
+
+export interface EditionRegistryEntry {
+  editionKey: string              // "YYYY-MM-DD_HH:MM" (primary key)
+  editionName: string             // e.g., "Morning Edition"
+  createdAt: number               // timestamp when edition was created (clientNow())
+  startPostTimestamp: number      // earliest synthetic postTimestamp in this edition
+  endPostTimestamp: number        // latest synthetic postTimestamp in this edition
+  oldestOriginalTimestamp: number // oldest original post's postTimestamp (for expiry)
+  viewedAt?: number               // clock time when edition was first rendered in editions tab
 }
 

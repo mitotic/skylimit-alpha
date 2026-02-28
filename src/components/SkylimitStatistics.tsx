@@ -617,6 +617,12 @@ export default function SkylimitStatistics() {
                       Summaries: total {stats.summaries_total_cached}, dropped {stats.summaries_dropped_cached ?? 0} ({stats.summaries_total_cached > 0 ? ((stats.summaries_dropped_cached ?? 0) / stats.summaries_total_cached * 100).toFixed(1) : 0}%)
                     </div>
                   )}
+                  {/* Edition post count */}
+                  {stats.edition_post_total_cached !== undefined && stats.edition_post_total_cached > 0 && (
+                    <div>
+                      Edition posts held: {stats.edition_post_total_cached}
+                    </div>
+                  )}
                   {/* Summaries cache timestamps */}
                   {stats.summaries_oldest_time && stats.summaries_newest_time && (
                     <div>

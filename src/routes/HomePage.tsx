@@ -22,6 +22,7 @@ import AcceleratedClock from '../components/AcceleratedClock'
 import InstallHelp from '../components/InstallHelp'
 import { clientNow, clientDate } from '../utils/clientClock'
 import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, FAST_FORWARD_CHUNK_SIZE, SavedFeedState, findLowestVisiblePostTimestamp } from '../hooks/homePageTypes'
+import { isNewestEditionUnviewed } from '../curation/editionRegistry'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 import { usePostInteractions } from '../hooks/usePostInteractions'
 import { useScrollManagement } from '../hooks/useScrollManagement'
@@ -44,6 +45,7 @@ export default function HomePage() {
   const [unviewedRevision, setUnviewedRevision] = useState(0)
   const [showViewedStatus, setShowViewedStatus] = useState(true)
   const [showEditionsInFeed, setShowEditionsInFeed] = useState(false)
+  const [hasNewEdition, setHasNewEdition] = useState(() => isNewestEditionUnviewed())
   const [storedTimezone, setStoredTimezone] = useState<string | null>(null)
   const [timezoneMismatch, setTimezoneMismatch] = useState(false)
   const [timezoneBannerDismissed, setTimezoneBannerDismissed] = useState(false)
@@ -94,6 +96,7 @@ export default function HomePage() {
     oldestDisplayedPostTimestamp, setOldestDisplayedPostTimestamp,
     lookingBack,
     lookbackProgress,
+    initPhase,
     showCurationInitModal, setShowCurationInitModal,
     curationInitStats,
     newPostsCount, setNewPostsCount,
@@ -798,6 +801,13 @@ export default function HomePage() {
     })
   }, [])
 
+  // Periodically check for new unviewed editions (for the tab dot indicator)
+  useEffect(() => {
+    const check = () => setHasNewEdition(isNewestEditionUnviewed())
+    const interval = setInterval(check, 30_000)
+    return () => clearInterval(interval)
+  }, [])
+
   // Compute label for unviewed posts next to Prev Page button
   const prevPageUnviewedLabel: string | null = useMemo(() => {
     if (!showViewedStatus) return null
@@ -945,7 +955,7 @@ export default function HomePage() {
           ) : (
             <div className="flex items-center gap-2 text-sm text-red-500 dark:text-red-400">
               <Spinner size="sm" />
-              <span>Initializing...{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}</span>
+              <span>{initPhase === 'follows' ? 'Initializing follows' : 'Initializing posts'}...{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}</span>
             </div>
           )}
         </div>
@@ -1043,7 +1053,7 @@ export default function HomePage() {
                   </span>
                 )}
               </>
-            ) : 'Periodic Editions'}
+            ) : <>Periodic Editions{hasNewEdition && <span className="text-red-500 text-xs align-super ml-0.5">●</span>}</>}
           </button>
         ))}
       </div>
@@ -1271,7 +1281,7 @@ export default function HomePage() {
                 // Still initializing (prefetch not complete yet)
                 <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
                   <Spinner size="sm" />
-                  <span>Initializing...</span>
+                  <span>{initPhase === 'follows' ? 'Initializing follows' : 'Initializing posts'}...</span>
                 </div>
               ) : (
                 // Prefetch done but no more posts available
@@ -1290,11 +1300,12 @@ export default function HomePage() {
           onQuotePost={handleQuotePost}
           onLike={handleLike}
           onBookmark={handleBookmark}
+          onEditionViewed={() => setHasNewEdition(isNewestEditionUnviewed())}
         />
       )}
 
-      {/* Scroll to top arrow - shown when scrolled down (only for curated tab) */}
-      {activeTab === 'curated' && isScrolledDown && (
+      {/* Scroll to top arrow - shown when scrolled down */}
+      {(activeTab === 'curated' || activeTab === 'editions') && isScrolledDown && (
         <button
           onClick={handleScrollToTop}
           className="fixed bottom-6 left-6 md:bottom-8 md:left-8 bg-blue-100 hover:bg-blue-200 text-blue-600 dark:bg-blue-900/40 dark:hover:bg-blue-900/60 dark:text-blue-400 p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-12 h-12"
