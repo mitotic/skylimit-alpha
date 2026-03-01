@@ -16,6 +16,7 @@ import Button from '../components/Button'
 import SkylimitStatistics from '../components/SkylimitStatistics'
 import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
+import EditionLayoutEditor from '../components/EditionLayoutEditor'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 
@@ -125,6 +126,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [editionFeedback, setEditionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [visualEditorMode, setVisualEditorMode] = useState(true)
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -1312,6 +1314,67 @@ This cannot be undone.`}
   }
 
   // Render Editions tab content
+  const handleSaveEditionLayout = async (text: string) => {
+    if (!settings) return
+    const trimmed = text.trim()
+    if (!trimmed) {
+      // Empty layout: clear editions — check for held posts first
+      const { getEditionLookbackMs } = await import('../curation/skylimitEditionAssembly')
+      const now = Date.now()
+      const lookbackStart = now - await getEditionLookbackMs()
+      const summaries = await getPostSummariesInRange(lookbackStart, now)
+      const heldCount = summaries.filter(s => s.edition_status === 'hold').length
+
+      if (heldCount > 0) {
+        const confirmed = window.confirm(
+          `${heldCount} post${heldCount !== 1 ? 's' : ''} scheduled for editions will be released and redisplayed in the home feed. Continue?`
+        )
+        if (!confirmed) {
+          updateSetting('editionLayout', originalSettings?.editionLayout || '')
+          setEditionFeedback(null)
+          return
+        }
+      }
+
+      updateSetting('editionLayout', '')
+      await updateSettings({ ...settings, editionLayout: '' })
+      invalidateEditionsCache()
+      await rematchHeldPosts()
+      setOriginalSettings({ ...settings, editionLayout: '' })
+      setEditionFeedback({ type: 'success', message: `Edition layout cleared.` })
+      if (heldCount > 0 && typeof (window as any).resetFeedAndReloadHomePage === 'function') {
+        (window as any).resetFeedAndReloadHomePage()
+      }
+      return
+    }
+    const result = parseEditionFile(trimmed)
+    if (result.errors.length > 0) {
+      setEditionFeedback({ type: 'error', message: result.errors.join('\n') })
+      return
+    }
+    const editionCount = result.editions.filter(e => e.editionNumber > 0 && e.editionNumber < 25).length
+    const patternCount = result.editions.reduce(
+      (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
+    )
+    await updateSettings({ ...settings, editionLayout: trimmed })
+    updateSetting('editionLayout', trimmed)
+    invalidateEditionsCache()
+    const rematchResult = await rematchHeldPosts()
+    setOriginalSettings({ ...settings, editionLayout: trimmed })
+    const parts: string[] = []
+    if (editionCount > 0) parts.push(`${editionCount} edition${editionCount > 1 ? 's' : ''}`)
+    parts.push(`${patternCount} pattern${patternCount !== 1 ? 's' : ''}`)
+    let debugInfo = ''
+    if (settings.debugMode && (rematchResult.total > 0 || rematchResult.released > 0)) {
+      const rematchParts: string[] = []
+      if (rematchResult.rematched > 0) rematchParts.push(`${rematchResult.rematched} re-matched`)
+      if (rematchResult.fallback > 0) rematchParts.push(`${rematchResult.fallback} assigned to default`)
+      if (rematchResult.released > 0) rematchParts.push(`${rematchResult.released} released`)
+      debugInfo = ` [${rematchResult.total} held post${rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
+    }
+    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo}` })
+  }
+
   const renderEditionsTab = () => {
     if (loading) {
       return (
@@ -1347,100 +1410,70 @@ This cannot be undone.`}
 
         <DisclosureSection title="Edition Layout">
           <div className="space-y-4">
-            <div>
-              <label className="block mb-2 font-medium">
-                Edition layout:
-              </label>
-              <textarea
-                value={settings.editionLayout}
-                onChange={(e) => {
-                  updateSetting('editionLayout', e.target.value)
-                  setEditionFeedback(null)
-                }}
-                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
-                rows={12}
-                placeholder={"# HEAD\n@*: #breaking\n@always.interesting.bsky.social\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding\n\n# TAIL\n@*: longform*"}
+            {visualEditorMode ? (
+              <EditionLayoutEditor
+                layoutText={settings.editionLayout}
+                onSave={handleSaveEditionLayout}
+                feedback={editionFeedback}
+                headerContent={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisualEditorMode(false)
+                      setEditionFeedback(null)
+                    }}
+                    className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  >
+                    Switch to Text Editor
+                  </button>
+                }
               />
-              <p className="text-sm text-gray-500 mt-1">
-                Configure edition layout patterns. Lines starting with @ define user patterns
-                (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
-                # HEAD and # TAIL mark leading/trailing sections that apply to all editions.
-                * denotes wildcard match to word boundary. Patterns are matched top-to-bottom (first match wins).
-              </p>
-              <div className="mt-2 flex items-center gap-3">
-                <Button
-                  variant="primary"
-                  onClick={async () => {
-                    const text = settings.editionLayout.trim()
-                    if (!text) {
-                      // Empty layout: clear editions — check for held posts first
-                      const { getEditionLookbackMs } = await import('../curation/skylimitEditionAssembly')
-                      const now = Date.now()
-                      const lookbackStart = now - await getEditionLookbackMs()
-                      const summaries = await getPostSummariesInRange(lookbackStart, now)
-                      const heldCount = summaries.filter(s => s.edition_status === 'hold').length
-
-                      if (heldCount > 0) {
-                        const confirmed = window.confirm(
-                          `${heldCount} post${heldCount !== 1 ? 's' : ''} scheduled for editions will be released and redisplayed in the home feed. Continue?`
-                        )
-                        if (!confirmed) {
-                          // Restore original edition layout text
-                          updateSetting('editionLayout', originalSettings?.editionLayout || '')
-                          setEditionFeedback(null)
-                          return
-                        }
-                      }
-
-                      updateSetting('editionLayout', '')
-                      await updateSettings({ ...settings, editionLayout: '' })
-                      invalidateEditionsCache()
-                      await rematchHeldPosts()
-                      setOriginalSettings({ ...settings, editionLayout: '' })
-                      setEditionFeedback({ type: 'success', message: `Edition layout cleared.` })
-                      if (heldCount > 0 && typeof (window as any).resetFeedAndReloadHomePage === 'function') {
-                        (window as any).resetFeedAndReloadHomePage()
-                      }
-                      return
-                    }
-                    const result = parseEditionFile(text)
-                    if (result.errors.length > 0) {
-                      setEditionFeedback({ type: 'error', message: result.errors.join('\n') })
-                      return
-                    }
-                    // Count editions and patterns for confirmation
-                    const editionCount = result.editions.filter(e => e.editionNumber > 0 && e.editionNumber < 25).length
-                    const patternCount = result.editions.reduce(
-                      (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
-                    )
-                    // Save to settings
-                    await updateSettings({ ...settings, editionLayout: text })
-                    invalidateEditionsCache()
-                    const rematchResult = await rematchHeldPosts()
-                    setOriginalSettings({ ...settings, editionLayout: text })
-                    const parts: string[] = []
-                    if (editionCount > 0) parts.push(`${editionCount} edition${editionCount > 1 ? 's' : ''}`)
-                    parts.push(`${patternCount} pattern${patternCount !== 1 ? 's' : ''}`)
-                    let debugInfo = ''
-                    if (settings.debugMode && (rematchResult.total > 0 || rematchResult.released > 0)) {
-                      const rematchParts: string[] = []
-                      if (rematchResult.rematched > 0) rematchParts.push(`${rematchResult.rematched} re-matched`)
-                      if (rematchResult.fallback > 0) rematchParts.push(`${rematchResult.fallback} assigned to default`)
-                      if (rematchResult.released > 0) rematchParts.push(`${rematchResult.released} released`)
-                      debugInfo = ` [${rematchResult.total} held post${rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
-                    }
-                    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo}` })
+            ) : (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVisualEditorMode(true)
+                    setEditionFeedback(null)
                   }}
+                  className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30 mb-2"
                 >
-                  Update Edition Layout
-                </Button>
-                {editionFeedback && (
-                  <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                    {editionFeedback.message}
-                  </span>
-                )}
+                  Switch to Visual Editor
+                </button>
+                <label className="block mb-2 font-medium">
+                  Edition layout:
+                </label>
+                <textarea
+                  value={settings.editionLayout}
+                  onChange={(e) => {
+                    updateSetting('editionLayout', e.target.value)
+                    setEditionFeedback(null)
+                  }}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
+                  rows={12}
+                  placeholder={"# HEAD\n@*: #breaking\n@always.interesting.bsky.social\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding\n\n# TAIL\n@*: longform*"}
+                />
+                <p className="text-sm text-gray-500 mt-1">
+                  Configure edition layout patterns. Lines starting with @ define user patterns
+                  (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
+                  # HEAD and # TAIL mark leading/trailing sections that apply to all editions.
+                  * denotes wildcard match to word boundary. Patterns are matched top-to-bottom (first match wins).
+                </p>
+                <div className="mt-2 flex items-center gap-3">
+                  <Button
+                    variant="primary"
+                    onClick={() => handleSaveEditionLayout(settings.editionLayout)}
+                  >
+                    Update Edition Layout
+                  </Button>
+                  {editionFeedback && (
+                    <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                      {editionFeedback.message}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </DisclosureSection>
       </div>
