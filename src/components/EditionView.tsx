@@ -402,15 +402,15 @@ export default function EditionView({
             onClick={toggleSections}
             className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50"
           >
-            <span className="text-gray-400 dark:text-gray-500 text-sm">
-              {sectionsExpanded ? '▾' : '▸'}
+            <span className="text-blue-600 dark:text-blue-400 text-base">
+              {sectionsExpanded ? '▼' : '▶'}
             </span>
             <div className="flex-1 flex items-center gap-2">
-              <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
-              <span className="text-sm font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />
+              <span className="text-base font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
                 {section.name}
               </span>
-              <span className="h-px flex-1 bg-gray-300 dark:bg-gray-600" />
+              <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />
             </div>
             <span className="text-xs text-gray-400 dark:text-gray-500">
               viewed {section.posts.filter(p => viewedAtMap.has(getSummaryId(p))).length}/{section.posts.length}

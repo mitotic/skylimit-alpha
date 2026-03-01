@@ -1,6 +1,6 @@
 import { formatDistance } from 'date-fns'
 import { clientDate } from '../utils/clientClock'
-import { PostSummary, isStatusShow } from '../curation/types'
+import { PostSummary, isStatusShow, isEditionPostStatus } from '../curation/types'
 
 interface LocalCacheResultCardProps {
   post: PostSummary
@@ -12,7 +12,7 @@ export default function LocalCacheResultCard({ post, displayName, onClick }: Loc
   const timeAgo = formatDistance(post.timestamp, clientDate(), { addSuffix: true })
   const text = post.postText || ''
   const truncated = text.length > 200 ? text.slice(0, 200) + '...' : text
-  const isShown = isStatusShow(post.curation_status)
+  const isShown = isStatusShow(post.curation_status) || isEditionPostStatus(post.curation_status)
   const isRepost = !!post.repostUri
 
   return (

@@ -19,7 +19,7 @@ import ConfirmModal from '../components/ConfirmModal'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 
-type Tab = 'general' | 'curation' | 'following'
+type Tab = 'general' | 'curation' | 'editions' | 'following'
 
 const SCROLL_STATE_KEY = 'websky_skylimit_settings_scroll'
 const TAB_STATE_KEY = 'websky_settings_active_tab'
@@ -91,11 +91,12 @@ export default function SettingsPage() {
   const getInitialTab = (): Tab => {
     const urlTab = searchParams.get('tab')
     if (urlTab === 'curation') return 'curation'
+    if (urlTab === 'editions') return 'editions'
     if (urlTab === 'following') return 'following'
     if (urlTab === 'general' || urlTab === 'basic') return 'general'
     // No URL param - check sessionStorage for preserved tab
     const savedTab = sessionStorage.getItem(TAB_STATE_KEY)
-    if (savedTab === 'curation' || savedTab === 'following') return savedTab as Tab
+    if (savedTab === 'curation' || savedTab === 'editions' || savedTab === 'following') return savedTab as Tab
     return 'general'
   }
   const [activeTab, setActiveTab] = useState<Tab>(getInitialTab)
@@ -469,28 +470,6 @@ export default function SettingsPage() {
       </div>
 
       <div className="card space-y-4">
-        <h2 className="text-lg font-semibold">Navigation</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-medium">Click to <span className="text-blue-500">Bluesky</span></div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              Open threads, search, saved posts, notifications, and profiles in Bluesky. You can return to Skylimit by using back navigation repeatedly (i.e., clicking back once more after returning to the Bluesky home page).
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              const newValue = !clickToBlueSky
-              localStorage.setItem('websky_click_to_bluesky', newValue.toString())
-              setClickToBlueSky(newValue)
-            }}
-            className="btn bg-blue-500 hover:bg-blue-600 text-white"
-          >
-            {clickToBlueSky ? 'Disable' : 'Enable'}
-          </button>
-        </div>
-      </div>
-
-      <div className="card space-y-4">
         <h2 className="text-lg font-semibold">Interaction</h2>
         <div className="flex items-center justify-between">
           <div>
@@ -508,6 +487,28 @@ export default function SettingsPage() {
             className={`btn ${readOnlyMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
           >
             {readOnlyMode ? 'Disable' : 'Enable'}
+          </button>
+        </div>
+      </div>
+
+      <div className="card space-y-4">
+        <h2 className="text-lg font-semibold">Navigation</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-medium">Click to <span className="text-blue-500">Bluesky</span></div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Open threads, search, saved posts, notifications, and profiles in Bluesky. You can return to Skylimit by using back navigation repeatedly (i.e., clicking back once more after returning to the Bluesky home page).
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const newValue = !clickToBlueSky
+              localStorage.setItem('websky_click_to_bluesky', newValue.toString())
+              setClickToBlueSky(newValue)
+            }}
+            className="btn bg-blue-500 hover:bg-blue-600 text-white"
+          >
+            {clickToBlueSky ? 'Disable' : 'Enable'}
           </button>
         </div>
       </div>
@@ -670,16 +671,6 @@ export default function SettingsPage() {
                   className="w-5 h-5"
                 />
                 <span>Show viewed status of posts (checkmark &amp; shading)</span>
-              </label>
-
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={settings.showEditionsInFeed || false}
-                  onChange={(e) => updateSetting('showEditionsInFeed', e.target.checked)}
-                  className="w-5 h-5"
-                />
-                <span>Show periodic editions in home feed</span>
               </label>
 
               <label className="flex items-center space-x-3">
@@ -1024,107 +1015,6 @@ export default function SettingsPage() {
           </div>
         </form>
 
-        <div className="mt-6">
-          <DisclosureSection title="Edition Settings">
-            <div className="space-y-4">
-              <div>
-                <label className="block mb-2 font-medium">
-                  Edition layout:
-                </label>
-                <textarea
-                  value={settings.editionLayout}
-                  onChange={(e) => {
-                    updateSetting('editionLayout', e.target.value)
-                    setEditionFeedback(null)
-                  }}
-                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
-                  rows={12}
-                  placeholder={"# HEAD\n@*: #breaking\n@always.interesting.bsky.social\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding\n\n# TAIL\n@*: longform*"}
-                />
-                <p className="text-sm text-gray-500 mt-1">
-                  Configure edition layout patterns. Lines starting with @ define user patterns
-                  (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
-                  # HEAD and # TAIL mark leading/trailing sections that apply to all editions.
-                  * denotes wildcard match to word boundary. Patterns are matched top-to-bottom (first match wins).
-                </p>
-                <div className="mt-2 flex items-center gap-3">
-                  <Button
-                    variant="primary"
-                    onClick={async () => {
-                      const text = settings.editionLayout.trim()
-                      if (!text) {
-                        // Empty layout: clear editions — check for held posts first
-                        const { getEditionLookbackMs } = await import('../curation/skylimitEditionAssembly')
-                        const now = Date.now()
-                        const lookbackStart = now - await getEditionLookbackMs()
-                        const summaries = await getPostSummariesInRange(lookbackStart, now)
-                        const heldCount = summaries.filter(s => s.edition_status === 'hold').length
-
-                        if (heldCount > 0) {
-                          const confirmed = window.confirm(
-                            `${heldCount} post${heldCount !== 1 ? 's' : ''} scheduled for editions will be released and redisplayed in the home feed. Continue?`
-                          )
-                          if (!confirmed) {
-                            // Restore original edition layout text
-                            updateSetting('editionLayout', originalSettings?.editionLayout || '')
-                            setEditionFeedback(null)
-                            return
-                          }
-                        }
-
-                        updateSetting('editionLayout', '')
-                        await updateSettings({ ...settings, editionLayout: '' })
-                        invalidateEditionsCache()
-                        await rematchHeldPosts()
-                        setOriginalSettings({ ...settings, editionLayout: '' })
-                        setEditionFeedback({ type: 'success', message: `Edition layout cleared.` })
-                        if (heldCount > 0 && typeof (window as any).resetFeedAndReloadHomePage === 'function') {
-                          (window as any).resetFeedAndReloadHomePage()
-                        }
-                        return
-                      }
-                      const result = parseEditionFile(text)
-                      if (result.errors.length > 0) {
-                        setEditionFeedback({ type: 'error', message: result.errors.join('\n') })
-                        return
-                      }
-                      // Count editions and patterns for confirmation
-                      const editionCount = result.editions.filter(e => e.editionNumber > 0 && e.editionNumber < 25).length
-                      const patternCount = result.editions.reduce(
-                        (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
-                      )
-                      // Save to settings
-                      await updateSettings({ ...settings, editionLayout: text })
-                      invalidateEditionsCache()
-                      const rematchResult = await rematchHeldPosts()
-                      setOriginalSettings({ ...settings, editionLayout: text })
-                      const parts: string[] = []
-                      if (editionCount > 0) parts.push(`${editionCount} edition${editionCount > 1 ? 's' : ''}`)
-                      parts.push(`${patternCount} pattern${patternCount !== 1 ? 's' : ''}`)
-                      let debugInfo = ''
-                      if (settings.debugMode && (rematchResult.total > 0 || rematchResult.released > 0)) {
-                        const rematchParts: string[] = []
-                        if (rematchResult.rematched > 0) rematchParts.push(`${rematchResult.rematched} re-matched`)
-                        if (rematchResult.fallback > 0) rematchParts.push(`${rematchResult.fallback} assigned to default`)
-                        if (rematchResult.released > 0) rematchParts.push(`${rematchResult.released} released`)
-                        debugInfo = ` [${rematchResult.total} held post${rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
-                      }
-                      setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo}` })
-                    }}
-                  >
-                    Update Edition Layout
-                  </Button>
-                  {editionFeedback && (
-                    <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                      {editionFeedback.message}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </DisclosureSection>
-        </div>
-
         {/* Data Management */}
         <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
         <DisclosureSection title="Data Management">
@@ -1421,6 +1311,142 @@ This cannot be undone.`}
     )
   }
 
+  // Render Editions tab content
+  const renderEditionsTab = () => {
+    if (loading) {
+      return (
+        <div className="p-6">
+          <div className="text-center">Loading settings...</div>
+        </div>
+      )
+    }
+
+    if (!settings) {
+      return (
+        <div className="p-6">
+          <div className="text-center text-red-500">Failed to load settings</div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-6">
+        <label className="flex items-center space-x-3">
+          <input
+            type="checkbox"
+            checked={settings.showEditionsInFeed || false}
+            onChange={async (e) => {
+              const newValue = e.target.checked
+              updateSetting('showEditionsInFeed', newValue)
+              await updateSettings({ ...settings, showEditionsInFeed: newValue })
+            }}
+            className="w-5 h-5"
+          />
+          <span>Show periodic editions in home feed</span>
+        </label>
+
+        <DisclosureSection title="Edition Layout">
+          <div className="space-y-4">
+            <div>
+              <label className="block mb-2 font-medium">
+                Edition layout:
+              </label>
+              <textarea
+                value={settings.editionLayout}
+                onChange={(e) => {
+                  updateSetting('editionLayout', e.target.value)
+                  setEditionFeedback(null)
+                }}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
+                rows={12}
+                placeholder={"# HEAD\n@*: #breaking\n@always.interesting.bsky.social\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding\n\n# TAIL\n@*: longform*"}
+              />
+              <p className="text-sm text-gray-500 mt-1">
+                Configure edition layout patterns. Lines starting with @ define user patterns
+                (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
+                # HEAD and # TAIL mark leading/trailing sections that apply to all editions.
+                * denotes wildcard match to word boundary. Patterns are matched top-to-bottom (first match wins).
+              </p>
+              <div className="mt-2 flex items-center gap-3">
+                <Button
+                  variant="primary"
+                  onClick={async () => {
+                    const text = settings.editionLayout.trim()
+                    if (!text) {
+                      // Empty layout: clear editions — check for held posts first
+                      const { getEditionLookbackMs } = await import('../curation/skylimitEditionAssembly')
+                      const now = Date.now()
+                      const lookbackStart = now - await getEditionLookbackMs()
+                      const summaries = await getPostSummariesInRange(lookbackStart, now)
+                      const heldCount = summaries.filter(s => s.edition_status === 'hold').length
+
+                      if (heldCount > 0) {
+                        const confirmed = window.confirm(
+                          `${heldCount} post${heldCount !== 1 ? 's' : ''} scheduled for editions will be released and redisplayed in the home feed. Continue?`
+                        )
+                        if (!confirmed) {
+                          // Restore original edition layout text
+                          updateSetting('editionLayout', originalSettings?.editionLayout || '')
+                          setEditionFeedback(null)
+                          return
+                        }
+                      }
+
+                      updateSetting('editionLayout', '')
+                      await updateSettings({ ...settings, editionLayout: '' })
+                      invalidateEditionsCache()
+                      await rematchHeldPosts()
+                      setOriginalSettings({ ...settings, editionLayout: '' })
+                      setEditionFeedback({ type: 'success', message: `Edition layout cleared.` })
+                      if (heldCount > 0 && typeof (window as any).resetFeedAndReloadHomePage === 'function') {
+                        (window as any).resetFeedAndReloadHomePage()
+                      }
+                      return
+                    }
+                    const result = parseEditionFile(text)
+                    if (result.errors.length > 0) {
+                      setEditionFeedback({ type: 'error', message: result.errors.join('\n') })
+                      return
+                    }
+                    // Count editions and patterns for confirmation
+                    const editionCount = result.editions.filter(e => e.editionNumber > 0 && e.editionNumber < 25).length
+                    const patternCount = result.editions.reduce(
+                      (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
+                    )
+                    // Save to settings
+                    await updateSettings({ ...settings, editionLayout: text })
+                    invalidateEditionsCache()
+                    const rematchResult = await rematchHeldPosts()
+                    setOriginalSettings({ ...settings, editionLayout: text })
+                    const parts: string[] = []
+                    if (editionCount > 0) parts.push(`${editionCount} edition${editionCount > 1 ? 's' : ''}`)
+                    parts.push(`${patternCount} pattern${patternCount !== 1 ? 's' : ''}`)
+                    let debugInfo = ''
+                    if (settings.debugMode && (rematchResult.total > 0 || rematchResult.released > 0)) {
+                      const rematchParts: string[] = []
+                      if (rematchResult.rematched > 0) rematchParts.push(`${rematchResult.rematched} re-matched`)
+                      if (rematchResult.fallback > 0) rematchParts.push(`${rematchResult.fallback} assigned to default`)
+                      if (rematchResult.released > 0) rematchParts.push(`${rematchResult.released} released`)
+                      debugInfo = ` [${rematchResult.total} held post${rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
+                    }
+                    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo}` })
+                  }}
+                >
+                  Update Edition Layout
+                </Button>
+                {editionFeedback && (
+                  <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                    {editionFeedback.message}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </DisclosureSection>
+      </div>
+    )
+  }
+
   // Render Following tab content
   const renderFollowingTab = () => (
     <div className="space-y-6">
@@ -1443,7 +1469,7 @@ This cannot be undone.`}
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 dark:border-gray-700">
-        {(['general', 'curation', 'following'] as Tab[]).map((tab) => (
+        {(['general', 'curation', 'editions', 'following'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1453,7 +1479,7 @@ This cannot be undone.`}
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
-            {tab === 'general' ? 'General' : tab === 'curation' ? 'Curation' : 'Following'}
+            {tab === 'general' ? 'General' : tab === 'curation' ? 'Curation' : tab === 'editions' ? 'Editions' : 'Following'}
           </button>
         ))}
       </div>
@@ -1462,6 +1488,7 @@ This cannot be undone.`}
       <div className={`p-4 ${hasUnsavedChanges && activeTab === 'curation' ? 'pb-20' : ''}`}>
         {activeTab === 'general' && renderBasicTab()}
         {activeTab === 'curation' && renderCurationTab()}
+        {activeTab === 'editions' && renderEditionsTab()}
         {activeTab === 'following' && renderFollowingTab()}
       </div>
 

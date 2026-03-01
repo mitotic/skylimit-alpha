@@ -13,7 +13,7 @@
  *   "@*: #tech"                 → all handles, text search
  */
 
-import { PostSummary, isStatusShow } from './types'
+import { PostSummary, isStatusShow, isEditionPostStatus } from './types'
 import { matchUserPattern, matchAtWordBoundary, normalizeText } from './skylimitEditionMatcher'
 import { getAllPostSummaries, getAllFollows } from './skylimitCache'
 
@@ -205,7 +205,7 @@ export async function searchLocalCache(
   const matched: PostSummary[] = []
   for (const post of allSummaries) {
     // Apply shown-only filter
-    if (shownOnly && !isStatusShow(post.curation_status)) {
+    if (shownOnly && !isStatusShow(post.curation_status) && !isEditionPostStatus(post.curation_status)) {
       continue
     }
 

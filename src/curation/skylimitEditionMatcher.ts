@@ -162,11 +162,15 @@ export function matchTextPattern(
 /**
  * Get the nearest upcoming edition index, for cyclical iteration
  * Returns the index into the timedEditions array (editions with editionNumber 1-24)
+ *
+ * @param referenceTimestamp - If provided, use this timestamp's time-of-day instead of
+ *   the current client time. This ensures posts are matched to the nearest upcoming
+ *   edition relative to when they were posted, not when the client processes them.
  */
-export function getNearestUpcomingEditionIndex(timedEditions: Edition[], timezone?: string): number {
+export function getNearestUpcomingEditionIndex(timedEditions: Edition[], timezone?: string, referenceTimestamp?: number): number {
   if (timedEditions.length === 0) return -1
 
-  const now = clientDate()
+  const refDate = referenceTimestamp !== undefined ? new Date(referenceTimestamp) : clientDate()
   let currentTime: string
 
   if (timezone) {
@@ -176,11 +180,11 @@ export function getNearestUpcomingEditionIndex(timedEditions: Edition[], timezon
       minute: '2-digit',
       hour12: false,
     })
-    currentTime = formatter.format(now)
+    currentTime = formatter.format(refDate)
     // Normalize "24:00" → "00:00"
     if (currentTime.startsWith('24')) currentTime = '00' + currentTime.substring(2)
   } else {
-    currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    currentTime = `${String(refDate.getHours()).padStart(2, '0')}:${String(refDate.getMinutes()).padStart(2, '0')}`
   }
 
   // Find the nearest upcoming edition (or wrap around)
@@ -226,8 +230,8 @@ export function matchPost(
 
   if (timedEditions.length === 0) return null
 
-  // Determine nearest upcoming edition for cyclical iteration
-  const nearestIdx = getNearestUpcomingEditionIndex(timedEditions, timezone)
+  // Determine nearest upcoming edition for cyclical iteration based on post timestamp
+  const nearestIdx = getNearestUpcomingEditionIndex(timedEditions, timezone, summary.postTimestamp)
   if (nearestIdx < 0) return null
 
   const nearestEdition = timedEditions[nearestIdx]

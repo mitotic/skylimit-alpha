@@ -970,8 +970,12 @@ export async function transferSecondaryToPrimary(
     .filter(e => e.editionNumber !== 0)
     .sort((a, b) => a.time.localeCompare(b.time))
 
+  // Compute how many days the data spans to check all possible editions
+  const dataSpanDays = Math.ceil((newestEntryTimestamp - newestPrimaryTimestamp) / (24 * 60 * 60 * 1000))
+  const maxDayOffset = Math.max(1, dataSpanDays)
+
   let pastRange = false
-  for (let dayOffset = 0; dayOffset <= 1 && !pastRange; dayOffset++) {
+  for (let dayOffset = 0; dayOffset <= maxDayOffset && !pastRange; dayOffset++) {
     for (const edition of editionTimes) {
       const editionTimestamp = computeEditionTimestampForDay(edition.time, newestPrimaryTimestamp, timezone, dayOffset)
       // If the current newest post is older than the edition time, postpone edition
