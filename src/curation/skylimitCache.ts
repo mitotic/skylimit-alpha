@@ -2,7 +2,7 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryRepostIndex } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryRepostIndex, TextSuggestions, SuggestionsMap } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 import { clientNow } from '../utils/clientClock'
 
@@ -736,6 +736,38 @@ export async function saveFilter(stats: GlobalStats, userFilter: UserFilter): Pr
 }
 
 /**
+ * Save pre-computed text pattern suggestions (per-user hashtags and domains)
+ */
+export async function saveTextSuggestions(suggestions: Record<string, TextSuggestions>): Promise<void> {
+  const database = await getDB()
+  const transaction = database.transaction([STORE_FILTER], 'readwrite')
+  const store = transaction.objectStore(STORE_FILTER)
+  await store.put({ id: 'text_suggestions', suggestions, timestamp: clientNow() })
+}
+
+/**
+ * Get pre-computed text pattern suggestions keyed by username
+ */
+export async function getTextSuggestions(): Promise<SuggestionsMap | null> {
+  const database = await getDB()
+  const transaction = database.transaction([STORE_FILTER], 'readonly')
+  const store = transaction.objectStore(STORE_FILTER)
+
+  return new Promise((resolve, reject) => {
+    const request = store.get('text_suggestions')
+    request.onsuccess = () => {
+      const result = request.result
+      if (result?.suggestions) {
+        resolve(new Map(Object.entries(result.suggestions)) as SuggestionsMap)
+      } else {
+        resolve(null)
+      }
+    }
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
  * Get computed filter
  */
 export async function getFilter(): Promise<[GlobalStats, UserFilter] | null> {
@@ -807,6 +839,79 @@ export async function removePostSummariesBefore(beforeTimestamp: number): Promis
     }
     request.onerror = () => reject(request.error)
   })
+}
+
+/**
+ * Remove recent post summaries at or after a given timestamp.
+ * Uses the postTimestamp index for efficient deletion.
+ * Inverse of removePostSummariesBefore — keeps old summaries,
+ * removes recent ones so they can be re-created from re-fetched posts.
+ */
+export async function removePostSummariesAfter(afterTimestamp: number): Promise<number> {
+  const database = await getDB()
+  const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+  const store = transaction.objectStore(STORE_POST_SUMMARIES)
+  const index = store.index('postTimestamp')
+  const range = IDBKeyRange.lowerBound(afterTimestamp) // inclusive: >= afterTimestamp
+
+  return new Promise((resolve, reject) => {
+    let deletedCount = 0
+    const request = index.openCursor(range)
+
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (cursor) {
+        cursor.delete()
+        deletedCount++
+        cursor.continue()
+      } else {
+        console.log(`[ClearRecent] Removed ${deletedCount} post summaries after ${new Date(afterTimestamp).toISOString()}`)
+        resolve(deletedCount)
+      }
+    }
+    request.onerror = () => reject(request.error)
+  })
+}
+
+/**
+ * Clear recent curation data within the lookback window.
+ * Clears feed_cache and feed_metadata entirely, removes post summaries
+ * newer than the lookback boundary, and prunes recent edition registry entries.
+ * Preserves session, follows, filter, settings, and parent posts cache.
+ */
+export async function clearRecentData(lookbackBoundaryMs: number): Promise<void> {
+  console.log(`[ClearRecent] Starting with boundary ${new Date(lookbackBoundaryMs).toISOString()}`)
+
+  const database = await getDB()
+
+  // 1. Clear feed_cache entirely
+  const feedTx = database.transaction(['feed_cache'], 'readwrite')
+  await new Promise<void>((resolve, reject) => {
+    const req = feedTx.objectStore('feed_cache').clear()
+    req.onsuccess = () => resolve()
+    req.onerror = () => reject(req.error)
+  })
+  console.log('[ClearRecent] Cleared feed_cache')
+
+  // 2. Clear feed_metadata entirely (resets lookbackCompleted flags)
+  const metaTx = database.transaction(['feed_metadata'], 'readwrite')
+  await new Promise<void>((resolve, reject) => {
+    const req = metaTx.objectStore('feed_metadata').clear()
+    req.onsuccess = () => resolve()
+    req.onerror = () => reject(req.error)
+  })
+  console.log('[ClearRecent] Cleared feed_metadata')
+
+  // 3. Remove recent post summaries (>= boundary)
+  const removedSummaries = await removePostSummariesAfter(lookbackBoundaryMs)
+  console.log(`[ClearRecent] Removed ${removedSummaries} recent post summaries`)
+
+  // 4. Prune recent edition registry entries
+  const { cullRecentEditionRegistry } = await import('./editionRegistry')
+  const removedEditions = cullRecentEditionRegistry(lookbackBoundaryMs)
+  console.log(`[ClearRecent] Removed ${removedEditions} recent edition registry entries`)
+
+  console.log('[ClearRecent] Complete')
 }
 
 /**

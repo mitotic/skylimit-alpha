@@ -44,6 +44,17 @@ export function cullEditionRegistry(cutoffTimestamp: number): number {
   return removed
 }
 
+/** Remove recent entries where createdAt >= cutoffTimestamp. Returns count removed. */
+export function cullRecentEditionRegistry(cutoffTimestamp: number): number {
+  const entries = getEditionRegistry()
+  const kept = entries.filter(e => e.createdAt < cutoffTimestamp)
+  const removed = entries.length - kept.length
+  if (removed > 0) {
+    localStorage.setItem(EDITION_REGISTRY_KEY, JSON.stringify(kept))
+  }
+  return removed
+}
+
 /** Get the newest registry entry (by createdAt), or null if empty. */
 export function getNewestRegistryEntry(): EditionRegistryEntry | null {
   const entries = getEditionRegistry()

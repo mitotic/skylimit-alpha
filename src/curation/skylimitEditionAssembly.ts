@@ -77,6 +77,11 @@ export async function tryCreateEdition(
 
   console.log(`[Edition] Assembling edition ${editionNumber} (${editionTime}) with ${heldPosts.length} held posts`)
 
+  // Compute editionKey early so we can store it on published summaries
+  const keyDate = new Date(editionTimestamp)
+  const dateStr = `${keyDate.getFullYear()}-${String(keyDate.getMonth() + 1).padStart(2, '0')}-${String(keyDate.getDate()).padStart(2, '0')}`
+  const editionKey = `${dateStr}_${editionTime}`
+
   // Remap edition_tag to control sort order (only 2 rules):
   // - Timed edition default (N.0 where N=b-y) → 'a.1' (combined default)
   // - EditionZ default (z.0) → 'a.2' (combined default)
@@ -176,8 +181,8 @@ export async function tryCreateEdition(
 
     console.log(`[Edition/DEBUG] Synthetic: insertTime=${new Date(insertTime).toLocaleTimeString()} editor=@${editorHandle} ("${editorUser.displayName}") original=@${summary.username} tag=${summary.edition_tag} pattern="${summary.edition_pattern || ''}"`)
 
-    // Mark the held post as published
-    summary.edition_status = 'published'
+    // Mark the held post as published with its edition key
+    summary.edition_status = `published:${editionKey}`
   }
 
   // Save the updated summaries (with edition_status = "published")
@@ -193,13 +198,8 @@ export async function tryCreateEdition(
     const editionMeta = parsedEditions.editions.find(e => e.time === editionTime)
     const editionName = editionMeta?.name || editionTime
 
-    // Use editionTimestamp (nominal edition time) for the date portion of the key,
+    // editionKey was computed before the loop using editionTimestamp (nominal edition time),
     // NOT gapStart, to match the key constructed in feedCacheFetch.ts for duplicate checks.
-    // gapStart could differ from editionTimestamp by 15+ minutes, crossing a date boundary.
-    const keyDate = new Date(editionTimestamp)
-    const dateStr = `${keyDate.getFullYear()}-${String(keyDate.getMonth() + 1).padStart(2, '0')}-${String(keyDate.getDate()).padStart(2, '0')}`
-    const editionKey = `${dateStr}_${editionTime}`
-
     saveEditionToRegistry({
       editionKey,
       editionName,

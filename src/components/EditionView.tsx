@@ -29,6 +29,8 @@ interface EditionViewProps {
   onLike?: (uri: string, cid: string) => void
   onBookmark?: (uri: string, cid: string) => void
   onEditionViewed?: () => void
+  targetEditionKey?: string | null
+  onTargetConsumed?: () => void
 }
 
 const EDITION_INDEX_KEY = 'websky_edition_current_index'
@@ -47,6 +49,8 @@ export default function EditionView({
   onLike,
   onBookmark,
   onEditionViewed,
+  targetEditionKey,
+  onTargetConsumed,
 }: EditionViewProps) {
   const navigate = useNavigate()
   const [registryEntries, setRegistryEntries] = useState<EditionRegistryEntry[]>([])
@@ -76,12 +80,21 @@ export default function EditionView({
         if (cancelled) return
         setRegistryEntries(entries)
 
-        // Restore saved index if valid
-        const savedIndex = sessionStorage.getItem(EDITION_INDEX_KEY)
-        if (savedIndex !== null) {
-          const idx = parseInt(savedIndex, 10)
-          if (!isNaN(idx) && idx >= 0 && idx < entries.length) {
-            setCurrentIndex(idx)
+        // Navigate to target edition from URL param, or restore saved index
+        if (targetEditionKey) {
+          const targetIdx = entries.findIndex(e => e.editionKey === targetEditionKey)
+          if (targetIdx >= 0) {
+            setCurrentIndex(targetIdx)
+          }
+          onTargetConsumed?.()
+        } else {
+          // Restore saved index if valid
+          const savedIndex = sessionStorage.getItem(EDITION_INDEX_KEY)
+          if (savedIndex !== null) {
+            const idx = parseInt(savedIndex, 10)
+            if (!isNaN(idx) && idx >= 0 && idx < entries.length) {
+              setCurrentIndex(idx)
+            }
           }
         }
       } catch (error) {
@@ -92,7 +105,7 @@ export default function EditionView({
     }
     load()
     return () => { cancelled = true }
-  }, [])
+  }, [targetEditionKey])
 
   // Load edition content on demand when index or registry changes
   useEffect(() => {

@@ -9,8 +9,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { parseEditionFile, HEAD_EDITION_NUMBER, TAIL_EDITION_NUMBER } from '../curation/skylimitEditions'
 import type { Edition } from '../curation/skylimitEditions'
-import { getAllFollows, getAllPostSummaries } from '../curation/skylimitCache'
-import type { FollowInfo, PostSummary } from '../curation/types'
+import { getAllFollows, getTextSuggestions } from '../curation/skylimitCache'
+import type { FollowInfo, SuggestionsMap, TextSuggestions } from '../curation/types'
 
 // --- Editor State Types ---
 
@@ -45,51 +45,20 @@ interface EditorState {
   preservedTail?: string
 }
 
+// --- Time Options (30-minute intervals, 24-hour format) ---
+
+const TIME_OPTIONS: string[] = []
+for (let h = 0; h < 24; h++) {
+  for (const m of [0, 30]) {
+    TIME_OPTIONS.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+  }
+}
+
 // --- ID Generator ---
 
 let nextId = 1
 function makeId(): string {
   return `e${nextId++}`
-}
-
-// --- Text Pattern Suggestions ---
-
-type TextSuggestions = { hashtags: string[]; domains: string[] }
-type SuggestionsMap = Map<string, TextSuggestions>
-
-const DOMAIN_REGEX = /(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+(?:\.[a-zA-Z]{2,})+)/g
-const SKIP_DOMAINS = new Set(['bsky.social', 'bsky.app', 'cdn.bsky.app', 'media.tenor.com'])
-
-function buildSuggestionsMap(summaries: PostSummary[]): SuggestionsMap {
-  const map = new Map<string, { hashtags: Set<string>; domains: Set<string> }>()
-  for (const s of summaries) {
-    // Only original posts: skip reposts, replies, quote posts
-    if (s.repostUri || s.inReplyToUri || s.quotedText) continue
-
-    let entry = map.get(s.username)
-    if (!entry) {
-      entry = { hashtags: new Set(), domains: new Set() }
-      map.set(s.username, entry)
-    }
-    for (const tag of s.tags) {
-      const t = tag.toLowerCase()
-      entry.hashtags.add(t.startsWith('#') ? t : `#${t}`)
-    }
-    if (s.postText) {
-      for (const match of s.postText.matchAll(DOMAIN_REGEX)) {
-        const domain = match[1].toLowerCase()
-        if (!SKIP_DOMAINS.has(domain)) entry.domains.add(domain)
-      }
-    }
-  }
-  const result: SuggestionsMap = new Map()
-  for (const [username, entry] of map) {
-    result.set(username, {
-      hashtags: [...entry.hashtags].sort(),
-      domains: [...entry.domains].sort(),
-    })
-  }
-  return result
 }
 
 // --- Conversion Functions ---
@@ -859,13 +828,17 @@ function EditionCard({
             <span className="font-semibold text-gray-700 dark:text-gray-300 flex-shrink-0">
               Edition
             </span>
-            <input
-              type="time"
+            <select
               value={edition.time}
               onChange={(e) => onUpdate({ ...edition, time: e.target.value })}
               className="px-2 py-1 border rounded text-sm dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200"
-              title="24-hour format (HH:MM)"
-            />
+              title="Edition time (24-hour format)"
+            >
+              <option value="">--:--</option>
+              {TIME_OPTIONS.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
             <input
               type="text"
               value={edition.name}
@@ -934,6 +907,7 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
   const [follows, setFollows] = useState<FollowInfo[]>([])
   const [suggestTextPatterns, setSuggestTextPatterns] = useState(true)
   const [suggestionsByHandle, setSuggestionsByHandle] = useState<SuggestionsMap>(new Map())
+  const [allExpanded, setAllExpanded] = useState(true)
   const initializedRef = useRef(false)
 
   // Load follows for autocomplete
@@ -946,14 +920,14 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
     })
   }, [])
 
-  // Load post summaries for text pattern suggestions
+  // Load pre-computed text pattern suggestions
   useEffect(() => {
     if (!suggestTextPatterns) {
       setSuggestionsByHandle(new Map())
       return
     }
-    getAllPostSummaries().then(summaries => {
-      setSuggestionsByHandle(buildSuggestionsMap(summaries))
+    getTextSuggestions().then(suggestions => {
+      setSuggestionsByHandle(suggestions || new Map())
     })
   }, [suggestTextPatterns])
 
@@ -969,7 +943,11 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
   const updateEdition = (idx: number, updated: EditorEdition) => {
     const editions = [...state.editions]
     editions[idx] = updated
-    setState({ ...state, editions })
+    // Re-sort timed editions by time (ascending), keeping common edition(s) in place
+    const common = editions.filter(e => e.type === 'common')
+    const timed = editions.filter(e => e.type === 'timed')
+    timed.sort((a, b) => a.time.localeCompare(b.time))
+    setState({ ...state, editions: [...common, ...timed] })
   }
 
   const deleteEdition = (idx: number) => {
@@ -989,6 +967,17 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
     setState({ ...state, editions: [...state.editions, newEdition] })
   }
 
+  const toggleAllSections = () => {
+    const collapse = allExpanded
+    const editions = state.editions.map(e => ({
+      ...e,
+      collapsed: collapse,
+      sections: e.sections.map(s => ({ ...s, collapsed: collapse })),
+    }))
+    setState({ ...state, editions })
+    setAllExpanded(!allExpanded)
+  }
+
   const handleSave = async () => {
     const text = generateLayoutText(state)
     await onSave(text)
@@ -1005,9 +994,16 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
 
   return (
     <div className="space-y-4">
-      {/* Header row: external content + suggest checkbox */}
+      {/* Header row: external content + toggle + suggest checkbox */}
       <div className="flex items-center justify-between">
         <div>{headerContent}</div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={toggleAllSections}
+            className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {allExpanded ? 'Close Sections' : 'Open Sections'}
+          </button>
         <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
           <input
             type="checkbox"
@@ -1017,6 +1013,7 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
           />
           Suggest text patterns
         </label>
+        </div>
       </div>
 
       {/* Warnings */}

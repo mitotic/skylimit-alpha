@@ -3,7 +3,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
 import { getHomeFeed } from '../api/feed'
 import { CurationInitStatsDisplay } from '../components/CurationInitModal'
-import { initDB, closeDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh, clearAllTimeVariantDataAndLogout } from '../curation/skylimitCache'
+import { initDB, closeDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh, clearAllTimeVariantDataAndLogout, clearRecentData } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
 import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
@@ -96,6 +96,7 @@ export interface UseFeedPipelineReturn {
   refreshDisplayedFeed: (options?: RefreshDisplayedFeedOptions) => Promise<RefreshDisplayedFeedResult | null>
   clearCacheAndReloadHomePage: () => Promise<void>
   resetFeedAndReloadHomePage: () => Promise<void>
+  clearRecentAndReloadHomePage: () => Promise<void>
   prefetchPrevPage: (afterTimestamp: number, targetSize?: number) => Promise<void>
   lookupCurationAndFilter: (posts: CurationFeedViewPost[], feedReceivedTime: Date, postTimestamps?: Map<string, number>, skipFiltering?: boolean) => Promise<CurationFeedViewPost[]>
   trimFeedIfNeeded: (combinedFeed: CurationFeedViewPost[], pageSize: number, feedReceivedTime: Date, maxDisplayedFeedSize?: number) => CurationFeedViewPost[]
@@ -1432,15 +1433,69 @@ export function useFeedPipeline({
     }
   }, [loadFeed])
 
+  // Clear recent data and reload (preserve old summaries, idle return behavior)
+  const clearRecentAndReloadHomePage = useCallback(async () => {
+    console.log('[Debug] clearRecentAndReloadHomePage: Starting...')
+
+    try {
+      // Calculate lookback boundary
+      const settings = await getSettings()
+      const lookbackDays = settings?.initialLookbackDays ?? 1
+      const { getLookbackBoundary } = await import('../curation/feedCacheCore')
+      const boundary = getLookbackBoundary(lookbackDays, settings?.timezone)
+      console.log(`[Debug] Lookback boundary: ${boundary.toISOString()} (${lookbackDays} days)`)
+
+      // Clear sessionStorage
+      sessionStorage.removeItem(getFeedStateKey('curated'))
+      sessionStorage.removeItem(getScrollStateKey('curated'))
+      sessionStorage.removeItem(getFeedStateKey('editions'))
+      sessionStorage.removeItem(getScrollStateKey('editions'))
+      sessionStorage.removeItem(HOME_TAB_STATE_KEY)
+      console.log('[Debug] Cleared sessionStorage')
+
+      // Clear recent data (feed cache, recent summaries, recent editions)
+      await clearRecentData(boundary.getTime())
+
+      // Reset React state (same as resetFeedAndReloadHomePage)
+      setFeed([])
+      setCursor(undefined)
+      setServerCursor(undefined)
+      setHasMorePosts(false)
+      setPreviousPageFeed([])
+      setIsLoading(true)
+      setIsInitialLoad(true)
+      setInitialPrefetchDone(false)
+      setNewestDisplayedPostTimestamp(null)
+      setOldestDisplayedPostTimestamp(null)
+      setNewPostsCount(0)
+      setShowNewPostsButton(false)
+      setLookingBack(false)
+      setLookbackProgress(null)
+      console.log('[Debug] Reset React state')
+
+      // Do NOT set forceInitialLoadRef — let loadFeed detect idle return naturally
+      // (feedCacheIsFresh=false with summariesCacheIsFresh=true → idle return mode)
+
+      console.log('[Debug] Triggering fresh loadFeed with useCache=false...')
+      await loadFeed(undefined, false)
+      console.log('[Debug] clearRecentAndReloadHomePage: Complete!')
+
+    } catch (error) {
+      console.error('[Debug] clearRecentAndReloadHomePage failed:', error)
+    }
+  }, [loadFeed])
+
   // Expose reset functions globally
   useEffect(() => {
     (window as any).clearCacheAndReloadHomePage = clearCacheAndReloadHomePage;
-    (window as any).resetFeedAndReloadHomePage = resetFeedAndReloadHomePage
+    (window as any).resetFeedAndReloadHomePage = resetFeedAndReloadHomePage;
+    (window as any).clearRecentAndReloadHomePage = clearRecentAndReloadHomePage
     return () => {
       delete (window as any).clearCacheAndReloadHomePage;
-      delete (window as any).resetFeedAndReloadHomePage
+      delete (window as any).resetFeedAndReloadHomePage;
+      delete (window as any).clearRecentAndReloadHomePage
     }
-  }, [clearCacheAndReloadHomePage, resetFeedAndReloadHomePage])
+  }, [clearCacheAndReloadHomePage, resetFeedAndReloadHomePage, clearRecentAndReloadHomePage])
 
   // Navigation/load feed effect
   useEffect(() => {
@@ -1751,6 +1806,7 @@ export function useFeedPipeline({
     refreshDisplayedFeed,
     clearCacheAndReloadHomePage,
     resetFeedAndReloadHomePage,
+    clearRecentAndReloadHomePage,
     prefetchPrevPage,
     lookupCurationAndFilter,
     trimFeedIfNeeded,

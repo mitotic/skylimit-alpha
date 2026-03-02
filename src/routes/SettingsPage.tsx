@@ -142,6 +142,8 @@ export default function SettingsPage() {
   const [isClearingSettings, setIsClearingSettings] = useState(false)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [showClearRecentModal, setShowClearRecentModal] = useState(false)
+  const [isClearingRecent, setIsClearingRecent] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
@@ -433,6 +435,29 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Failed to reset feed:', error)
       setIsResettingFeed(false)
+    }
+  }
+
+  const handleClearRecent = async () => {
+    setIsClearingRecent(true)
+    try {
+      if (typeof (window as any).clearRecentAndReloadHomePage === 'function') {
+        await (window as any).clearRecentAndReloadHomePage()
+        setShowClearRecentModal(false)
+        setIsClearingRecent(false)
+        navigate('/')
+      } else {
+        navigate('/')
+        setTimeout(async () => {
+          if (typeof (window as any).clearRecentAndReloadHomePage === 'function') {
+            await (window as any).clearRecentAndReloadHomePage()
+          }
+          setIsClearingRecent(false)
+        }, 500)
+      }
+    } catch (error) {
+      console.error('Failed to clear recent:', error)
+      setIsClearingRecent(false)
     }
   }
 
@@ -902,27 +927,6 @@ export default function SettingsPage() {
                   </p>
                 </div>
 
-                <div className="mb-4">
-                  <label className="block text-sm font-medium mb-2">
-                    Initial Lookback Days
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="7"
-                    value={settings.initialLookbackDays ?? 1}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value, 10)
-                      if (!isNaN(value) && value >= 1 && value <= 7) {
-                        updateSetting('initialLookbackDays', value)
-                      }
-                    }}
-                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Number of days to look back on initial load for curation stats (default: 1). A longer lookback helps build better initial curation statistics.
-                  </p>
-                </div>
 
                 <h3 className="text-lg font-semibold mb-4 mt-6">Paged Fresh Updates</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
@@ -1476,6 +1480,39 @@ This cannot be undone.`}
             )}
           </div>
         </DisclosureSection>
+
+        <div className="flex flex-wrap gap-3 mt-6">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowClearRecentModal(true)}
+            disabled={isClearingRecent}
+            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+          >
+            Clear recent
+          </Button>
+        </div>
+
+        <ConfirmModal
+          isOpen={showClearRecentModal}
+          onClose={() => setShowClearRecentModal(false)}
+          onConfirm={handleClearRecent}
+          title="Clear Recent Data"
+          message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
+• Feed cache and pagination state (cleared entirely)
+• Post summaries newer than yesterday's midnight (removed)
+• Edition registry entries created within the lookback period (removed)
+
+Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
+
+Your Skylimit settings, follow list, and login session will be preserved.
+
+You will be redirected to the home page with a fresh lookback.`}
+          confirmText={isClearingRecent ? 'Clearing...' : 'Clear Recent'}
+          cancelText="Cancel"
+          isDangerous={false}
+          isLoading={isClearingRecent}
+        />
       </div>
     )
   }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
 import { onSkyspeedCommand, offSkyspeedCommand, type SkyspeedCommand } from '../api/feed'
@@ -59,6 +59,20 @@ export default function HomePage() {
     return 'curated'
   }
   const [activeTab, setActiveTab] = useState<HomeTab>(getInitialTab)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const targetEditionKeyRef = useRef<string | null>(null)
+
+  // Handle ?edition=YYYY-MM-DD_HH:MM URL parameter
+  useEffect(() => {
+    const editionParam = searchParams.get('edition')
+    if (editionParam) {
+      targetEditionKeyRef.current = editionParam
+      setActiveTab('editions')
+      // Clear the URL param to avoid re-triggering on back navigation
+      searchParams.delete('edition')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = clientNow().toString()
@@ -1301,6 +1315,8 @@ export default function HomePage() {
           onLike={handleLike}
           onBookmark={handleBookmark}
           onEditionViewed={() => setHasNewEdition(isNewestEditionUnviewed())}
+          targetEditionKey={targetEditionKeyRef.current}
+          onTargetConsumed={() => { targetEditionKeyRef.current = null }}
         />
       )}
 

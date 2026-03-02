@@ -192,6 +192,10 @@ export interface UserFilter {
   [username: string]: UserEntry
 }
 
+/** Per-user text pattern suggestions for edition layout autocomplete */
+export type TextSuggestions = { hashtags: string[]; domains: string[] }
+export type SuggestionsMap = Map<string, TextSuggestions>
+
 /**
  * Summary of a post for curation purposes.
  *
@@ -226,9 +230,15 @@ export interface PostSummary {
   // Edition fields
   edition_tag?: string          // Edition pattern tag (e.g., "1.a.00b")
   edition_pattern?: string      // Matched pattern string (e.g., "@user*: #tech") for debugging
-  edition_status?: string       // "hold" | "published"
+  edition_status?: string       // "hold" | "orphaned" | "synthetic" | "published:<editionKey>"
   // View tracking
   viewedAt?: number             // Client time timestamp (ms via clientNow()) when the post was first viewed in the viewport
+}
+
+/** Returns the edition key if the post was published to an edition, else undefined. */
+export function getEditionKey(editionStatus?: string): string | undefined {
+  if (!editionStatus || !editionStatus.startsWith('published:')) return undefined
+  return editionStatus.substring('published:'.length)
 }
 
 export interface FollowInfo {

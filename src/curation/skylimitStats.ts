@@ -17,10 +17,12 @@ import {
 import {
   getAllPostSummaries,
   saveFilter,
+  saveTextSuggestions,
   newUserEntry,
   newUserAccum,
   getAllFollows
 } from './skylimitCache'
+import type { TextSuggestions } from './types'
 import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral, getIntervalString } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
@@ -70,6 +72,61 @@ interface IntervalDiagnostics {
   completeIntervalsDays: number
   intervalLengthHours: number
   daysOfData: number
+}
+
+// --- Text Pattern Suggestions ---
+
+const SUGGESTION_DOMAIN_REGEX = /(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+(?:\.[a-zA-Z]{2,})+)/g
+const SUGGESTION_SKIP_DOMAINS = new Set(['bsky.social', 'bsky.app', 'cdn.bsky.app', 'media.tenor.com'])
+
+/**
+ * Extract top-5 hashtags and domains per user from post summaries.
+ * Only processes original posts (no reposts, replies, quote posts).
+ */
+function extractTextSuggestions(
+  summariesByUsername: Map<string, PostSummary[]>
+): Record<string, TextSuggestions> {
+  const result: Record<string, TextSuggestions> = {}
+
+  for (const [username, summaries] of summariesByUsername) {
+    const hashtagCounts = new Map<string, number>()
+    const domainCounts = new Map<string, number>()
+
+    for (const s of summaries) {
+      if (s.repostUri || s.inReplyToUri || s.quotedText) continue
+
+      for (const tag of s.tags) {
+        const t = tag.toLowerCase()
+        const normalized = t.startsWith('#') ? t : `#${t}`
+        hashtagCounts.set(normalized, (hashtagCounts.get(normalized) || 0) + 1)
+      }
+
+      if (s.postText) {
+        for (const match of s.postText.matchAll(SUGGESTION_DOMAIN_REGEX)) {
+          const domain = match[1].toLowerCase()
+          if (!SUGGESTION_SKIP_DOMAINS.has(domain)) {
+            domainCounts.set(domain, (domainCounts.get(domain) || 0) + 1)
+          }
+        }
+      }
+    }
+
+    if (hashtagCounts.size === 0 && domainCounts.size === 0) continue
+
+    const topHashtags = [...hashtagCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([tag]) => tag)
+
+    const topDomains = [...domainCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([domain]) => domain)
+
+    result[username] = { hashtags: topHashtags, domains: topDomains }
+  }
+
+  return result
 }
 
 /**
@@ -409,8 +466,9 @@ export async function computePostStats(
     minFolloweeDayCount
   )
 
-  // Save computed filter
+  // Save computed filter and text pattern suggestions
   await saveFilter(globalStats, userFilter)
+  await saveTextSuggestions(extractTextSuggestions(summariesByUsername))
 
   return [globalStats, userFilter]
 }

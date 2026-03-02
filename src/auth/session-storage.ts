@@ -60,6 +60,9 @@ export function clearSession(): void {
   localStorage.removeItem(SESSION_STORAGE_KEY)
   sessionStorage.removeItem(SESSION_STORAGE_KEY)
   localStorage.removeItem(REMEMBER_ME_KEY)
+  // Note: websky_remembered_username is intentionally NOT cleared on logout,
+  // so the username is pre-filled on the next login. It is only cleared
+  // when the user logs in with "Remember me" unchecked.
 }
 
 

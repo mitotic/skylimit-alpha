@@ -1,6 +1,26 @@
+import { useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { formatDistance } from 'date-fns'
 import { clientDate } from '../utils/clientClock'
-import { PostSummary, isStatusShow, isEditionPostStatus } from '../curation/types'
+import { PostSummary, isStatusShow, isEditionPostStatus, getEditionKey } from '../curation/types'
+import { getEditionRegistry } from '../curation/editionRegistry'
+
+function formatTimestamp(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+    ', ' +
+    date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+function formatEditionLabel(editionKey: string, editionName?: string): string {
+  // editionKey format: "YYYY-MM-DD_HH:MM"
+  const [datePart, timePart] = editionKey.split('_')
+  if (!datePart || !timePart) return `Edition: ${editionKey}`
+  const [year, month, day] = datePart.split('-').map(Number)
+  const [hour, minute] = timePart.split(':').map(Number)
+  const date = new Date(year, month - 1, day, hour, minute)
+  const formatted = formatTimestamp(date)
+  return editionName ? `Edition: ${formatted} (${editionName})` : `Edition: ${formatted}`
+}
 
 interface LocalCacheResultCardProps {
   post: PostSummary
@@ -9,11 +29,21 @@ interface LocalCacheResultCardProps {
 }
 
 export default function LocalCacheResultCard({ post, displayName, onClick }: LocalCacheResultCardProps) {
+  const navigate = useNavigate()
   const timeAgo = formatDistance(post.timestamp, clientDate(), { addSuffix: true })
   const text = post.postText || ''
   const truncated = text.length > 200 ? text.slice(0, 200) + '...' : text
   const isShown = isStatusShow(post.curation_status) || isEditionPostStatus(post.curation_status)
   const isRepost = !!post.repostUri
+  const editionKey = getEditionKey(post.edition_status)
+
+  // Look up edition name from registry (cached per render since registry is in localStorage)
+  const editionLabel = useMemo(() => {
+    if (!editionKey) return undefined
+    const registry = getEditionRegistry()
+    const entry = registry.find(e => e.editionKey === editionKey)
+    return formatEditionLabel(editionKey, entry?.editionName)
+  }, [editionKey])
 
   return (
     <div
@@ -58,8 +88,11 @@ export default function LocalCacheResultCard({ post, displayName, onClick }: Loc
         </div>
       )}
 
-      {/* Row 3: Status + tags */}
+      {/* Row 3: Timestamp + status + tags + edition link */}
       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          {formatTimestamp(post.timestamp)}
+        </span>
         {!isShown && (
           <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">
             dropped
@@ -75,6 +108,17 @@ export default function LocalCacheResultCard({ post, displayName, onClick }: Loc
             #{tag}
           </span>
         ))}
+        {editionLabel && (
+          <span
+            className="text-xs text-blue-500 dark:text-blue-400 cursor-pointer hover:underline ml-auto"
+            onClick={(e) => {
+              e.stopPropagation()
+              navigate(`/?edition=${editionKey}`)
+            }}
+          >
+            {editionLabel}
+          </span>
+        )}
       </div>
     </div>
   )
