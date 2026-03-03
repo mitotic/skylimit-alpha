@@ -82,6 +82,18 @@ export function isPeriodicPost(post: PostSummary): {
 }
 
 /**
+ * Test whether an unfollowed reply is eligible to be shown (or held for editions).
+ * Returns true if the poster is a "quiet poster" (regular_prob >= 1)
+ * AND hideUnfollowedReplies setting is off.
+ */
+function isUnfollowedReplyEligible(
+  regularProb: number,
+  hideUnfollowedReplies: boolean
+): boolean {
+  return regularProb >= 1 && !hideUnfollowedReplies
+}
+
+/**
  * Curate a single post
  */
 export async function curateSinglePost(
@@ -106,9 +118,34 @@ export async function curateSinglePost(
 
   // Edition matching runs before stats check — posts must be held during initial lookback
   // so they're available when transferSecondaryToPrimary assembles editions
-  const editionEligible = editionCount > 0 &&
-    !summary.repostUri &&
-    !summary.inReplyToUri
+  let editionEligible = editionCount > 0 && !summary.repostUri
+
+  // Replies require additional checks for edition eligibility
+  if (editionEligible && summary.inReplyToUri) {
+    const parentDid = extractDidFromUri(summary.inReplyToUri)
+    if (!parentDid || parentDid === summary.accountDid) {
+      // Self-reply — not eligible
+      editionEligible = false
+    } else {
+      // Check if parent author is followed
+      const parentFollowed = Object.values(currentFollows).some(f => f.accountDid === parentDid)
+      if (!parentFollowed) {
+        // Unfollowed reply — use shared eligibility check
+        const userEntry = currentProbs?.[summary.username]
+        if (!userEntry) {
+          editionEligible = false
+        } else {
+          const { getSettings } = await import('./skylimitStore')
+          const settings = await getSettings()
+          editionEligible = isUnfollowedReplyEligible(
+            userEntry.regular_prob,
+            settings?.hideUnfollowedReplies ?? false
+          )
+        }
+      }
+      // else: followed non-self reply — stays eligible
+    }
+  }
 
   if (editionEligible) {
     const { getParsedEditions } = await import('./skylimitEditions')
@@ -268,12 +305,12 @@ export async function curateSinglePost(
           const settings = await getSettings()
           const hideUnfollowedReplies = settings?.hideUnfollowedReplies ?? false
 
-          if (hideUnfollowedReplies || userEntry.regular_prob < 1) {
+          if (!isUnfollowedReplyEligible(userEntry.regular_prob, hideUnfollowedReplies)) {
             // Drop: setting is on OR poster is not a quiet poster
             modStatus.curation_status = 'reply_drop'
             dropReason = 'unfollowed reply'
           } else {
-            // Show: quiet poster (regular_prob=1) AND setting is off
+            // Show: quiet poster (regular_prob>=1) AND setting is off
             modStatus.curation_status = 'regular_show'
           }
         }

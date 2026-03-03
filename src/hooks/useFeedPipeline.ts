@@ -1100,6 +1100,35 @@ export function useFeedPipeline({
         !settingsChanged
       )
 
+      // Check if any posts have curation data but are missing curation numbers.
+      // This happens when the user navigated away before assignAllNumbers() ran during initialization.
+      const hasUnnumberedPosts = feedWithCuration.some(post => {
+        const c = (post as CurationFeedViewPost).curation
+        return c && Object.keys(c).length > 0 && c.curationNumber === undefined
+      })
+
+      if (hasUnnumberedPosts) {
+        console.log('[Redisplay] Found unnumbered posts, assigning numbers...')
+        await assignAllNumbers()
+        feedWithCuration = await lookupCurationAndFilter(
+          savedState.displayedFeed as CurationFeedViewPost[],
+          feedReceivedTime,
+          undefined,
+          false  // Re-filter to exclude posts that may now be dropped
+        )
+      }
+
+      // Filter out posts that were shown during initial display but later
+      // re-curated as dropped during the lookback (curationNumber === 0)
+      const preFilterLength = feedWithCuration.length
+      feedWithCuration = feedWithCuration.filter(post => {
+        const c = (post as CurationFeedViewPost).curation
+        return !c || c.curationNumber !== 0
+      })
+      if (feedWithCuration.length < preFilterLength) {
+        console.log(`[Redisplay] Filtered out ${preFilterLength - feedWithCuration.length} dropped posts`)
+      }
+
       feedWithCuration = alignFeedToPageBoundary(feedWithCuration, pageLength)
 
       const originalLength = feedWithCuration.length

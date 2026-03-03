@@ -185,10 +185,12 @@ export async function tryCreateEdition(
     summary.edition_status = `published:${editionKey}`
   }
 
-  // Save the updated summaries (with edition_status = "published")
+  // Save the updated summaries (with edition_status = "published:KEY").
+  // Must use savePostSummariesForce because savePostSummaries skips existing
+  // records — posts loaded from IndexedDB would have their update silently dropped.
   if (heldPosts.length > 0) {
-    const { savePostSummaries } = await import('./skylimitCache')
-    await savePostSummaries(heldPosts)
+    const { savePostSummariesForce } = await import('./skylimitCache')
+    await savePostSummariesForce(heldPosts)
   }
 
   // Save edition to registry for navigation

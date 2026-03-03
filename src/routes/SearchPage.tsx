@@ -11,6 +11,7 @@ import PostCard from '../components/PostCard'
 import LocalCacheResultCard from '../components/LocalCacheResultCard'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import { clientNow } from '../utils/clientClock'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 import { PostSummary } from '../curation/types'
 import { searchLocalCache } from '../curation/localCacheSearch'
 
@@ -463,6 +464,10 @@ export default function SearchPage() {
 
   const handleFollow = async (did: string, currentFollowing?: string) => {
     if (!agent) return
+    if (isReadOnlyMode()) {
+      addToast('Disable Read-only mode in Settings to do this', 'error')
+      return
+    }
 
     try {
       if (currentFollowing) {
@@ -701,6 +706,10 @@ export default function SearchPage() {
                 key={post.uri}
                 post={{ post } as AppBskyFeedDefs.FeedViewPost}
                 showRootPost={false}
+                onLike={() => addToast('Post interactions are not available in search', 'error')}
+                onRepost={() => addToast('Post interactions are not available in search', 'error')}
+                onReply={() => addToast('Post interactions are not available in search', 'error')}
+                onBookmark={() => addToast('Post interactions are not available in search', 'error')}
               />
             ))}
 

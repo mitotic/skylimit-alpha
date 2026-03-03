@@ -372,7 +372,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   ref={repostCounterButtonRef}
                   onClick={handleCounterClick}
                   className={curation
-                    ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                    ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'
                     : 'text-gray-500 dark:text-gray-400 cursor-default'
                   }
                   title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -449,7 +449,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 ref={counterButtonRef}
                 onClick={handleCounterClick}
                 className={curation
-                  ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                  ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'
                   : 'text-gray-500 dark:text-gray-400 cursor-default'
                 }
                 title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -543,7 +543,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     ref={counterButtonRef}
                     onClick={handleCounterClick}
                     className={curation
-                      ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer underline'
+                      ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'
                       : 'text-gray-500 dark:text-gray-400 cursor-default'
                     }
                     title={curation ? 'Click for Skylimit curation options' : 'Post number'}

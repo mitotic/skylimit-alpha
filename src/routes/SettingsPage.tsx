@@ -587,6 +587,65 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-3 mt-6">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setShowClearSettingsModal(true)}
+          disabled={isClearingSettings}
+          className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
+        >
+          Reset settings
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setShowResetAllModal(true)}
+          disabled={isResettingAll}
+          className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full"
+        >
+          Reset ALL
+        </Button>
+      </div>
+
+      {/* Reset Settings Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showClearSettingsModal}
+        onClose={() => setShowClearSettingsModal(false)}
+        onConfirm={handleClearSettings}
+        title="Reset Settings"
+        message={`This will reset all Skylimit settings to their default values.
+
+Your cached data, follow list, and login session will be preserved.
+
+This cannot be undone.`}
+        confirmText={isClearingSettings ? 'Resetting...' : 'Reset Settings'}
+        cancelText="Cancel"
+        isDangerous={true}
+        isLoading={isClearingSettings}
+      />
+
+      {/* Reset All Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showResetAllModal}
+        onClose={() => setShowResetAllModal(false)}
+        onConfirm={handleResetAll}
+        title="Reset All Data"
+        message={`WARNING: This will completely wipe all Websky data:
+• All cached posts and summaries
+• All Skylimit settings
+• Follow list data
+• Login session (you will be logged out)
+
+This is a complete reset to factory state. Use this only if the app is not working correctly.
+
+This cannot be undone.`}
+        confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
+        cancelText="Cancel"
+        isDangerous={true}
+        isLoading={isResettingAll}
+      />
+
       <div className="card space-y-4">
         <h2 className="text-lg font-semibold">About</h2>
         <div className="text-sm text-gray-500 dark:text-gray-400 space-y-2">
@@ -1203,7 +1262,7 @@ export default function SettingsPage() {
             disabled={isResettingFeed}
             className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
           >
-            Reset feed
+            Reset post display
           </Button>
           <Button
             type="button"
@@ -1212,34 +1271,16 @@ export default function SettingsPage() {
             disabled={isResettingData}
             className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
           >
-            Reset data
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setShowClearSettingsModal(true)}
-            disabled={isClearingSettings}
-            className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
-          >
-            Reset settings
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setShowResetAllModal(true)}
-            disabled={isResettingAll}
-            className="px-6 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full"
-          >
-            Reset all
+            Reset post archive
           </Button>
         </div>
 
-        {/* Reset Feed Confirmation Modal */}
+        {/* Reset Post Display Confirmation Modal */}
         <ConfirmModal
           isOpen={showResetFeedModal}
           onClose={() => setShowResetFeedModal(false)}
           onConfirm={handleResetFeed}
-          title="Reset Feed"
+          title="Reset Post Display"
           message={`This will clear the feed and reload posts using existing curation data:
 • Feed posts and pagination state
 • Session storage state
@@ -1249,18 +1290,18 @@ Curation summaries will be preserved, so posts will be curated on-the-fly withou
 Your Skylimit settings, follow list, and login session will be preserved.
 
 You will be redirected to the home page with a refreshed feed.`}
-          confirmText={isResettingFeed ? 'Resetting...' : 'Reset Feed'}
+          confirmText={isResettingFeed ? 'Resetting...' : 'Reset Post Display'}
           cancelText="Cancel"
           isDangerous={false}
           isLoading={isResettingFeed}
         />
 
-        {/* Reset Data Confirmation Modal */}
+        {/* Reset Post Archive Confirmation Modal */}
         <ConfirmModal
           isOpen={showResetDataModal}
           onClose={() => setShowResetDataModal(false)}
           onConfirm={handleResetData}
-          title="Reset Data"
+          title="Reset Post Archive"
           message={`This will clear all time-variant cached data and log you out:
 • Feed posts, pagination state, and session storage
 • Curation summaries and filter/stats cache
@@ -1270,48 +1311,10 @@ You will be redirected to the home page with a refreshed feed.`}
 Your Skylimit settings (viewsPerDay, edition layout, etc.) will be preserved.
 
 You will be logged out and redirected to the login page.`}
-          confirmText={isResettingData ? 'Resetting...' : 'Reset Data & Logout'}
+          confirmText={isResettingData ? 'Resetting...' : 'Reset Post Archive & Logout'}
           cancelText="Cancel"
           isDangerous={true}
           isLoading={isResettingData}
-        />
-
-        {/* Reset Settings Confirmation Modal */}
-        <ConfirmModal
-          isOpen={showClearSettingsModal}
-          onClose={() => setShowClearSettingsModal(false)}
-          onConfirm={handleClearSettings}
-          title="Reset Settings"
-          message={`This will reset all Skylimit settings to their default values.
-
-Your cached data, follow list, and login session will be preserved.
-
-This cannot be undone.`}
-          confirmText={isClearingSettings ? 'Resetting...' : 'Reset Settings'}
-          cancelText="Cancel"
-          isDangerous={true}
-          isLoading={isClearingSettings}
-        />
-
-        {/* Reset All Confirmation Modal */}
-        <ConfirmModal
-          isOpen={showResetAllModal}
-          onClose={() => setShowResetAllModal(false)}
-          onConfirm={handleResetAll}
-          title="Reset All Data"
-          message={`WARNING: This will completely wipe all Websky data:
-• All cached posts and summaries
-• All Skylimit settings
-• Follow list data
-• Login session (you will be logged out)
-
-This is a complete reset to factory state. Use this only if the app is not working correctly.
-
-This cannot be undone.`}
-          confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
-          cancelText="Cancel"
-          isDangerous={true}
-          isLoading={isResettingAll}
         />
       </div>
     )

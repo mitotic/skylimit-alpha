@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
@@ -20,6 +21,14 @@ import { CurationFeedViewPost, EditionRegistryEntry } from '../curation/types'
 import { getPostSummariesByIds } from '../curation/skylimitCache'
 import { markEditionViewed } from '../curation/editionRegistry'
 import { clientNow } from '../utils/clientClock'
+
+/** Format a registry entry's date as a short string like "Mar 2, 9 AM" */
+function formatEditionDate(entry: EditionRegistryEntry): string {
+  const date = new Date(entry.startPostTimestamp)
+  return date.toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  })
+}
 
 interface EditionViewProps {
   agent: BskyAgent | null
@@ -60,6 +69,10 @@ export default function EditionView({
   const [loading, setLoading] = useState(true)
   const [editionLoading, setEditionLoading] = useState(false)
   const [hasLayout, setHasLayout] = useState(true)
+
+  // Edition list popup
+  const [showEditionList, setShowEditionList] = useState(false)
+  const titleRef = useRef<HTMLButtonElement>(null)
 
   // View tracking: map from summary uniqueId → viewedAt timestamp
   const [viewedAtMap, setViewedAtMap] = useState<Map<string, number>>(new Map())
@@ -215,6 +228,13 @@ export default function EditionView({
     setCurrentIndex(i => Math.max(i - 1, 0))
   }, [])
 
+  const goToEdition = useCallback((index: number) => {
+    sessionStorage.removeItem(EDITION_SCROLL_KEY)
+    setViewedAtMap(new Map())
+    setCurrentIndex(index)
+    setShowEditionList(false)
+  }, [])
+
   const toggleSections = useCallback(() => {
     setSectionsExpanded(prev => !prev)
   }, [])
@@ -353,9 +373,13 @@ export default function EditionView({
           </button>
 
           <div className="text-center">
-            <div className="font-semibold text-lg text-gray-900 dark:text-gray-100">
+            <button
+              ref={titleRef}
+              onClick={() => setShowEditionList(prev => !prev)}
+              className="font-semibold text-lg text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
+            >
               {edition.editionName}
-            </div>
+            </button>
             <div className="text-sm text-gray-500 dark:text-gray-400">
               {edition.editionDate.toLocaleString(undefined, {
                 hour: 'numeric', minute: '2-digit',
@@ -363,6 +387,53 @@ export default function EditionView({
               })}
             </div>
           </div>
+
+          {/* Edition list popup */}
+          {showEditionList && createPortal(
+            <>
+              {/* Backdrop */}
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setShowEditionList(false)}
+              />
+              {/* Popup */}
+              <div
+                className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg max-h-80 overflow-y-auto w-72"
+                style={{
+                  top: titleRef.current
+                    ? titleRef.current.getBoundingClientRect().bottom + 4
+                    : 60,
+                  left: titleRef.current
+                    ? Math.max(8, titleRef.current.getBoundingClientRect().left +
+                        titleRef.current.getBoundingClientRect().width / 2 - 144)
+                    : 16,
+                }}
+              >
+                {registryEntries.map((entry, idx) => {
+                  const isCurrent = idx === currentIndex
+                  const isUnviewed = !entry.viewedAt
+                  const dateStr = formatEditionDate(entry)
+                  const nameStr = entry.editionName && entry.editionName !== entry.editionKey
+                    ? ` \u2013 ${entry.editionName}` : ''
+                  return (
+                    <button
+                      key={entry.editionKey}
+                      onClick={() => { if (!isCurrent) goToEdition(idx) }}
+                      className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${
+                        isCurrent
+                          ? 'text-gray-400 dark:text-gray-500 cursor-default'
+                          : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer'
+                      } ${idx > 0 ? 'border-t border-gray-100 dark:border-gray-700' : ''}`}
+                    >
+                      <span className={`text-xs ${isUnviewed ? 'text-red-500' : 'invisible'}`}>●</span>
+                      <span>{dateStr}{nameStr}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </>,
+            document.body
+          )}
 
           <button
             onClick={goToNext}
