@@ -12,7 +12,8 @@ export interface OGImageData {
  * Extracts the last URL from text
  */
 export function extractLastUrl(text: string): string | null {
-  const urlRegex = /(https?:\/\/[^\s]+)/g
+  // Require domain with at least one dot and a TLD (2+ chars) to avoid matching partial URLs
+  const urlRegex = /(https?:\/\/[^\s]+\.[a-zA-Z]{2,}[^\s]*)/g
   const matches = text.match(urlRegex)
   return matches && matches.length > 0 ? matches[matches.length - 1] : null
 }
@@ -23,16 +24,25 @@ export function extractLastUrl(text: string): string | null {
  */
 export async function fetchOGImage(url: string): Promise<OGImageData | null> {
   try {
-    // Use a CORS proxy or backend endpoint to fetch the page
-    // For now, we'll try to fetch directly (may fail due to CORS)
-    // In production, you should use a backend endpoint
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`
-    
-    const response = await fetch(proxyUrl)
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    const html = data.contents
+    // Try multiple CORS proxies with fallback
+    const encoded = encodeURIComponent(url)
+    const proxies = [
+      { url: `https://corsproxy.io/?url=${encoded}`, extract: (r: Response) => r.text() },
+      { url: `https://api.allorigins.win/get?url=${encoded}`, extract: async (r: Response) => (await r.json()).contents },
+    ]
+
+    let html: string | null = null
+    for (const proxy of proxies) {
+      try {
+        const response = await fetch(proxy.url)
+        if (!response.ok) continue
+        html = await proxy.extract(response)
+        if (html) break
+      } catch {
+        continue
+      }
+    }
+    if (!html) return null
     
     // Parse HTML to extract OG/Twitter Card meta tags
     const parser = new DOMParser()

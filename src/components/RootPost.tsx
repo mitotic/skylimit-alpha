@@ -6,7 +6,7 @@ import { clientDate } from '../utils/clientClock'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread } from '../api/feed'
 import { getCachedRootPost, saveCachedRootPost } from '../curation/parentPostCache'
-import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
+import { getPostUrl, getProfileUrl } from '../curation/skylimitGeneral'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
 import RichText from './RichText'
@@ -94,7 +94,7 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
     if (rootPost.uri) {
       if (clickToBlueSky) {
         // Open in Bluesky client (same tab)
-        window.location.href = getBlueSkyPostUrl(rootPost.uri, author.handle)
+        window.location.href = getPostUrl(rootPost.uri, author.handle)
       } else {
         const encodedUri = encodeURIComponent(rootPost.uri)
         if (onClick) {
@@ -109,7 +109,7 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (clickToBlueSky) {
-      window.location.href = getBlueSkyProfileUrl(author.handle)
+      window.location.href = getProfileUrl(author.handle)
     } else {
       navigate(`/profile/${author.handle}`)
     }

@@ -9,7 +9,7 @@ import PostMedia from './PostMedia'
 import RootPost from './RootPost'
 import { getCurationNumber, getPostNumberFromSummary } from '../curation/skylimitCounter'
 import { getSettings } from '../curation/skylimitStore'
-import { getFeedViewPostTimestamp, isRepost, isPeriodicEdition, getBlueSkyPostUrl, getBlueSkyProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
+import { getFeedViewPostTimestamp, isRepost, isPeriodicEdition, getPostUrl, getProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo } from '../curation/types'
 import { getTimeInTimezone, getBrowserTimezone, timezonesAreDifferent, getTimezoneAbbreviation } from '../utils/timezoneUtils'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
@@ -47,9 +47,13 @@ interface PostCardProps {
    * Optional slot for engagement stats (reposts/likes) - rendered between content and action buttons
    */
   engagementStats?: React.ReactNode
+  /**
+   * If true, use stacked layout with avatar+header on top and full-width body below (for thread anchor posts)
+   */
+  stackedLayout?: boolean
 }
 
-export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, showCounter = false, onAmpChange, showRootPost = true, engagementStats }: PostCardProps) {
+export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false }: PostCardProps) {
   const navigate = useNavigate()
   const { session } = useSession()
   const { theme } = useTheme()
@@ -302,7 +306,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       if (actualPost.uri) {
         if (clickToBlueSky) {
           // Open in Bluesky client (same tab)
-          window.location.href = getBlueSkyPostUrl(actualPost.uri, author.handle)
+          window.location.href = getPostUrl(actualPost.uri, author.handle)
         } else {
           // Navigate within Websky
           const encodedUri = encodeURIComponent(actualPost.uri)
@@ -315,7 +319,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (clickToBlueSky) {
-      window.location.href = getBlueSkyProfileUrl(author.handle)
+      window.location.href = getProfileUrl(author.handle)
     } else {
       navigate(`/profile/${author.handle}`)
     }
@@ -325,7 +329,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
     e.stopPropagation()
     if (repostedBy?.handle) {
       if (clickToBlueSky) {
-        window.location.href = getBlueSkyProfileUrl(repostedBy.handle)
+        window.location.href = getProfileUrl(repostedBy.handle)
       } else {
         navigate(`/profile/${repostedBy.handle}`)
       }
@@ -430,7 +434,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       )}
 
       <div
-        className={`flex gap-3 ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}
+        className={`${stackedLayout ? 'flex flex-col' : 'flex gap-3'} ${isReply ? 'px-4 pb-4 pt-0' : 'p-4'} relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}
         onClick={handlePostClick}
         style={{ cursor: 'pointer' }}
       >
@@ -499,14 +503,55 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             )}
           </>
         )}
-        <div className="flex-shrink-0" onClick={handleAuthorClick} style={{ cursor: 'pointer' }}>
-          <Avatar
-            src={author.avatar}
-            alt={author.displayName || author.handle}
-            size="md"
-          />
-        </div>
-        <div className="flex-1 min-w-0">
+        {/* Header row: avatar + author info. In stacked layout, this is a flex row within the vertical column */}
+        {stackedLayout ? (
+          <div className="flex gap-3 items-center mb-2">
+            <div className="flex-shrink-0" onClick={handleAuthorClick} style={{ cursor: 'pointer' }}>
+              <Avatar
+                src={author.avatar}
+                alt={author.displayName || author.handle}
+                size="md"
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className={`flex items-center gap-2 relative min-w-0${showCounterDisplay && !isReposted && !isReply ? ' pr-28' : ''}`}>
+                <span className="truncate min-w-0">
+                  <span
+                    onClick={handleAuthorClick}
+                    className="font-semibold hover:underline cursor-pointer"
+                  >
+                    {author.displayName || author.handle}
+                  </span>
+                  <span
+                    onClick={handleAuthorClick}
+                    className="text-gray-500 dark:text-gray-400 hover:underline cursor-pointer hidden sm:inline ml-2"
+                  >
+                    @{author.handle}
+                  </span>
+                </span>
+                {(!showTime || isReposted) && (
+                  <>
+                    <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">·</span>
+                    <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">{timeAgo}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex-shrink-0" onClick={handleAuthorClick} style={{ cursor: 'pointer' }}>
+              <Avatar
+                src={author.avatar}
+                alt={author.displayName || author.handle}
+                size="md"
+              />
+            </div>
+          </>
+        )}
+        <div className={stackedLayout ? '' : 'flex-1 min-w-0'}>
+          {/* Header line - only in non-stacked layout (stacked layout renders it above) */}
+          {!stackedLayout && (
           <div className={`flex items-center gap-2 mb-1 relative min-w-0${showCounterDisplay && !isReposted && !isReply ? ' pr-28' : ''}`}>
             <span className="truncate min-w-0">
               <span
@@ -593,6 +638,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               </>
             )}
           </div>
+          )}
 
           {record?.text && (
             <div className="mb-2 whitespace-pre-wrap break-words" style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>

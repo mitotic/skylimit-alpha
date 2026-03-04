@@ -6,7 +6,7 @@ import { getProfile } from '../api/profile'
 import { getAuthorFeed, getActorLikes } from '../api/feed'
 import { follow, unfollow } from '../api/social'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
-import { getPostUniqueId, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
+import { getPostUniqueId, getProfileUrl } from '../curation/skylimitGeneral'
 import Avatar from '../components/Avatar'
 import Button from '../components/Button'
 import PostCard from '../components/PostCard'
@@ -428,7 +428,7 @@ export default function ProfilePage() {
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-bold">{profile.displayName || profile.handle}</h1>
               <a
-                href={getBlueSkyProfileUrl(profile.handle)}
+                href={getProfileUrl(profile.handle)}
                 className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
               >
                 View on Bluesky ↗

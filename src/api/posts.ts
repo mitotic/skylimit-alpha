@@ -22,6 +22,12 @@ export interface CreatePostParams {
       image: Blob
       alt: string
     }>
+    external?: {
+      uri: string
+      title: string
+      description: string
+      thumbUrl: string
+    }
   }
 }
 
@@ -110,6 +116,43 @@ export async function createPost(
         record.embed = {
           $type: 'app.bsky.embed.images',
           images: imageRefs,
+        }
+      } else if (params.embed?.external) {
+        // Handle external link card embed
+        const ext = params.embed.external
+        let thumbBlob: any = undefined
+        try {
+          // Fetch image through CORS proxy since direct fetch is blocked by CORS
+          const proxyUrls = [
+            `https://corsproxy.io/?url=${encodeURIComponent(ext.thumbUrl)}`,
+            ext.thumbUrl, // Try direct as fallback (works for some CDNs)
+          ]
+          for (const proxyUrl of proxyUrls) {
+            try {
+              const imgResponse = await fetch(proxyUrl)
+              if (imgResponse.ok) {
+                const blob = await imgResponse.blob()
+                if (blob.size > 0) {
+                  const uploadResult = await agent.uploadBlob(blob)
+                  thumbBlob = uploadResult.data.blob
+                  break
+                }
+              }
+            } catch {
+              continue
+            }
+          }
+        } catch {
+          // Thumb upload failed — post without thumbnail
+        }
+        record.embed = {
+          $type: 'app.bsky.embed.external',
+          external: {
+            uri: ext.uri,
+            title: ext.title,
+            description: ext.description,
+            ...(thumbBlob ? { thumb: thumbBlob } : {}),
+          },
         }
       }
 

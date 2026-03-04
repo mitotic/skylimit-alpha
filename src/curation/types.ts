@@ -1,5 +1,8 @@
 import { AppBskyFeedDefs } from '@atproto/api'
 
+// Feed platform discriminator (for future multi-protocol support)
+export type FeedPlatform = 'bluesky' | 'mastodon'
+
 // Periodic post tags
 export const MOTD_TAG = 'motd'
 export const MOTW_TAG = 'motw'
@@ -345,6 +348,8 @@ export interface CurationMetadata {
   curationNumber?: number | null
   // View tracking
   viewedAt?: number
+  // Platform discriminator (for future multi-protocol support)
+  platform?: FeedPlatform
 }
 
 export type CurationFeedViewPost = AppBskyFeedDefs.FeedViewPost & {

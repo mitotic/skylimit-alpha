@@ -18,7 +18,7 @@ import { searchLocalCache } from '../curation/localCacheSearch'
 type SearchTab = 'local' | 'people' | 'posts'
 
 const tabLabels: Record<SearchTab, string> = {
-  local: 'Local Cache',
+  local: 'Local Archive',
   people: 'People',
   posts: 'Posts',
 }
@@ -386,8 +386,8 @@ export default function SearchPage() {
             setLocalTotal(total)
             setLocalOffset(50)
           } catch (error) {
-            console.error('Local cache search failed:', error)
-            addToast(error instanceof Error ? error.message : 'Local cache search failed', 'error')
+            console.error('Local archive search failed:', error)
+            addToast(error instanceof Error ? error.message : 'Local archive search failed', 'error')
             setLocalResults([])
           } finally {
             setIsSearching(false)
@@ -515,7 +515,7 @@ export default function SearchPage() {
                   overlayRef.current.scrollLeft = inputRef.current.scrollLeft
                 }
               }}
-              placeholder={activeTab === 'local' ? "Search cache: @handle*(name*): *text" : activeTab === 'people' ? "Search for people..." : "Search for posts..."}
+              placeholder={activeTab === 'local' ? "Search archive: @handle*(name*): *text" : activeTab === 'people' ? "Search for people..." : "Search for posts..."}
               className="input w-full"
             />
             {/* Overlay that shows gray asterisk after the typed text */}
@@ -567,7 +567,7 @@ export default function SearchPage() {
 
         {!isSearching && query.trim() && activeTab === 'local' && localResults.length === 0 && (
           <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-            <p>No cached posts match your search</p>
+            <p>No archived posts match your search</p>
             <label className="flex items-center justify-center gap-1.5 text-xs mt-3 cursor-pointer">
               <input
                 type="checkbox"
@@ -595,7 +595,7 @@ export default function SearchPage() {
         {!isSearching && !query.trim() && (
           <div className="text-center py-12 text-gray-500 dark:text-gray-400">
             <p>{activeTab === 'local'
-              ? 'Search cached posts: @handle*(name*): *text'
+              ? 'Search archived posts: @handle*(name*): *text'
               : activeTab === 'people'
               ? 'Search for people by username or display name'
               : 'Search for posts by keyword or phrase'

@@ -4,7 +4,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread, fetchParentChain } from '../api/feed'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
-import { getBlueSkyPostUrl } from '../curation/skylimitGeneral'
+import { getPostUrl } from '../curation/skylimitGeneral'
 import PostCard from '../components/PostCard'
 import ParentChainView from '../components/ParentChainView'
 import Compose from '../components/Compose'
@@ -530,7 +530,7 @@ export default function ThreadPage() {
     setShowCompose(true)
   }
 
-  const handlePost = async (text: string, replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string }, quotePost?: AppBskyFeedDefs.PostView) => {
+  const handlePost = async (text: string, replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string }, quotePost?: AppBskyFeedDefs.PostView, images?: Array<{ image: Blob; alt: string }>, ogImage?: { url: string; title: string; description: string }) => {
     if (!agent || !thread) return
     if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
@@ -544,6 +544,11 @@ export default function ThreadPage() {
       })
       addToast('Quote post created!', 'success')
     } else {
+      const buildEmbed = () => {
+        if (images && images.length > 0) return { images }
+        if (ogImage) return { external: { uri: ogImage.url, title: ogImage.title, description: ogImage.description, thumbUrl: ogImage.url } }
+        return undefined
+      }
       await createPost(agent, {
         text,
         replyTo: replyTo || {
@@ -552,10 +557,51 @@ export default function ThreadPage() {
           rootUri: thread.post.uri,
           rootCid: thread.post.cid,
         },
+        embed: buildEmbed(),
       })
       addToast('Reply posted!', 'success')
     }
-    loadThread()
+    await loadThread()
+  }
+
+  const handlePostThread = async (
+    segments: Array<{ text: string; images: Array<{ image: Blob; alt: string }>; ogImage?: { url: string; title: string; description: string } }>,
+    replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string }
+  ) => {
+    if (!agent || !thread) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    // Default replyTo is the current thread post
+    const effectiveReplyTo = replyTo || {
+      uri: thread.post.uri,
+      cid: thread.post.cid,
+      rootUri: thread.post.uri,
+      rootCid: thread.post.cid,
+    }
+
+    let previousUri = effectiveReplyTo.uri
+    let previousCid = effectiveReplyTo.cid
+    const rootUri = effectiveReplyTo.rootUri || effectiveReplyTo.uri
+    const rootCid = effectiveReplyTo.rootCid || effectiveReplyTo.cid
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      const buildSegEmbed = () => {
+        if (seg.images.length > 0) return { images: seg.images }
+        if (seg.ogImage) return { external: { uri: seg.ogImage.url, title: seg.ogImage.title, description: seg.ogImage.description, thumbUrl: seg.ogImage.url } }
+        return undefined
+      }
+      const result = await createPost(agent, {
+        text: seg.text,
+        replyTo: { uri: previousUri, cid: previousCid, rootUri, rootCid },
+        embed: buildSegEmbed(),
+      })
+      previousUri = result.uri
+      previousCid = result.cid
+    }
+
+    addToast(`Thread posted! (${segments.length} posts)`, 'success')
+    await loadThread()
   }
 
   // Helper function to count nested replies recursively
@@ -603,11 +649,9 @@ export default function ThreadPage() {
     return false
   }
 
-  const renderThread = (threadItem: AppBskyFeedDefs.ThreadViewPost, highlightedUri: string | null, isSecondaryView: boolean = false, isAnchor: boolean = false): React.ReactNode => {
+  const renderThread = (threadItem: AppBskyFeedDefs.ThreadViewPost, highlightedUri: string | null, _isSecondaryView: boolean = false, isAnchor: boolean = false): React.ReactNode => {
     const replies = threadItem.replies || []
     const isHighlighted = urisMatch(highlightedUri, threadItem.post.uri)
-    // Highlight anchor post in secondary view (when viewing a reply)
-    const showAnchorHighlight = isSecondaryView
 
     // Engagement counts for anchor post
     const repostCount = threadItem.post.repostCount || 0
@@ -663,11 +707,7 @@ export default function ThreadPage() {
           }
         }}
       >
-        <div className={`border-b border-gray-200 dark:border-gray-700 ${
-          isHighlighted ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20 rounded-lg my-2' : ''
-        } ${
-          showAnchorHighlight ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20 rounded-lg mx-2 my-2' : ''
-        }`}>
+        <div className="border-b border-gray-200 dark:border-gray-700">
           <PostCard
             post={{
               post: threadItem.post,
@@ -678,12 +718,12 @@ export default function ThreadPage() {
             onLike={handleLike}
             onBookmark={handleBookmark}
             showRootPost={false}
-            highlighted={isHighlighted || showAnchorHighlight}
             engagementStats={engagementStatsElement}
+            stackedLayout={true}
           />
         </div>
         {replies.length > 0 && (
-          <div className="ml-4 md:ml-8 pl-4">
+          <div>
             {/* Only show up to repliesDisplayCount replies */}
             {replies.slice(0, repliesDisplayCount).map((reply) => {
               if ('post' in reply) {
@@ -703,26 +743,13 @@ export default function ThreadPage() {
                       }
                     }}
                   >
-                    {/* Clickable reply card */}
+                    {/* Clickable reply card - PostCard handles navigation via its own handlePostClick */}
                     <div
                       className={`cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-lg transition-colors ${
                         isReplyHighlighted ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20 rounded-lg' : ''
                       } ${
                         hasHighlightedNested ? 'ring-2 ring-blue-400 bg-blue-50/50 dark:bg-blue-900/10' : ''
                       }`}
-                      onClick={(e) => {
-                        // Only navigate if not clicking on a button or link
-                        const target = e.target as HTMLElement
-                        if (
-                          target.closest('button') === null &&
-                          target.closest('a') === null &&
-                          target.tagName !== 'BUTTON' &&
-                          target.tagName !== 'A'
-                        ) {
-                          const encodedUri = encodeURIComponent(replyThread.post.uri)
-                          navigate(`/post/${encodedUri}?from=post`)
-                        }
-                      }}
                     >
                       <PostCard
                         post={{
@@ -745,7 +772,7 @@ export default function ThreadPage() {
                           onClick={(e) => {
                             e.stopPropagation()
                             const encodedUri = encodeURIComponent(replyThread.post.uri)
-                            navigate(`/post/${encodedUri}?from=post`)
+                            navigate(`/post/${encodedUri}`)
                           }}
                           className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline transition-colors"
                         >
@@ -804,7 +831,7 @@ export default function ThreadPage() {
           <h1 className="text-2xl font-bold">Thread</h1>
           {thread && (
             <a
-              href={getBlueSkyPostUrl(thread.post.uri, thread.post.author.handle)}
+              href={getPostUrl(thread.post.uri, thread.post.author.handle)}
               className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
             >
               View on Bluesky ↗
@@ -839,6 +866,7 @@ export default function ThreadPage() {
         } : undefined}
         quotePost={quotePost || undefined}
         onPost={handlePost}
+        onPostThread={handlePostThread}
       />
 
       {/* Scroll to top arrow - shown when scrolled down */}

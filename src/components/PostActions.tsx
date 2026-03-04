@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import RepostMenu from './RepostMenu'
-import { getBlueSkyPostUrl } from '../curation/skylimitGeneral'
+import { getPostUrl } from '../curation/skylimitGeneral'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 interface PostActionsProps {
@@ -81,7 +81,7 @@ export default function PostActions({
     e.stopPropagation()
     const handle = author?.handle ?? post.author?.handle
     if (handle) {
-      const url = getBlueSkyPostUrl(post.uri, handle)
+      const url = getPostUrl(post.uri, handle)
       navigator.clipboard.writeText(url).then(() => {
         setShowCopied(true)
       })

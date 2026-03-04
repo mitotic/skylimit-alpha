@@ -8,7 +8,7 @@ import { getPostThread } from '../api/feed'
 import Avatar from './Avatar'
 import PostMedia from './PostMedia'
 import Spinner from './Spinner'
-import { getBlueSkyPostUrl, getBlueSkyProfileUrl } from '../curation/skylimitGeneral'
+import { getPostUrl, getProfileUrl } from '../curation/skylimitGeneral'
 import RichText from './RichText'
 
 // Request deduplication: track in-flight requests to avoid duplicate calls for the same post
@@ -186,7 +186,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
     if (displayPost.uri) {
       if (clickToBlueSky) {
         // Open in Bluesky client (same tab)
-        window.location.href = getBlueSkyPostUrl(displayPost.uri, author.handle)
+        window.location.href = getPostUrl(displayPost.uri, author.handle)
       } else {
         const encodedUri = encodeURIComponent(displayPost.uri)
         if (onClick) {
@@ -201,7 +201,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
   const handleAuthorClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (clickToBlueSky) {
-      window.location.href = getBlueSkyProfileUrl(author.handle)
+      window.location.href = getProfileUrl(author.handle)
     } else {
       navigate(`/profile/${author.handle}`)
     }

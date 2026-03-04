@@ -138,7 +138,7 @@ export default function HomePage() {
     replyToUri, setReplyToUri,
     quotePost, setQuotePost,
     handleLike, handleBookmark, handleRepost,
-    handleQuotePost, handleReply, handlePost, handleAmpChange,
+    handleQuotePost, handleReply, handlePost, handlePostThread, handleAmpChange,
   } = usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger })
 
   const {
@@ -1364,6 +1364,7 @@ export default function HomePage() {
         } : undefined : undefined}
         quotePost={quotePost || undefined}
         onPost={handlePost}
+        onPostThread={handlePostThread}
       />
 
       <ToastContainer toasts={toasts} onRemove={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />

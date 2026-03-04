@@ -3,7 +3,7 @@
  */
 
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
-import { CurationMetadata, PostSummary } from './types'
+import { CurationMetadata, FeedPlatform, PostSummary } from './types'
 import { clientNow, clientDate } from '../utils/clientClock'
 
 /**
@@ -415,29 +415,48 @@ export function getPostUniqueId(post: AppBskyFeedDefs.FeedViewPost): string {
 }
 
 /**
- * Convert an AT Protocol URI to a Bluesky web URL
- * AT URI format: at://did:plc:xxx/app.bsky.feed.post/rkey
- * Bluesky URL format: https://bsky.app/profile/{handle}/post/{rkey}
+ * Get the web URL for a post, dispatching by platform.
+ * For Bluesky: converts AT URI to https://bsky.app/profile/{handle}/post/{rkey}
+ * Future platforms (e.g., Mastodon) can add branches here.
  *
- * @param atUri - The AT Protocol URI
+ * @param uri - The post URI (AT Protocol URI for Bluesky)
  * @param handle - The author's handle
- * @returns The Bluesky web URL
+ * @param platform - The feed platform (defaults to 'bluesky')
+ * @returns The web URL for the post
  */
-export function getBlueSkyPostUrl(atUri: string, handle: string): string {
-  // Extract rkey from AT URI: at://did:plc:xxx/app.bsky.feed.post/rkey
-  const parts = atUri.replace('at://', '').split('/')
-  const rkey = parts[2] // The record key is the last segment
-  return `https://bsky.app/profile/${handle}/post/${rkey}`
+export function getPostUrl(uri: string, handle: string, platform: FeedPlatform = 'bluesky'): string {
+  switch (platform) {
+    case 'bluesky':
+    default: {
+      // Extract rkey from AT URI: at://did:plc:xxx/app.bsky.feed.post/rkey
+      const parts = uri.replace('at://', '').split('/')
+      const rkey = parts[2] // The record key is the last segment
+      return `https://bsky.app/profile/${handle}/post/${rkey}`
+    }
+  }
 }
 
 /**
- * Get the Bluesky profile URL for a handle
+ * Get the web URL for a user profile, dispatching by platform.
+ * For Bluesky: https://bsky.app/profile/{handle}
+ * Future platforms (e.g., Mastodon) can add branches here.
+ *
  * @param handle - The user's handle
- * @returns The Bluesky profile URL
+ * @param platform - The feed platform (defaults to 'bluesky')
+ * @returns The web URL for the profile
  */
-export function getBlueSkyProfileUrl(handle: string): string {
-  return `https://bsky.app/profile/${handle}`
+export function getProfileUrl(handle: string, platform: FeedPlatform = 'bluesky'): string {
+  switch (platform) {
+    case 'bluesky':
+    default:
+      return `https://bsky.app/profile/${handle}`
+  }
 }
+
+/** @deprecated Use getPostUrl() instead */
+export const getBlueSkyPostUrl = getPostUrl
+/** @deprecated Use getProfileUrl() instead */
+export const getBlueSkyProfileUrl = getProfileUrl
 
 /**
  * Get timestamp for a FeedViewPost

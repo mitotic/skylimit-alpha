@@ -236,10 +236,17 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
     text: string,
     replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string },
     quotePostArg?: AppBskyFeedDefs.PostView,
-    images?: Array<{ image: Blob; alt: string }>
+    images?: Array<{ image: Blob; alt: string }>,
+    ogImage?: { url: string; title: string; description: string }
   ) => {
     if (!agent) return
     if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    const buildEmbed = () => {
+      if (images && images.length > 0) return { images }
+      if (ogImage) return { external: { uri: ogImage.url, title: ogImage.title, description: ogImage.description, thumbUrl: ogImage.url } }
+      return undefined
+    }
 
     if (quotePostArg) {
       await createQuotePost(agent, {
@@ -255,11 +262,55 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
       await createPost(agent, {
         text,
         replyTo,
-        embed: images && images.length > 0 ? { images } : undefined,
+        embed: buildEmbed(),
       })
       addToast('Post created!', 'success')
     }
     // Trigger probe to pick up the new post through paged updates
+    forceProbeRef.current = true
+    setForceProbeTrigger(n => n + 1)
+  }, [agent, forceProbeRef, setForceProbeTrigger, addToast])
+
+  const handlePostThread = useCallback(async (
+    segments: Array<{ text: string; images: Array<{ image: Blob; alt: string }>; ogImage?: { url: string; title: string; description: string } }>,
+    replyTo?: { uri: string; cid: string; rootUri?: string; rootCid?: string }
+  ) => {
+    if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    let previousUri: string | undefined = replyTo?.uri
+    let previousCid: string | undefined = replyTo?.cid
+    let rootUri: string | undefined = replyTo?.rootUri || replyTo?.uri
+    let rootCid: string | undefined = replyTo?.rootCid || replyTo?.cid
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      const replyParams = previousUri && previousCid
+        ? { uri: previousUri, cid: previousCid, rootUri, rootCid }
+        : undefined
+
+      const buildSegEmbed = () => {
+        if (seg.images.length > 0) return { images: seg.images }
+        if (seg.ogImage) return { external: { uri: seg.ogImage.url, title: seg.ogImage.title, description: seg.ogImage.description, thumbUrl: seg.ogImage.url } }
+        return undefined
+      }
+
+      const result = await createPost(agent, {
+        text: seg.text,
+        replyTo: replyParams,
+        embed: buildSegEmbed(),
+      })
+
+      // First post in a new thread (no replyTo) becomes the root
+      if (i === 0 && !rootUri) {
+        rootUri = result.uri
+        rootCid = result.cid
+      }
+      previousUri = result.uri
+      previousCid = result.cid
+    }
+
+    addToast(`Thread posted! (${segments.length} posts)`, 'success')
     forceProbeRef.current = true
     setForceProbeTrigger(n => n + 1)
   }, [agent, forceProbeRef, setForceProbeTrigger, addToast])
@@ -283,6 +334,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
     handleQuotePost,
     handleReply,
     handlePost,
+    handlePostThread,
     handleAmpChange,
   }
 }
