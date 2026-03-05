@@ -6,6 +6,7 @@ import { clientDate } from '../utils/clientClock'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
 import RichText from './RichText'
+import PostMedia from './PostMedia'
 
 interface ParentChainViewProps {
   parents: AppBskyFeedDefs.PostView[]
@@ -80,6 +81,12 @@ function ParentPost({
           {record?.text && (
             <div className="whitespace-pre-wrap break-words">
               <RichText text={record.text} facets={record.facets} />
+            </div>
+          )}
+
+          {post.embed && (
+            <div className="mt-2">
+              <PostMedia embed={post.embed as any} />
             </div>
           )}
         </div>

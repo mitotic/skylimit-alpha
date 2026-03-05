@@ -95,6 +95,17 @@ function buildSegments(text: string, facets: AppBskyRichtextFacet.Main[]): TextS
 }
 
 /**
+ * Truncate URL for display: strip protocol, truncate to ~30 chars
+ */
+function truncateUrl(text: string): string {
+  let display = text.replace(/^https?:\/\//, '')
+  if (display.length > 30) {
+    display = display.slice(0, 27) + '...'
+  }
+  return display
+}
+
+/**
  * RichText component that renders post text with clickable links, mentions, and hashtags
  */
 export default function RichText({ text, facets, className }: RichTextProps) {
@@ -127,7 +138,7 @@ export default function RichText({ text, facets, className }: RichTextProps) {
                 onClick={handleClick}
                 className="text-blue-500 dark:text-blue-400 hover:underline"
               >
-                {segment.text}
+                {truncateUrl(segment.text)}
               </a>
             )
 

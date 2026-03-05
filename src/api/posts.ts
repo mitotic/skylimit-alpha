@@ -2,7 +2,7 @@
  * Post operations (create, like, repost, etc.)
  */
 
-import { BskyAgent } from '@atproto/api'
+import { BskyAgent, RichText as RichTextAPI } from '@atproto/api'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 
 export interface PostOptions {
@@ -55,10 +55,15 @@ export async function createPost(
 ): Promise<{ uri: string; cid: string }> {
   return retryWithBackoff(
     async () => {
+      // Detect facets (URLs, @mentions, #hashtags) in the post text
+      const rt = new RichTextAPI({ text: params.text })
+      await rt.detectFacets(agent)
+
       const record: any = {
         $type: 'app.bsky.feed.post',
-        text: params.text,
+        text: rt.text,
         createdAt: new Date().toISOString(),
+        ...(rt.facets?.length ? { facets: rt.facets } : {}),
       }
 
       if (params.replyTo) {
@@ -434,10 +439,15 @@ export async function createQuotePost(
 ): Promise<{ uri: string; cid: string }> {
   return retryWithBackoff(
     async () => {
+      // Detect facets (URLs, @mentions, #hashtags) in the post text
+      const rt = new RichTextAPI({ text: params.text })
+      await rt.detectFacets(agent)
+
       const record: any = {
         $type: 'app.bsky.feed.post',
-        text: params.text,
+        text: rt.text,
         createdAt: new Date().toISOString(),
+        ...(rt.facets?.length ? { facets: rt.facets } : {}),
       }
 
       const hasImages = params.embed?.images && params.embed.images.length > 0

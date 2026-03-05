@@ -126,7 +126,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [editionFeedback, setEditionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
-  const [visualEditorMode, setVisualEditorMode] = useState(true)
+  const [visualEditorMode, setVisualEditorMode] = useState(false)
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -1415,8 +1415,7 @@ You will be logged out and redirected to the login page.`}
           <span>Show periodic editions in home feed</span>
         </label>
 
-        <DisclosureSection title="Edition Layout">
-          <div className="space-y-4">
+        <div className="space-y-4">
             {visualEditorMode ? (
               <EditionLayoutEditor
                 layoutText={settings.editionLayout}
@@ -1481,8 +1480,7 @@ You will be logged out and redirected to the login page.`}
                 </div>
               </div>
             )}
-          </div>
-        </DisclosureSection>
+        </div>
 
         <div className="flex flex-wrap gap-3 mt-6">
           <Button

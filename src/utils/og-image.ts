@@ -2,6 +2,11 @@
  * Utility to extract OG/Twitter Card image from a URL
  */
 
+import tlds from 'tlds'
+
+// Build a Set of valid IANA TLDs for O(1) lookup
+const tldSet = new Set((tlds as string[]).map(t => t.toLowerCase()))
+
 export interface OGImageData {
   url: string
   title?: string
@@ -9,13 +14,31 @@ export interface OGImageData {
 }
 
 /**
- * Extracts the last URL from text
+ * Check if a URL has a valid IANA TLD
+ */
+function hasValidTld(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname
+    const parts = hostname.split('.')
+    const tld = parts[parts.length - 1].toLowerCase()
+    return tldSet.has(tld)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Extracts the last URL with a valid TLD from text
  */
 export function extractLastUrl(text: string): string | null {
-  // Require domain with at least one dot and a TLD (2+ chars) to avoid matching partial URLs
   const urlRegex = /(https?:\/\/[^\s]+\.[a-zA-Z]{2,}[^\s]*)/g
   const matches = text.match(urlRegex)
-  return matches && matches.length > 0 ? matches[matches.length - 1] : null
+  if (!matches) return null
+  // Return last URL with a valid IANA TLD
+  for (let i = matches.length - 1; i >= 0; i--) {
+    if (hasValidTld(matches[i])) return matches[i]
+  }
+  return null
 }
 
 /**

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react'
-import { AppBskyFeedDefs } from '@atproto/api'
+import { AppBskyFeedDefs, RichText as RichTextAPI } from '@atproto/api'
 import Button from './Button'
 import Modal from './Modal'
 import QuotedPost from './QuotedPost'
@@ -71,23 +71,53 @@ function formatSuffix(index: number, total: number): string {
   return suffix.padStart(maxSuffixLen, ' ')
 }
 
+// Find the best split point at or before limit, preferring word boundaries.
+// Returns the index of a space/newline to split at, or `limit` for hard split.
+// Scans from limit-1 so that keep (0..splitAt inclusive) stays within limit.
+function findSplitPoint(text: string, limit: number): number {
+  if (text.length <= limit) return text.length
+  // Look backward from limit-1 for a space or newline
+  for (let i = limit - 1; i > 0; i--) {
+    if (text[i] === ' ' || text[i] === '\n') return i
+  }
+  // No word boundary found (e.g., single long word/URL) — fall back to hard limit
+  return limit
+}
+
+interface RedistributeResult {
+  segments: ThreadSegment[]
+  cursorSegment: number  // which segment the cursor should be in
+  cursorPos: number      // cursor position within that segment
+}
+
 function redistributeText(
   segments: ThreadSegment[],
   changedIndex: number,
-  newText: string
-): ThreadSegment[] {
+  newText: string,
+  cursorPos?: number     // cursor position in the changed segment's text
+): RedistributeResult {
   const updated = segments.map((s, i) =>
     i === changedIndex ? { ...s, text: newText } : { ...s }
   )
 
+  const splitOverflow = (text: string, limit: number): { keep: string; overflow: string } => {
+    const splitAt = findSplitPoint(text, limit)
+    if (splitAt < text.length && (text[splitAt] === ' ' || text[splitAt] === '\n')) {
+      // Word boundary: trailing space stays in keep (like word processor end-of-line)
+      return { keep: text.slice(0, splitAt + 1), overflow: text.slice(splitAt + 1) }
+    }
+    // Hard limit (no word boundary found)
+    return { keep: text.slice(0, splitAt), overflow: text.slice(splitAt) }
+  }
+
   const doPass = (segs: ThreadSegment[]) => {
     const limit = getEffectiveLimit(segs.length)
 
-    // Forward pass: push overflow at character limit
+    // Forward pass: push overflow at word boundary
     for (let i = changedIndex; i < segs.length; i++) {
       if (segs[i].text.length > limit) {
-        const overflow = segs[i].text.slice(limit)
-        segs[i] = { ...segs[i], text: segs[i].text.slice(0, limit) }
+        const { keep, overflow } = splitOverflow(segs[i].text, limit)
+        segs[i] = { ...segs[i], text: keep }
 
         if (i + 1 < segs.length) {
           segs[i + 1] = { ...segs[i + 1], text: overflow + segs[i + 1].text }
@@ -97,18 +127,33 @@ function redistributeText(
       }
     }
 
-    // Backward pass: pull text back if room in changedIndex
+    // Backward pass: pull text back if room in changedIndex, respecting word boundaries
     if (changedIndex < segs.length - 1) {
       const room = limit - segs[changedIndex].text.length
       if (room > 0 && segs[changedIndex + 1].text.length > 0) {
-        const pullChars = Math.min(room, segs[changedIndex + 1].text.length)
-        segs[changedIndex] = {
-          ...segs[changedIndex],
-          text: segs[changedIndex].text + segs[changedIndex + 1].text.slice(0, pullChars),
+        const nextText = segs[changedIndex + 1].text
+        let pullChars = Math.min(room, nextText.length)
+        // Snap to word boundary if we're not pulling the entire next segment
+        if (pullChars < nextText.length) {
+          let found = false
+          for (let j = pullChars; j > 0; j--) {
+            if (nextText[j] === ' ' || nextText[j] === '\n') {
+              pullChars = j + 1 // Include the space — it gets consumed as trailing whitespace
+              found = true
+              break
+            }
+          }
+          if (!found) pullChars = 0 // Can't pull partial word; leave it
         }
-        segs[changedIndex + 1] = {
-          ...segs[changedIndex + 1],
-          text: segs[changedIndex + 1].text.slice(pullChars),
+        if (pullChars > 0) {
+          segs[changedIndex] = {
+            ...segs[changedIndex],
+            text: segs[changedIndex].text + nextText.slice(0, pullChars),
+          }
+          segs[changedIndex + 1] = {
+            ...segs[changedIndex + 1],
+            text: nextText.slice(pullChars),
+          }
         }
       }
     }
@@ -131,8 +176,8 @@ function redistributeText(
   const newLimit = getEffectiveLimit(updated.length)
   for (let i = 0; i < updated.length; i++) {
     if (updated[i].text.length > newLimit) {
-      const overflow = updated[i].text.slice(newLimit)
-      updated[i] = { ...updated[i], text: updated[i].text.slice(0, newLimit) }
+      const { keep, overflow } = splitOverflow(updated[i].text, newLimit)
+      updated[i] = { ...updated[i], text: keep }
       if (i + 1 < updated.length) {
         updated[i + 1] = { ...updated[i + 1], text: overflow + updated[i + 1].text }
       } else {
@@ -141,7 +186,20 @@ function redistributeText(
     }
   }
 
-  return updated
+  // Determine where the cursor should go after redistribution
+  let resultCursorSeg = changedIndex
+  let resultCursorPos = cursorPos ?? newText.length
+
+  // If cursor was at or past the split point, move it to the next segment
+  if (resultCursorPos > updated[changedIndex].text.length && changedIndex + 1 < updated.length) {
+    const overflowOffset = resultCursorPos - updated[changedIndex].text.length
+    resultCursorSeg = changedIndex + 1
+    resultCursorPos = Math.min(overflowOffset, updated[changedIndex + 1].text.length)
+  } else {
+    resultCursorPos = Math.min(resultCursorPos, updated[changedIndex].text.length)
+  }
+
+  return { segments: updated, cursorSegment: resultCursorSeg, cursorPos: resultCursorPos }
 }
 
 function processFilesForSegment(
@@ -272,43 +330,74 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
   }, [text, images.length, isThreaded])
 
   // Per-segment OG image extraction (threaded mode) — debounced
-  const ogFetchedUrls = useRef<Map<number, string>>(new Map()) // segIndex -> last fetched URL
+  // Cache OG data by URL so it follows the URL across segments without re-fetching
+  const ogCache = useRef<Map<string, OGImagePreview>>(new Map()) // url -> cached OG data
+  const ogPendingUrls = useRef<Set<string>>(new Set()) // URLs currently being fetched
   useEffect(() => {
     if (!isThreaded) {
-      ogFetchedUrls.current.clear()
+      ogCache.current.clear()
+      ogPendingUrls.current.clear()
       return
     }
 
     const timer = setTimeout(() => {
-      segments.forEach((seg, i) => {
-        if (seg.images.length > 0) {
-          if (seg.ogImage) {
-            setSegments(prev => prev.map((s, j) => j === i ? { ...s, ogImage: null } : s))
+      setSegments(prev => {
+        let changed = false
+        const next = prev.map((seg) => {
+          // If segment has uploaded images, clear OG
+          if (seg.images.length > 0) {
+            if (seg.ogImage) { changed = true; return { ...seg, ogImage: null } }
+            return seg
           }
-          ogFetchedUrls.current.delete(i)
-          return
-        }
 
-        const url = extractLastUrl(seg.text)
-        if (!url) {
-          if (seg.ogImage) {
-            setSegments(prev => prev.map((s, j) => j === i ? { ...s, ogImage: null } : s))
+          const url = extractLastUrl(seg.text)
+
+          // No URL → clear OG
+          if (!url) {
+            if (seg.ogImage) { changed = true; return { ...seg, ogImage: null } }
+            return seg
           }
-          ogFetchedUrls.current.delete(i)
-          return
-        }
 
-        // Skip if we already fetched this exact URL for this segment
-        if (ogFetchedUrls.current.get(i) === url) return
-        ogFetchedUrls.current.set(i, url)
+          // URL matches current OG → no change needed
+          if (seg.ogImage?.url === url) return seg
 
-        fetchOGImage(url)
-          .then(data => {
-            setSegments(prev => prev.map((s, j) => j === i ? { ...s, ogImage: data || null } : s))
-          })
-          .catch(() => {
-            setSegments(prev => prev.map((s, j) => j === i ? { ...s, ogImage: null } : s))
-          })
+          // Check cache for this URL
+          const cached = ogCache.current.get(url)
+          if (cached) {
+            changed = true
+            return { ...seg, ogImage: cached }
+          }
+
+          // Fetch if not already pending
+          if (!ogPendingUrls.current.has(url)) {
+            ogPendingUrls.current.add(url)
+            fetchOGImage(url)
+              .then(data => {
+                ogPendingUrls.current.delete(url)
+                if (data) {
+                  ogCache.current.set(url, data)
+                  // Apply to whichever segment currently has this URL
+                  setSegments(segs => segs.map(s => {
+                    if (s.images.length > 0) return s
+                    const segUrl = extractLastUrl(s.text)
+                    if (segUrl === url && !s.ogImage) return { ...s, ogImage: data }
+                    return s
+                  }))
+                }
+              })
+              .catch(() => {
+                ogPendingUrls.current.delete(url)
+              })
+          }
+
+          // Clear stale OG if URL changed
+          if (seg.ogImage && seg.ogImage.url !== url) {
+            changed = true
+            return { ...seg, ogImage: null }
+          }
+          return seg
+        })
+        return changed ? next : prev
       })
     }, 500) // 500ms debounce
 
@@ -323,11 +412,23 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
       const ta = segmentTextareaRefs.current[index]
       if (ta) {
         const safePos = Math.min(pos, ta.value.length)
+        ta.focus()
         ta.setSelectionRange(safePos, safePos)
       }
       cursorRestore.current = null
     }
   })
+
+  // Auto-resize threaded textareas to fit content without scrolling
+  useLayoutEffect(() => {
+    if (!isThreaded) return
+    segmentTextareaRefs.current.forEach((ta) => {
+      if (ta) {
+        ta.style.height = 'auto'
+        ta.style.height = `${Math.max(ta.scrollHeight, 48)}px`
+      }
+    })
+  }, [isThreaded, segments, previewMode])
 
   // --- Single-mode handlers (unchanged) ---
 
@@ -359,6 +460,11 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
   }
 
   const handlePaste = (e: React.ClipboardEvent) => {
+    // If clipboard has plain text (e.g., rich text from Word), let the browser handle it
+    // as a text paste — don't treat the image representation as an image upload
+    const hasText = e.clipboardData.types.includes('text/plain')
+    if (hasText) return
+
     const items = e.clipboardData.items
     const imageFiles: File[] = []
 
@@ -397,9 +503,82 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
   const handleSegmentTextChange = useCallback((index: number, newText: string) => {
     const ta = segmentTextareaRefs.current[index]
     const cursorPos = ta?.selectionStart ?? newText.length
-    cursorRestore.current = { index, pos: cursorPos }
 
-    setSegments(prev => redistributeText(prev, index, newText))
+    setSegments(prev => {
+      const result = redistributeText(prev, index, newText, cursorPos)
+      cursorRestore.current = { index: result.cursorSegment, pos: result.cursorPos }
+      return result.segments
+    })
+  }, [])
+
+  // Keyboard navigation across segment boundaries (word-processor behavior)
+  const handleSegmentKeyDown = useCallback((segIndex: number, e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.target as HTMLTextAreaElement
+    const pos = ta.selectionStart ?? 0
+    const text = ta.value
+
+    // Backspace at position 0: join with previous segment
+    if (e.key === 'Backspace' && segIndex > 0 && pos === 0 && ta.selectionEnd === 0) {
+      e.preventDefault()
+      setSegments(prev => {
+        const prevSeg = prev[segIndex - 1]
+        const prevText = prevSeg.text.replace(/[\s]+$/, '')
+        const cursorTarget = prevText.length
+        const currentText = prev[segIndex].text
+        const mergedText = prevText + currentText
+        const result = redistributeText(prev, segIndex - 1, mergedText, cursorTarget)
+        cursorRestore.current = { index: result.cursorSegment, pos: result.cursorPos }
+        return result.segments
+      })
+      return
+    }
+
+    // ArrowUp on first line: move to previous segment's last line
+    if (e.key === 'ArrowUp' && segIndex > 0) {
+      const firstNewline = text.indexOf('\n')
+      const onFirstLine = firstNewline === -1 || pos <= firstNewline
+      if (onFirstLine) {
+        e.preventDefault()
+        const prevTa = segmentTextareaRefs.current[segIndex - 1]
+        if (prevTa) {
+          const prevText = prevTa.value
+          const lastNewline = prevText.lastIndexOf('\n')
+          // Column offset within current line
+          const col = pos
+          // Position on last line of previous segment at same column
+          const lastLineStart = lastNewline + 1
+          const lastLineLen = prevText.length - lastLineStart
+          const targetPos = lastLineStart + Math.min(col, lastLineLen)
+          prevTa.focus()
+          prevTa.setSelectionRange(targetPos, targetPos)
+        }
+      }
+    }
+
+    // ArrowDown on last line: move to next segment's first line
+    if (e.key === 'ArrowDown') {
+      const nextSegIndex = segIndex + 1
+      if (nextSegIndex < (segmentTextareaRefs.current.length)) {
+        const lastNewline = text.lastIndexOf('\n')
+        const onLastLine = lastNewline === -1 || pos > lastNewline
+        if (onLastLine) {
+          e.preventDefault()
+          const nextTa = segmentTextareaRefs.current[nextSegIndex]
+          if (nextTa) {
+            // Column offset within current line
+            const lineStart = lastNewline === -1 ? 0 : lastNewline + 1
+            const col = pos - lineStart
+            // Position on first line of next segment at same column
+            const nextText = nextTa.value
+            const firstNewline = nextText.indexOf('\n')
+            const firstLineLen = firstNewline === -1 ? nextText.length : firstNewline
+            const targetPos = Math.min(col, firstLineLen)
+            nextTa.focus()
+            nextTa.setSelectionRange(targetPos, targetPos)
+          }
+        }
+      }
+    }
   }, [])
 
   const handleSegmentImageDrop = useCallback((segIndex: number, files: FileList | File[]) => {
@@ -414,6 +593,11 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
   }, [])
 
   const handleSegmentPaste = useCallback((segIndex: number, e: React.ClipboardEvent) => {
+    // If clipboard has plain text (e.g., rich text from Word), let the browser handle it
+    // as a text paste — don't treat the image representation as an image upload
+    const hasText = e.clipboardData.types.includes('text/plain')
+    if (hasText) return
+
     const items = e.clipboardData.items
     const imageFiles: File[] = []
 
@@ -609,11 +793,16 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
           displayName: session?.handle || 'you',
           avatar: undefined,
         },
-        record: {
-          $type: 'app.bsky.feed.post',
-          text: text.trim(),
-          createdAt: new Date().toISOString(),
-        },
+        record: (() => {
+          const rt = new RichTextAPI({ text: text.trim() })
+          rt.detectFacetsWithoutResolution()
+          return {
+            $type: 'app.bsky.feed.post',
+            text: text.trim(),
+            createdAt: new Date().toISOString(),
+            ...(rt.facets?.length ? { facets: rt.facets } : {}),
+          }
+        })(),
         embed,
         indexedAt: new Date().toISOString(),
         likeCount: 0,
@@ -640,11 +829,16 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
             displayName: session?.handle || 'you',
             avatar: undefined,
           },
-          record: {
-            $type: 'app.bsky.feed.post',
-            text: fullText,
-            createdAt: new Date().toISOString(),
-          },
+          record: (() => {
+            const rt = new RichTextAPI({ text: fullText })
+            rt.detectFacetsWithoutResolution()
+            return {
+              $type: 'app.bsky.feed.post',
+              text: fullText,
+              createdAt: new Date().toISOString(),
+              ...(rt.facets?.length ? { facets: rt.facets } : {}),
+            }
+          })(),
           embed: seg.images.length > 0
             ? {
                 $type: 'app.bsky.embed.images#view',
@@ -853,7 +1047,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
         {/* === THREADED MODE — EDIT VIEW === */}
         {isThreaded && !previewMode && (
           <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-            <div className="grid" style={{ gridTemplateColumns: '1fr 7rem' }}>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 96px' }}>
               {segments.map((seg, segIdx) => {
                 const charsLeft = effectiveLimit - seg.text.length
                 const segDragging = segmentDragging === segIdx
@@ -862,7 +1056,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
                   <React.Fragment key={seg.id}>
                     {/* Textarea cell */}
                     <div
-                      className={`relative border-b border-gray-200 dark:border-gray-700 last:border-b-0 transition-colors ${
+                      className={`relative border-b border-dashed border-gray-200 dark:border-gray-700 last:border-b-0 transition-colors ${
                         segDragging ? 'bg-blue-50 dark:bg-blue-900/20' : ''
                       }`}
                       onDragOver={(e) => {
@@ -886,16 +1080,17 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
                         ref={(el) => { segmentTextareaRefs.current[segIdx] = el }}
                         value={seg.text}
                         onChange={(e) => handleSegmentTextChange(segIdx, e.target.value)}
+                        onKeyDown={(e) => handleSegmentKeyDown(segIdx, e)}
                         onPaste={(e) => handleSegmentPaste(segIdx, e)}
                         placeholder={segIdx === 0
                           ? (replyTo ? 'Write your reply...' : 'What\'s happening?')
                           : 'Continue...'}
-                        className="w-full px-4 py-3 border-0 bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none resize-none pr-20"
-                        rows={4}
+                        className="w-full pl-2 pr-8 py-1 border-0 bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none resize-none overflow-hidden"
+                        rows={2}
                         disabled={isPosting}
                       />
                       {/* Segment number overlay */}
-                      <span className="absolute bottom-2 right-2 text-xs text-gray-400 dark:text-gray-500 font-mono pointer-events-none whitespace-pre">
+                      <span className="absolute bottom-1 right-1 text-xs text-gray-400 dark:text-gray-500 font-mono pointer-events-none whitespace-pre">
                         {formatSuffix(segIdx, segments.length)}
                       </span>
                     </div>
@@ -924,11 +1119,11 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
                     >
                       {/* Image thumbnails */}
                       {seg.images.map((img, imgIdx) => (
-                        <div key={imgIdx} className="relative group w-12 h-12 flex-shrink-0">
+                        <div key={imgIdx} className="relative group w-16 h-16 flex-shrink-0">
                           <img
                             src={img.preview}
                             alt={img.alt || `Image ${imgIdx + 1}`}
-                            className="w-12 h-12 object-cover rounded"
+                            className="w-16 h-16 object-cover rounded"
                           />
                           <button
                             type="button"
@@ -975,11 +1170,11 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
 
                       {/* OG image thumbnail */}
                       {seg.ogImage && seg.images.length === 0 && (
-                        <div className="relative group w-12 h-12 flex-shrink-0">
+                        <div className="relative group w-16 h-16 flex-shrink-0">
                           <img
                             src={seg.ogImage.url}
                             alt={seg.ogImage.title || 'Link preview'}
-                            className="w-12 h-12 object-cover rounded opacity-70"
+                            className="w-16 h-16 object-cover rounded opacity-70"
                           />
                           <button
                             type="button"
@@ -1000,7 +1195,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
                             activeSegmentFileInput.current = segIdx
                             segmentFileInputRefs.current[segIdx]?.click()
                           }}
-                          className="w-12 h-12 border border-dashed border-gray-300 dark:border-gray-600 rounded flex items-center justify-center text-gray-400 hover:border-blue-400 transition-colors text-lg"
+                          className="w-16 h-16 border border-dashed border-gray-300 dark:border-gray-600 rounded flex items-center justify-center text-gray-400 hover:border-blue-400 transition-colors text-lg"
                           disabled={isPosting}
                           title="Add image"
                         >
@@ -1025,7 +1220,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
                       />
 
                       {/* Chars left */}
-                      <div className={`text-[10px] mt-auto ${charsLeft < 20 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'}`}>
+                      <div className={`text-xs mt-auto ${charsLeft < 20 ? 'text-orange-500' : 'text-gray-400 dark:text-gray-500'}`}>
                         {charsLeft} left
                       </div>
                     </div>
