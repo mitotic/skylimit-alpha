@@ -1116,7 +1116,7 @@ export async function transferSecondaryToPrimary(
           repostCount: syntheticPost.post.repostCount ?? 0,
           timestamp: new Date(insertTimestamp),
           postTimestamp: insertTimestamp,
-          engaged: false,
+          postEngagement: undefined,
           curation_status: settings.showEditionsInFeed ? 'edition_publish_show' : 'edition_publish_drop',
           curation_msg: syntheticPost.curation?.curation_msg,
           edition_status: 'synthetic',

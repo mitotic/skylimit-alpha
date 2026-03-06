@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams } from 'react-router-dom'
-import { AppBskyFeedDefs } from '@atproto/api'
+import { AppBskyFeedDefs, AppBskyRichtextFacet, RichText as RichTextAPI } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { getProfile } from '../api/profile'
 import { getAuthorFeed, getActorLikes } from '../api/feed'
@@ -14,6 +14,7 @@ import Compose from '../components/Compose'
 import Spinner from '../components/Spinner'
 import ConfirmModal from '../components/ConfirmModal'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
+import RichText from '../components/RichText'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 type Tab = 'posts' | 'replies' | 'likes'
@@ -31,6 +32,7 @@ export default function ProfilePage() {
   const [quotePost, setQuotePost] = useState<AppBskyFeedDefs.PostView | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [showLogoutModal, setShowLogoutModal] = useState(false)
+  const [descriptionFacets, setDescriptionFacets] = useState<AppBskyRichtextFacet.Main[] | undefined>()
   const isMountedRef = useRef(true)
   const currentActorRef = useRef<string | undefined>(actor)
 
@@ -38,6 +40,26 @@ export default function ProfilePage() {
   useEffect(() => {
     currentActorRef.current = actor
   }, [actor])
+
+  // Detect facets in profile description if not provided by the API
+  useEffect(() => {
+    if (!profile?.description) {
+      setDescriptionFacets(undefined)
+      return
+    }
+    if (profile.descriptionFacets?.length) {
+      setDescriptionFacets(profile.descriptionFacets)
+      return
+    }
+    if (!agent) return
+    // Detect facets client-side (URLs, mentions, hashtags)
+    const rt = new RichTextAPI({ text: profile.description })
+    rt.detectFacets(agent).then(() => {
+      setDescriptionFacets(rt.facets || undefined)
+    }).catch(() => {
+      // Silently fail - description will render as plain text
+    })
+  }, [profile?.description, profile?.descriptionFacets, agent])
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now().toString()
@@ -436,7 +458,9 @@ export default function ProfilePage() {
             </div>
             <p className="text-gray-500 dark:text-gray-400">@{profile.handle}</p>
             {profile.description && (
-              <p className="mt-2 whitespace-pre-wrap">{profile.description}</p>
+              <div className="mt-2 whitespace-pre-wrap">
+                <RichText text={profile.description} facets={descriptionFacets} />
+              </div>
             )}
             <div className="flex gap-4 mt-4 text-sm text-gray-500 dark:text-gray-400">
               <span>{profile.followsCount || 0} Following</span>

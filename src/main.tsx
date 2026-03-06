@@ -200,6 +200,40 @@ if (!urlParams.has('server')) {
   }
 }
 
+// Handle ?clobber=1 - equivalent to browser "Clear storage": wipe everything and start fresh
+if (urlParams.get('clobber') === '1') {
+  if (!confirm('Delete ALL site data (storage + database) and start fresh?')) {
+    window.history.replaceState({}, '', '/')
+  } else {
+    console.log('[Clobber] Wiping all site data')
+    localStorage.clear()
+    sessionStorage.clear()
+    const redirect = () => { window.location.href = '/' }
+    if (indexedDB.databases) {
+      indexedDB.databases().then(dbs => {
+        if (dbs.length === 0) { redirect(); return }
+        let remaining = dbs.length
+        for (const db of dbs) {
+          const req = indexedDB.deleteDatabase(db.name!)
+          req.onsuccess = req.onerror = req.onblocked = () => {
+            console.log(`[Clobber] Deleted database: ${db.name}`)
+            if (--remaining === 0) redirect()
+          }
+        }
+      }).catch(() => redirect())
+    } else {
+      // Fallback for browsers without databases() API
+      const req = indexedDB.deleteDatabase('skylimit_db')
+      req.onsuccess = req.onerror = req.onblocked = () => redirect()
+    }
+    setTimeout(() => {
+      console.warn('[Clobber] Timeout, redirecting')
+      window.location.href = '/'
+    }, 3000)
+    throw new Error('Clobber in progress - halting React render')
+  }
+}
+
 // Handle ?reset=1 parameter
 if (urlParams.get('reset') === '1') {
   console.log('[Reset] Reset flag detected in main.tsx')

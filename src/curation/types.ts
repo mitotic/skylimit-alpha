@@ -3,16 +3,15 @@ import { AppBskyFeedDefs } from '@atproto/api'
 // Feed platform discriminator (for future multi-protocol support)
 export type FeedPlatform = 'bluesky' | 'mastodon'
 
-// Periodic post tags
-export const MOTD_TAG = 'motd'
-export const MOTW_TAG = 'motw'
-export const MOTM_TAG = 'motm'
-export const MOT_TAGS = [MOTD_TAG, MOTW_TAG, MOTM_TAG]
-export const PRIORITY_TAG = 'priority'
+// Periodic post tag
+export const WEEKLY_TAG = 'weekly'
+
+// Default priority patterns (match any hashtagged post)
+export const DEFAULT_PRIORITY_PATTERNS = '#*'
 
 // Curation status type - always ends in '_show' or '_drop'
 export type CurationStatus =
-  | 'motx_show'        // MOTx tag post accepted
+  | 'periodic_show'    // Periodic tag post accepted (#Weekly)
   | 'priority_show'    // Priority post passes probability filter
   | 'priority_drop'    // Priority post fails probability filter
   | 'regular_show'     // Regular post passes probability filter
@@ -56,7 +55,7 @@ export function isEditionPostStatus(status: CurationStatus | undefined): boolean
 }
 
 // Keys for user profile metadata
-export const USER_TOPICS_KEY = 'topics'
+export const USER_PRIORITY_PATTERNS_KEY = 'priorityPatterns'
 export const USER_TIMEZONE_KEY = 'timezone'
 
 // Amplification factor limits
@@ -69,7 +68,6 @@ const DEFAULT_INTERVAL_HOURS = 2
 // Valid interval values (factors of 24 between 1-12)
 export const VALID_INTERVAL_HOURS = [1, 2, 3, 4, 6, 8, 12] as const
 
-export const MOTD_MIN_SKYLIMIT_NUMBER = 1.0
 
 // Forward declaration for settings type (full interface defined below)
 type SkylimitSettingsForInterval = { curationIntervalHours?: number }
@@ -176,9 +174,9 @@ export interface GlobalStats {
 export interface UserEntry {
   altname: string
   acct_id: string
-  topics: string
+  priorityPatterns: string
   amp_factor: number
-  motx_daily: number
+  periodic_daily: number
   priority_daily: number
   original_daily: number       // Original posts (not replies)
   followed_reply_daily: number // Replies to followees
@@ -186,6 +184,7 @@ export interface UserEntry {
   repost_daily: number         // Daily repost count for this user
   engaged_daily: number
   total_daily: number
+  shown_daily: number           // Actual shown posts per day (from curation status tracking)
   net_prob: number
   priority_prob: number
   regular_prob: number
@@ -209,6 +208,22 @@ export type SuggestionsMap = Map<string, TextSuggestions>
  * - repostUri: The actual AT Protocol URI of the original post (for reposts only).
  * - inReplyToUri: The actual AT Protocol URI of the parent post (for replies only).
  */
+// Post engagement level constants (powers of 10, additive).
+// Multiple levels can be combined: e.g., 111 = none + clicked + liked.
+// Use Math.floor(Math.log10(postEngagement)) to get highest level index (0–5).
+export const ENGAGEMENT_NONE       = 1       // No engagement (default)
+export const ENGAGEMENT_CLICKED    = 10      // Opened Thread view
+export const ENGAGEMENT_LIKED      = 100     // Liked
+export const ENGAGEMENT_BOOKMARKED = 1000    // Bookmarked
+export const ENGAGEMENT_REPOSTED   = 10000   // Reposted
+export const ENGAGEMENT_REPLIED    = 100000  // Replied
+
+/** Check whether a specific engagement level is already set in a postEngagement value. */
+export function hasEngagementLevel(postEngagement: number, level: number): boolean {
+  const digitIndex = Math.round(Math.log10(level))
+  return Math.floor(postEngagement / Math.pow(10, digitIndex)) % 10 >= 1
+}
+
 export interface PostSummary {
   uniqueId: string              // Unique identifier (see above for format)
   cid: string
@@ -220,7 +235,7 @@ export interface PostSummary {
   inReplyToUri?: string         // Actual URI of the parent post
   timestamp: Date
   postTimestamp: number         // Numeric timestamp for IndexedDB indexing (timestamp.getTime())
-  engaged: boolean
+  postEngagement?: number       // Additive engagement levels (powers of 10), see ENGAGEMENT_* constants
   orig_username?: string
   curation_status?: CurationStatus
   curation_msg?: string
@@ -249,14 +264,12 @@ export interface FollowInfo {
   username: string
   followed_at: string
   amp_factor: number
-  topics?: string
+  priorityPatterns?: string  // comma-separated TextPattern format (e.g., "#tech, ai*, #*")
   timezone?: string
   displayName?: string
   last_posted_at?: number  // postTimestamp of most recent post (ms)
   amp_factor_changed_at?: number  // Timestamp (ms) of last amp factor change
-  [MOTD_TAG]?: string
-  [MOTW_TAG]?: string
-  [MOTM_TAG]?: string
+  lastWeeklyPostId?: string  // uniqueId of last shown #Weekly post
 }
 
 /**
@@ -278,12 +291,13 @@ export interface CurationResult {
 export interface UserAccumulator {
   userEntry: UserEntry
   repost_total: number         // Total reposts accumulated
-  motx_total: number
+  periodic_total: number
   priority_total: number
   original_total: number       // Original posts (not replies)
   followed_reply_total: number // Replies to followees
   unfollowed_reply_total: number // Replies to non-followees
   engaged_total: number
+  shown_total: number            // Total shown posts accumulated
   weight: number
   normalized_daily: number
   followed_at?: string

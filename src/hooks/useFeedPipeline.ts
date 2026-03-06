@@ -919,6 +919,9 @@ export function useFeedPipeline({
                     console.log('[Curation Init] Updating curation decisions for cached posts...')
                     await recomputeCurationDecisions(agent, myUsername, myDid)
 
+                    console.log('[Curation Init] Recomputing statistics with curation decisions...')
+                    await computeStatsInBackground(agent, myUsername, myDid, false)
+
                     await markInitialLookbackCompleted()
                     console.log('[Curation Init] Initial lookback complete, flag set')
 

@@ -165,6 +165,8 @@ http://localhost:5181/?server=localhost:3210&username=test&password=&viewsperday
 | `password` | Auto-login password (empty for Skyspeed) |
 | `viewsperday` | Set views per day setting |
 | `debug` | Enable (1) or disable (0) debug mode |
+| `reset` | Set to 1 to clear all curation data and log out |
+| `clobber` | Set to 1 to delete all site data (nuclear option) |
 
 
 ## Troubleshooting
@@ -176,6 +178,8 @@ http://localhost:5181/?server=localhost:3210&username=test&password=&viewsperday
 - **Stale code after update**: Hard refresh the browser (Ctrl+Shift+R on Windows/Linux, Cmd+Shift+R on Mac). Clear the browser cache if the issue persists.
 
 - **Corrupted data**: Use "Reset all" in Settings to clear all caches and start fresh (this will log you out).
+
+- **Database version error**: If the app fails to load with an IndexedDB `VersionError` (e.g., after testing a different fork on the same origin), add `?clobber=1` to the URL to delete all site data and start fresh.
 
 - **Curation not working**: Check that curation is not suspended in Settings. If statistics aren't appearing, wait a few minutes for data to accumulate. Check the browser console for error messages.
 

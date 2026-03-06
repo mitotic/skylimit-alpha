@@ -181,7 +181,7 @@ describe('matchPost', () => {
       repostCount: 0,
       timestamp: new Date(),
       postTimestamp: Date.now(),
-      engaged: false,
+      postEngagement: undefined,
       ...overrides,
     }
   }

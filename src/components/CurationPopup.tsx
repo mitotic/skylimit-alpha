@@ -18,7 +18,7 @@ export interface CurationPopupProps {
   repostsPerDay?: number               // Reposts/day (Debug Info)
   followedRepliesPerDay?: number       // Replies to followees/day (Debug Info)
   unfollowedRepliesPerDay?: number     // Replies to non-followees/day (Debug Info)
-  shownPerDay?: number                 // Posts shown per day after curation
+  allowedPerDay?: number               // Allowed posts per day (skylimit_number × amp_factor)
   regularProb?: number                 // Both (0-1 scale)
   priorityProb?: number                // Both (0-1 scale)
   curationMsg?: string                 // Fallback message
@@ -38,7 +38,7 @@ export interface CurationPopupProps {
   debugMode: boolean
   curationStatus?: string              // PostCard only (post-level)
   followedAt?: string
-  topics?: string
+  priorityPatterns?: string
   timezone?: string
   // Actions
   onNavigateToSettings?: () => void    // Optional - show "Curation Settings" link if provided
@@ -52,7 +52,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   anchorRect,
   postProperties,
   postingPerDay,
-  shownPerDay,
+  allowedPerDay,
   originalsPerDay,
   priorityPerDay,
   repostsPerDay,
@@ -71,7 +71,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   debugMode,
   curationStatus,
   followedAt,
-  topics,
+  priorityPatterns,
   timezone,
   onNavigateToSettings,
   onClose,
@@ -164,7 +164,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
         <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
           {/* Posting rate and shown rate */}
           {postingPerDay !== undefined && (
-            <div>Posting {formatCount(postingPerDay)}/day{shownPerDay !== undefined ? `, showing ${formatCount(shownPerDay)}/day` : ''}</div>
+            <div>Posting {formatCount(postingPerDay)}/day{allowedPerDay !== undefined ? `, allow ${formatCount(allowedPerDay)}/day` : ''}</div>
           )}
 
           {/* Probabilities */}
@@ -252,8 +252,8 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             {followedAt && (
               <div>Followed at: {new Date(followedAt).toLocaleString()}</div>
             )}
-            {topics && (
-              <div>Topics: {topics}</div>
+            {priorityPatterns && (
+              <div>Priority patterns: {priorityPatterns}</div>
             )}
             {timezone && (
               <div>Timezone: {timezone}</div>

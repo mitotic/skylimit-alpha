@@ -1,8 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react'
-import { AppBskyFeedDefs, RichText as RichTextAPI } from '@atproto/api'
+import { AppBskyFeedDefs, AppBskyRichtextFacet, RichText as RichTextAPI } from '@atproto/api'
 import Button from './Button'
 import Modal from './Modal'
 import QuotedPost from './QuotedPost'
+import RichText from './RichText'
 import Spinner from './Spinner'
 import PostCard from './PostCard'
 import { extractLastUrl, fetchOGImage } from '../utils/og-image'
@@ -16,6 +17,10 @@ interface ComposeProps {
     cid: string
     rootUri?: string
     rootCid?: string
+    text?: string
+    facets?: AppBskyRichtextFacet.Main[]
+    authorName?: string
+    authorHandle?: string
   }
   quotePost?: AppBskyFeedDefs.PostView
   onPost: (text: string, replyTo?: ComposeProps['replyTo'], quotePost?: AppBskyFeedDefs.PostView, images?: Array<{ image: Blob; alt: string }>, ogImage?: { url: string; title: string; description: string }) => Promise<void>
@@ -884,6 +889,18 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
       onClose={handleClose}
       title={replyTo ? 'Reply' : quotePost ? 'Quote Post' : 'Compose Post'}
       size={isThreaded ? 'xl' : 'lg'}
+      titleExtra={!quotePost ? (
+        <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isThreaded}
+            onChange={toggleThreaded}
+            disabled={isPosting}
+            className="rounded border-gray-300 dark:border-gray-600"
+          />
+          Threaded mode
+        </label>
+      ) : undefined}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
@@ -892,19 +909,18 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
           </div>
         )}
 
-        {/* Threaded mode checkbox — hidden for quote posts */}
-        {!quotePost && (
-          <div className="flex justify-end">
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={isThreaded}
-                onChange={toggleThreaded}
-                disabled={isPosting}
-                className="rounded border-gray-300 dark:border-gray-600"
-              />
-              Threaded mode
-            </label>
+        {/* Parent post preview for replies */}
+        {replyTo?.text && (
+          <div className="border-l-2 border-gray-300 dark:border-gray-600 pl-3 py-1">
+            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+              <span className="font-medium text-gray-700 dark:text-gray-300">{replyTo.authorName || replyTo.authorHandle}</span>
+              {replyTo.authorName && replyTo.authorHandle && (
+                <span className="ml-1">@{replyTo.authorHandle}</span>
+              )}
+            </div>
+            <div className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-words line-clamp-4">
+              <RichText text={replyTo.text} facets={replyTo.facets} />
+            </div>
           </div>
         )}
 

@@ -2,7 +2,7 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryRepostIndex, TextSuggestions, SuggestionsMap } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryRepostIndex, TextSuggestions, SuggestionsMap, ENGAGEMENT_NONE, hasEngagementLevel } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 import { clientNow } from '../utils/clientClock'
 
@@ -643,6 +643,42 @@ export async function updatePostSummaryViewedAt(
 }
 
 /**
+ * Update a post summary's engagement level (additive, idempotent).
+ * Only adds the level if that engagement digit isn't already set.
+ * Fire-and-forget: errors are silently ignored.
+ */
+export async function updatePostSummaryEngagement(
+  uniqueId: string,
+  level: number
+): Promise<void> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_POST_SUMMARIES], 'readwrite')
+    const store = transaction.objectStore(STORE_POST_SUMMARIES)
+
+    const summary = await new Promise<PostSummary | null>((resolve, reject) => {
+      const request = store.get(uniqueId)
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => reject(request.error)
+    })
+    if (!summary) return
+
+    const current = summary.postEngagement || ENGAGEMENT_NONE
+    if (hasEngagementLevel(current, level)) return  // Already set
+
+    summary.postEngagement = current + level
+    store.put(summary)
+
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+  } catch {
+    // Fire-and-forget: silently ignore errors
+  }
+}
+
+/**
  * Clear all post summaries
  */
 export async function clearPostSummaries(): Promise<void> {
@@ -961,9 +997,9 @@ export function newUserEntry(obj: Partial<UserEntry>): UserEntry {
   return {
     altname: obj.altname || '',
     acct_id: obj.acct_id || '',
-    topics: obj.topics || '',
+    priorityPatterns: obj.priorityPatterns || '',
     amp_factor: obj.amp_factor ?? 1.0,
-    motx_daily: 0,
+    periodic_daily: 0,
     priority_daily: 0,
     original_daily: 0,
     followed_reply_daily: 0,
@@ -971,6 +1007,7 @@ export function newUserEntry(obj: Partial<UserEntry>): UserEntry {
     repost_daily: 0,
     engaged_daily: 0,
     total_daily: 0,
+    shown_daily: 0,
     net_prob: 0,
     priority_prob: 0,
     regular_prob: 0,
@@ -986,12 +1023,13 @@ export function newUserAccum(obj: Partial<UserAccumulator>): UserAccumulator {
   return {
     userEntry: obj.userEntry || newUserEntry({}),
     repost_total: 0,
-    motx_total: 0,
+    periodic_total: 0,
     priority_total: 0,
     original_total: 0,
     followed_reply_total: 0,
     unfollowed_reply_total: 0,
     engaged_total: 0,
+    shown_total: 0,
     weight: 0,
     normalized_daily: 0,
     ...obj,

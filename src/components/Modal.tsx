@@ -5,11 +5,12 @@ interface ModalProps {
   isOpen: boolean
   onClose: () => void
   title?: string
+  titleExtra?: React.ReactNode
   children: React.ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
-export default function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, titleExtra, children, size = 'md' }: ModalProps) {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
@@ -64,6 +65,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' }:
             <h2 id="modal-title" className="text-xl font-semibold">
               {title}
             </h2>
+            {titleExtra && <div className="flex items-center">{titleExtra}</div>}
             <button
               onClick={onClose}
               className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 focus:outline-none"

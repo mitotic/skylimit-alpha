@@ -294,10 +294,12 @@ export async function getPostThread(
  * Fetches the parent chain for a post (for focused thread view)
  * Returns an array of parent posts from oldest (root) to most recent (immediate parent)
  */
+export const MAX_PARENT_CHAIN_DEPTH = 8
+
 export async function fetchParentChain(
   agent: BskyAgent,
   parentUri: string,
-  maxDepth: number = 5,
+  maxDepth: number = MAX_PARENT_CHAIN_DEPTH,
   onRateLimit?: (info: { retryAfter?: number; message?: string }) => void
 ): Promise<AppBskyFeedDefs.PostView[]> {
   const chain: AppBskyFeedDefs.PostView[] = []

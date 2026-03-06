@@ -3,6 +3,9 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
+import { updatePostSummaryEngagement } from '../curation/skylimitCache'
+import { getPostUniqueId } from '../curation/skylimitGeneral'
+import { ENGAGEMENT_LIKED, ENGAGEMENT_BOOKMARKED, ENGAGEMENT_REPOSTED, ENGAGEMENT_REPLIED } from '../curation/types'
 
 interface UsePostInteractionsParams {
   agent: BskyAgent | null
@@ -11,6 +14,12 @@ interface UsePostInteractionsParams {
   addToast: (message: string, type: 'success' | 'error' | 'info') => void
   forceProbeRef: React.MutableRefObject<boolean>
   setForceProbeTrigger: React.Dispatch<React.SetStateAction<number>>
+}
+
+// Resolve the cache uniqueId for a post URI by finding it in the current feed
+function resolveUniqueId(feed: AppBskyFeedDefs.FeedViewPost[], uri: string): string | null {
+  const post = feed.find(p => p.post.uri === uri)
+  return post ? getPostUniqueId(post) : null
 }
 
 export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger }: UsePostInteractionsParams) {
@@ -76,6 +85,9 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
           }
           return p
         }))
+        // Track engagement
+        const uniqueId = resolveUniqueId(feed, uri)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_LIKED)
       }
     } catch (error) {
       // Revert optimistic count update
@@ -123,6 +135,9 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
         await unbookmarkPost(agent, uri)
       } else {
         await bookmarkPost(agent, uri, cid)
+        // Track engagement
+        const uniqueId = resolveUniqueId(feed, uri)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_BOOKMARKED)
       }
     } catch (error) {
       // Revert optimistic update
@@ -199,6 +214,9 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
           }
           return p
         }))
+        // Track engagement
+        const uniqueId = resolveUniqueId(feed, uri)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_REPOSTED)
       }
     } catch (error) {
       // Revert optimistic count update
@@ -265,6 +283,11 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
         embed: buildEmbed(),
       })
       addToast('Post created!', 'success')
+      // Track reply engagement on the post being replied to
+      if (replyTo) {
+        const uniqueId = resolveUniqueId(feed, replyTo.uri)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_REPLIED)
+      }
     }
     // Trigger probe to pick up the new post through paged updates
     forceProbeRef.current = true

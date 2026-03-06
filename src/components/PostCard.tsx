@@ -10,7 +10,8 @@ import RootPost from './RootPost'
 import { getCurationNumber, getPostNumberFromSummary } from '../curation/skylimitCounter'
 import { getSettings } from '../curation/skylimitStore'
 import { getFeedViewPostTimestamp, isRepost, isPeriodicEdition, getPostUrl, getProfileUrl, getPostUniqueId } from '../curation/skylimitGeneral'
-import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo } from '../curation/types'
+import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo, ENGAGEMENT_CLICKED } from '../curation/types'
+import { updatePostSummaryEngagement } from '../curation/skylimitCache'
 import { getTimeInTimezone, getBrowserTimezone, timezonesAreDifferent, getTimezoneAbbreviation } from '../utils/timezoneUtils'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 import { getFilter, getFollow } from '../curation/skylimitCache'
@@ -304,6 +305,10 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const handlePostClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget || (e.target as HTMLElement).closest('button') === null) {
       if (actualPost.uri) {
+        // Track click engagement
+        const uniqueId = getPostUniqueId(post)
+        updatePostSummaryEngagement(uniqueId, ENGAGEMENT_CLICKED)
+
         if (clickToBlueSky) {
           // Open in Bluesky client (same tab)
           window.location.href = getPostUrl(actualPost.uri, author.handle)
@@ -395,7 +400,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   anchorRect={popupAnchorRect || undefined}
                   postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                   postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
-                  shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
+                  allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
                   originalsPerDay={userEntry?.original_daily}
                   priorityPerDay={userEntry?.priority_daily}
                   repostsPerDay={userEntry?.repost_daily}
@@ -414,7 +419,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   debugMode={debugMode}
                   curationStatus={curation.curation_status}
                   followedAt={followInfo?.followed_at}
-                  topics={followInfo?.topics || userEntry?.topics}
+                  priorityPatterns={followInfo?.priorityPatterns || userEntry?.priorityPatterns}
                   timezone={followInfo?.timezone}
                   onNavigateToSettings={() => {
                     setShowPopup(false)
@@ -473,7 +478,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 anchorRect={popupAnchorRect || undefined}
                 postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                 postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
-                shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
+                allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
                 originalsPerDay={userEntry?.original_daily}
                 priorityPerDay={userEntry?.priority_daily}
                 repostsPerDay={userEntry?.repost_daily}
@@ -492,7 +497,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 debugMode={debugMode}
                 curationStatus={curation.curation_status}
                 followedAt={followInfo?.followed_at}
-                topics={followInfo?.topics || userEntry?.topics}
+                priorityPatterns={followInfo?.priorityPatterns || userEntry?.priorityPatterns}
                 timezone={followInfo?.timezone}
                 onNavigateToSettings={() => {
                   setShowPopup(false)
@@ -607,7 +612,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     anchorRect={popupAnchorRect || undefined}
                     postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                     postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
-                    shownPerDay={userEntry ? countTotalPostsForUser(userEntry) * (userEntry.net_prob || 0) : undefined}
+                    allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
                     originalsPerDay={userEntry?.original_daily}
                     priorityPerDay={userEntry?.priority_daily}
                     repostsPerDay={userEntry?.repost_daily}
@@ -626,7 +631,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     debugMode={debugMode}
                     curationStatus={curation.curation_status}
                     followedAt={followInfo?.followed_at}
-                    topics={followInfo?.topics || userEntry?.topics}
+                    priorityPatterns={followInfo?.priorityPatterns || userEntry?.priorityPatterns}
                     timezone={followInfo?.timezone}
                     onNavigateToSettings={() => {
                       setShowPopup(false)

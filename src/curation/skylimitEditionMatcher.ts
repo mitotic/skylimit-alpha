@@ -127,8 +127,8 @@ export function matchTextPattern(
   const text = normalizeText((postText || '') + ' ' + (quotedText || ''))
 
   if (pattern.isHashtag) {
-    // Hashtag matching: check if tag is in post tags
     const tag = pattern.pattern.substring(1).toLowerCase()
+    if (tag === '*') return postTags.length > 0  // #* matches any post with tags
     return postTags.some(t => t.toLowerCase() === tag)
   }
 

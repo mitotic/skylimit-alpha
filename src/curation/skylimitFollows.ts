@@ -7,10 +7,9 @@ import { FollowInfo, MIN_AMP_FACTOR, MAX_AMP_FACTOR } from './types'
 import { getAllFollows, saveFollow, getFilter } from './skylimitCache'
 import { recomputeProbabilities } from './skylimitStats'
 import { getSettings } from './skylimitStore'
-import { extractTopicsFromProfile, extractTimezone } from './skylimitGeneral'
+import { extractPriorityPatternsFromProfile, extractTimezone } from './skylimitGeneral'
 import { getProfiles } from '../api/profile'
 import { AppBskyActorDefs } from '@atproto/api'
-import { MOTD_TAG, MOTW_TAG, MOTM_TAG } from './types'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 import { clientNow, clientDate } from '../utils/clientClock'
 
@@ -155,14 +154,14 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
       const profile = profileMap.get(follow.did)
 
       // Extract data from profile if we fetched one
-      let topics = existing?.topics || ''
+      let priorityPatterns = existing?.priorityPatterns || ''
       let timezone = existing?.timezone || 'UTC'
       let displayName = existing?.displayName || ''
 
       if (profile) {
-        const extractedTopics = extractTopicsFromProfile(profile).join(' ')
+        const extractedPatterns = extractPriorityPatternsFromProfile(profile)
         const extractedTimezone = extractTimezone(profile)
-        if (extractedTopics) topics = extractedTopics
+        if (extractedPatterns) priorityPatterns = extractedPatterns
         if (extractedTimezone !== 'UTC') timezone = extractedTimezone
         if (profile.displayName) displayName = profile.displayName
       }
@@ -172,19 +171,16 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
         username,
         followed_at: existing?.followed_at || clientDate().toISOString(),
         amp_factor: existing?.amp_factor || 1.0,
-        topics,
+        priorityPatterns,
         timezone,
         displayName: displayName || undefined,
       }
 
-      // Preserve periodic post tracking
+      // Preserve periodic post tracking and other fields
       if (existing) {
-        const motd = existing[MOTD_TAG as keyof FollowInfo]
-        const motw = existing[MOTW_TAG as keyof FollowInfo]
-        const motm = existing[MOTM_TAG as keyof FollowInfo]
-        if (motd) followInfo[MOTD_TAG] = motd as string
-        if (motw) followInfo[MOTW_TAG] = motw as string
-        if (motm) followInfo[MOTM_TAG] = motm as string
+        if (existing.lastWeeklyPostId) {
+          followInfo.lastWeeklyPostId = existing.lastWeeklyPostId
+        }
         // Preserve displayName if we didn't fetch a new one
         if (!followInfo.displayName && existing.displayName) {
           followInfo.displayName = existing.displayName

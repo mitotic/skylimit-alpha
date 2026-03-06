@@ -435,6 +435,8 @@ The following reset options are available:
 - **Reset Skylimit settings**: Restores all curation settings to their defaults.
 - **Reset all**: Complete factory reset&mdash;clears all data and logs out.
 
+If the app fails to load due to a database error (e.g., an IndexedDB version conflict after testing a different version of the app), you can add `?clobber=1` to the URL (e.g., `http://localhost:5181/?clobber=1` or `https://skylimit.dev/?clobber=1`) to delete all site data and start fresh. This is equivalent to using the browser's "Clear site data" option in DevTools, and is especially useful on mobile devices where DevTools are not available.
+
 
 ## Caveats
 

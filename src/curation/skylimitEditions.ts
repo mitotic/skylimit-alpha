@@ -146,6 +146,8 @@ function isValidUserPattern(pattern: string): boolean {
  * Wildcards (* at start or end) are stripped before validation.
  */
 function isValidTextPattern(pattern: string): boolean {
+  // Special case: #* matches any hashtag
+  if (pattern === '#*') return true
   // Strip leading # for hashtags
   let p = pattern.startsWith('#') ? pattern.substring(1) : pattern
   // Strip wildcards
@@ -551,7 +553,7 @@ async function syncEditorFollows(): Promise<void> {
         username: editor.handle,
         followed_at: new Date().toISOString(),
         amp_factor: 1.0,
-        topics: '',
+        priorityPatterns: '',
         timezone: '',
         displayName: editor.displayName,
       })

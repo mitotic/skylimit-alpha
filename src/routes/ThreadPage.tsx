@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { useParams, useSearchParams, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
-import { AppBskyFeedDefs } from '@atproto/api'
+import { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
-import { getPostThread, fetchParentChain } from '../api/feed'
+import { getPostThread, fetchParentChain, MAX_PARENT_CHAIN_DEPTH } from '../api/feed'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
 import { getPostUrl } from '../curation/skylimitGeneral'
+import { updatePostSummaryEngagement } from '../curation/skylimitCache'
+import { ENGAGEMENT_REPLIED } from '../curation/types'
 import PostCard from '../components/PostCard'
 import ParentChainView from '../components/ParentChainView'
 import Compose from '../components/Compose'
@@ -27,7 +29,7 @@ export default function ThreadPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const navigationType = useNavigationType()
-  const { agent } = useSession()
+  const { agent, session } = useSession()
   const [thread, setThread] = useState<AppBskyFeedDefs.ThreadViewPost | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [showCompose, setShowCompose] = useState(false)
@@ -97,6 +99,16 @@ export default function ThreadPage() {
       setThread(threadPost)
       setClickedPostUri(null) // No highlighting needed - anchor post is prominent by default
 
+      // Detect if the current user has replied to this post
+      if (session?.did && threadPost.replies) {
+        const directReplies = (threadPost.replies as AppBskyFeedDefs.ThreadViewPost[])
+          .filter(r => 'post' in r)
+        const userReplied = directReplies.some(r => r.post.author.did === session.did)
+        if (userReplied) {
+          updatePostSummaryEngagement(decodedUri, ENGAGEMENT_REPLIED)
+        }
+      }
+
       // Extract parent/root info from the post record
       const record = threadPost.post.record as {
         reply?: { parent?: { uri: string }, root?: { uri: string } }
@@ -113,7 +125,7 @@ export default function ThreadPage() {
       if (record?.reply?.parent?.uri) {
         setIsLoadingParents(true)
         try {
-          const chain = await fetchParentChain(agent, record.reply.parent.uri, 5)
+          const chain = await fetchParentChain(agent, record.reply.parent.uri, MAX_PARENT_CHAIN_DEPTH)
           setParentChain(chain)
         } catch (parentError) {
           console.warn('Failed to fetch parent chain:', parentError)
@@ -987,6 +999,36 @@ export default function ThreadPage() {
     )
   }
 
+  // Compute replyTo data for Compose (includes parent post text for preview)
+  const composeReplyTo = (() => {
+    if (!replyToUri) return undefined
+    // Search the thread tree for the post being replied to
+    const searchThread = (node: AppBskyFeedDefs.ThreadViewPost, uri: string): AppBskyFeedDefs.PostView | undefined => {
+      if (node.post.uri === uri) return node.post
+      for (const reply of node.replies || []) {
+        if (AppBskyFeedDefs.isThreadViewPost(reply)) {
+          const result = searchThread(reply, uri)
+          if (result) return result
+        }
+      }
+      return undefined
+    }
+    const found = searchThread(thread, replyToUri)
+    const fromParents = !found ? parentChain.find(p => p.uri === replyToUri) : undefined
+    const post = (found || fromParents || thread.post) as AppBskyFeedDefs.PostView
+    const record = post.record as Record<string, unknown> | undefined
+    return {
+      uri: replyToUri,
+      cid: post.cid,
+      rootUri: thread.post.uri,
+      rootCid: thread.post.cid,
+      text: record?.text as string | undefined,
+      facets: record?.facets as AppBskyRichtextFacet.Main[] | undefined,
+      authorName: post.author.displayName,
+      authorHandle: post.author.handle,
+    }
+  })()
+
   return (
     <div className="pb-20 md:pb-0">
       {/* Header */}
@@ -1022,12 +1064,7 @@ export default function ThreadPage() {
           setReplyToUri(null)
           setQuotePost(null)
         }}
-        replyTo={replyToUri ? {
-          uri: replyToUri,
-          cid: thread.post.cid,
-          rootUri: thread.post.uri,
-          rootCid: thread.post.cid,
-        } : undefined}
+        replyTo={composeReplyTo}
         quotePost={quotePost || undefined}
         onPost={handlePost}
         onPostThread={handlePostThread}

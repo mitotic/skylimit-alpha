@@ -9,11 +9,9 @@ import {
   UserFilter,
   GlobalStats,
   FollowInfo,
-  MOTD_TAG,
-  MOT_TAGS,
-  PRIORITY_TAG,
-  MOTD_MIN_SKYLIMIT_NUMBER,
-  USER_TOPICS_KEY,
+  WEEKLY_TAG,
+  DEFAULT_PRIORITY_PATTERNS,
+  USER_PRIORITY_PATTERNS_KEY,
   USER_TIMEZONE_KEY,
   extractDidFromUri,
   isStatusShow,
@@ -23,9 +21,11 @@ import {
 import { hmacRandom } from '../utils/hmac'
 import {
   createPostSummary,
-  isSamePeriod,
+  isSameWeek,
   getFeedViewPostTimestamp
 } from './skylimitGeneral'
+import { matchTextPattern } from './skylimitEditionMatcher'
+import { TextPattern } from './skylimitEditions'
 import { saveFollow, wasRepostOrOriginalDisplayedWithinInterval } from './skylimitCache'
 import { clientNow } from '../utils/clientClock'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
@@ -35,50 +35,73 @@ import { isInitialLookbackCompleted } from './skylimitFeedCache'
  * Unfollowed replies are always included - filtering is done during accumulation.
  */
 export function countTotalPosts(
-  userEntry: { motx_daily: number; priority_daily: number; original_daily: number; followed_reply_daily: number; unfollowed_reply_daily: number; repost_daily: number }
+  userEntry: { periodic_daily: number; priority_daily: number; original_daily: number; followed_reply_daily: number; unfollowed_reply_daily: number; repost_daily: number }
 ): number {
-  return userEntry.motx_daily + userEntry.priority_daily +
+  return userEntry.periodic_daily + userEntry.priority_daily +
          userEntry.original_daily + userEntry.followed_reply_daily +
          userEntry.unfollowed_reply_daily + userEntry.repost_daily
 }
 
 /**
- * Check if a post should be prioritized
+ * Parse a priorityPatterns string into TextPattern objects.
+ * Format: comma-separated patterns in Edition Layout text pattern syntax.
  */
-export function isPriorityPost(post: PostSummary, topics: string): boolean {
+export function parsePriorityPatterns(patternsStr: string): TextPattern[] {
+  if (!patternsStr) return []
+  return patternsStr.split(',').map(p => p.trim()).filter(p => p).map(p => ({
+    pattern: p,
+    letterCode: '',
+    isDomain: p.includes('.') && !p.startsWith('#'),
+    isHashtag: p.startsWith('#'),
+  }))
+}
+
+/**
+ * Check if a post matches priority patterns.
+ * Reposts are never priority. Uses DEFAULT_PRIORITY_PATTERNS if none configured.
+ */
+export function isPriorityPost(post: PostSummary, priorityPatterns: string): boolean {
   if (post.repostUri) return false
-  if (post.tags.includes(PRIORITY_TAG)) return true
-  
-  const topicsList = (topics || '').toLowerCase().split(' ').filter(s => s)
-  if (topicsList.length) {
-    for (const topic of topicsList) {
-      if (post.tags.includes(topic)) {
-        return true
-      }
+
+  const patternsStr = priorityPatterns || DEFAULT_PRIORITY_PATTERNS
+  const patterns = parsePriorityPatterns(patternsStr)
+
+  for (const pattern of patterns) {
+    if (matchTextPattern(post.postText || '', post.quotedText, post.tags, pattern)) {
+      return true
     }
   }
-  // Note: Hashtagged posts without configured topics are NOT auto-promoted to priority
-  // They will be filtered as regular posts
-
   return false
 }
 
 /**
- * Check if post is a periodic post
+ * Check if post tags contain the #Weekly hashtag (case-insensitive)
  */
-export function isPeriodicPost(post: PostSummary): {
-  isPeriodic: boolean
-  periodType: 'MOTD' | 'MOTW' | 'MOTM' | null
-} {
-  for (const tag of MOT_TAGS) {
-    if (post.tags.includes(tag)) {
-      return {
-        isPeriodic: true,
-        periodType: tag.toUpperCase() as 'MOTD' | 'MOTW' | 'MOTM',
-      }
+export function isPeriodicTag(post: PostSummary): boolean {
+  if (post.repostUri) return false
+  return post.tags.some(tag => tag.toLowerCase() === WEEKLY_TAG)
+}
+
+/**
+ * Compound check: is this a periodic post that should be shown?
+ * Returns true if #Weekly found AND no other weekly post was shown this week.
+ */
+export function isPeriodicShow(
+  post: PostSummary,
+  follow: FollowInfo,
+  statusTime: Date,
+  timezone: string
+): boolean {
+  if (!isPeriodicTag(post)) return false
+
+  const lastId = follow.lastWeeklyPostId
+  if (lastId && lastId !== post.uniqueId) {
+    const lastTime = new Date(lastId)
+    if (isSameWeek(statusTime, lastTime, timezone)) {
+      return false  // Already shown a weekly post this week
     }
   }
-  return { isPeriodic: false, periodType: null }
+  return true
 }
 
 /**
@@ -191,9 +214,8 @@ export async function curateSinglePost(
     const randomNum = await hmacRandom(secretKey, 'filter_' + myUsername + '_' + summary.uniqueId)
     
     const follow = currentFollows[summary.username] || null
-    let priority = isPriorityPost(summary, follow?.[USER_TOPICS_KEY] || '')
-    let motxAccept = ''
-    
+    let periodicAccepted = false
+
     // Format statistics on separate lines
     const postingCount = Math.round(countTotalPosts(userEntry))
     const repostingCount = Math.round(userEntry.repost_daily)
@@ -204,46 +226,23 @@ export async function curateSinglePost(
     if (ampFactor !== null) {
       handledStatus += `\nAmp factor: ${ampFactor}`
     }
-    
+
+    // Check periodic (#Weekly) post
     if (follow) {
       const userTimezone = follow[USER_TIMEZONE_KEY] || 'UTC'
-      
-      const motxFound = !summary.repostUri && summary.tags.some(tag => MOT_TAGS.includes(tag))
-      
-      if (motxFound) {
-        const userSkylimitNumber = follow.amp_factor * currentStats.skylimit_number
-        
-        for (const tag of MOT_TAGS) {
-          if (!summary.tags.includes(tag)) continue
-          
-          if (tag === MOTD_TAG && userSkylimitNumber < MOTD_MIN_SKYLIMIT_NUMBER) {
-            continue
-          }
-          
-          const lastMotxId = follow[tag as keyof FollowInfo] as string | undefined
-          
-          if (lastMotxId && lastMotxId !== summary.uniqueId) {
-            const lastMotxTime = new Date(lastMotxId) // Simplified - would need proper parsing
-            if (isSamePeriod(statusTime, lastMotxTime, tag.toUpperCase() as 'MOTD' | 'MOTW' | 'MOTM', userTimezone)) {
-              continue
-            }
-          }
-          
-          motxAccept = tag
-          
-          if (!lastMotxId || lastMotxId !== summary.uniqueId) {
-            // Record MOTx post
-            const updatedFollow = { ...follow, [tag]: summary.uniqueId }
-            await saveFollow(updatedFollow)
-          }
-          break
-        }
-        
-        if (!motxAccept) {
-          priority = true
+
+      if (isPeriodicShow(summary, follow, statusTime, userTimezone)) {
+        periodicAccepted = true
+        // Record weekly post
+        if (!follow.lastWeeklyPostId || follow.lastWeeklyPostId !== summary.uniqueId) {
+          const updatedFollow = { ...follow, lastWeeklyPostId: summary.uniqueId }
+          await saveFollow(updatedFollow)
         }
       }
     }
+
+    // Priority matching (periodic posts that weren't accepted fall through here)
+    const priority = !periodicAccepted && isPriorityPost(summary, follow?.[USER_PRIORITY_PATTERNS_KEY] || '')
 
     // Check repost display interval (before probability filtering)
     // This handles both forward (new posts) and backward (lookback) time navigation
@@ -276,9 +275,8 @@ export async function curateSinglePost(
 
     // Set curation_status based on decision
     let dropReason = ''
-    if (motxAccept) {
-      // Periodic post accepted
-      modStatus.curation_status = 'motx_show'
+    if (periodicAccepted) {
+      modStatus.curation_status = 'periodic_show'
     } else if (priority) {
       modStatus.curation_status = priorityDrop ? 'priority_drop' : 'priority_show'
       if (priorityDrop) dropReason = 'random (priority)'

@@ -4,10 +4,10 @@
 
 import {
   PostSummary, UserEntry, UserFilter, GlobalStats, UserAccumulator, FollowInfo, PostStats,
-  MOTD_MIN_SKYLIMIT_NUMBER,
+  WEEKLY_TAG,
   MAX_AMP_FACTOR,
   MIN_AMP_FACTOR,
-  MOT_TAGS,
+  ENGAGEMENT_NONE,
   getIntervalHoursSync,
   getIntervalsPerDaySync,
   isStatusDrop,
@@ -27,6 +27,7 @@ import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGe
 import { getSettings } from './skylimitStore'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
 import { getLocalMidnight } from './feedCacheCore'
+import { isPriorityPost } from './skylimitFilter'
 // countTotalPosts is defined in this file
 import { hmacHex } from '../utils/hmac'
 import { clientDate } from '../utils/clientClock'
@@ -37,11 +38,11 @@ const POST_STATS_PROTO: PostStats = { repost_count: 0, followed_repost_count: 0,
 
 /**
  * Count total posts per day for a user entry.
- * Includes: MOTx posts + priority posts + original posts + followed replies + unfollowed replies + reposts.
+ * Includes: periodic posts + priority posts + original posts + followed replies + unfollowed replies + reposts.
  * Unfollowed replies are already filtered during accumulation (only non-dropped ones counted).
  */
 export function countTotalPostsForUser(userEntry: UserEntry): number {
-  return userEntry.motx_daily + userEntry.priority_daily +
+  return userEntry.periodic_daily + userEntry.priority_daily +
          userEntry.original_daily + userEntry.followed_reply_daily +
          userEntry.unfollowed_reply_daily + userEntry.repost_daily
 }
@@ -226,7 +227,7 @@ export async function computePostStats(
   const selfUserEntry = newUserEntry({
     altname: 'user_0000',
     acct_id: myDid,
-    topics: '',
+    priorityPatterns: '',
     amp_factor: 1,
   })
   userAccum[myUsername] = newUserAccum({ userEntry: selfUserEntry })
@@ -502,7 +503,7 @@ function computeIntervalStats(
       repostUri: summary.repostUri,
       repostCount: summary.repostCount,
       inReplyToUri: summary.inReplyToUri,
-      engaged: summary.engaged ? 1 : 0,
+      engaged: Math.floor(Math.log10(summary.postEngagement || ENGAGEMENT_NONE)),
       curation_status: summary.curation_status,  // Needed for repost_drop check
     }
 
@@ -570,7 +571,7 @@ async function accumulateStatusCounts(
         const userEntry = newUserEntry({
           altname,
           acct_id: follow.accountDid,
-          topics: follow.topics || '',
+          priorityPatterns: follow.priorityPatterns || '',
           amp_factor: Math.min(MAX_AMP_FACTOR, Math.max(MIN_AMP_FACTOR, follow.amp_factor)),
         })
         userAccum[username] = newUserAccum({
@@ -586,7 +587,12 @@ async function accumulateStatusCounts(
 
     accumulated++
 
-    const motx = summaryInfo.tags.some((tag: string) => MOT_TAGS.includes(tag))
+    const periodic = summaryInfo.tags.some((tag: string) => tag.toLowerCase() === WEEKLY_TAG)
+
+    // Helper: check if this post has an explicit _show curation status
+    // Exclude temp_show: these are pre-curation placeholders, not real curation decisions
+    const isExplicitlyShown = summaryInfo.curation_status?.endsWith('_show') === true
+      && summaryInfo.curation_status !== 'temp_show'
 
     if (summaryInfo.repostUri) {
       // Repost - skip if dropped by repost interval
@@ -596,12 +602,15 @@ async function accumulateStatusCounts(
       }
       // Repost - accumulate repost statistics
       accum.repost_total += 1
+      if (isExplicitlyShown) accum.shown_total += 1
     } else {
       // Original post
-      if (motx) {
-        accum.motx_total += 1
-      } else if (isPriorityPost(summaryInfo, accum.userEntry.topics)) {
+      if (periodic) {
+        accum.periodic_total += 1
+        if (isExplicitlyShown) accum.shown_total += 1
+      } else if (isPriorityPost(summaryInfo, accum.userEntry.priorityPatterns)) {
         accum.priority_total += 1
+        if (isExplicitlyShown) accum.shown_total += 1
       } else {
         // Regular post - categorize by reply status
         if (summaryInfo.inReplyToUri) {
@@ -610,6 +619,7 @@ async function accumulateStatusCounts(
 
           if (isParentFollowed) {
             accum.followed_reply_total += 1
+            if (isExplicitlyShown) accum.shown_total += 1
           } else {
             // Unfollowed reply - only count if NOT during initial lookback
             // AND the post was NOT dropped (curation_status != 'reply_drop')
@@ -619,42 +629,23 @@ async function accumulateStatusCounts(
             } else if (summaryInfo.curation_status !== 'reply_drop') {
               // After initial curation: only count if not dropped
               accum.unfollowed_reply_total += 1
+              if (isExplicitlyShown) accum.shown_total += 1
             }
             // Note: If reply_drop, we don't count it (already handled by curation)
           }
         } else {
           accum.original_total += 1
+          if (isExplicitlyShown) accum.shown_total += 1
         }
       }
     }
 
-    if (summaryInfo.engaged) {
-      accum.engaged_total += 1
+    if (summaryInfo.engaged > 0) {
+      accum.engaged_total += summaryInfo.engaged
     }
   }
 
   return accumulated
-}
-
-/**
- * Check if post is priority
- */
-function isPriorityPost(summaryInfo: any, topics: string): boolean {
-  if (summaryInfo.repostUri) return false
-  if (summaryInfo.tags.includes('priority')) return true
-  
-  const topicsList = (topics || '').toLowerCase().split(' ').filter((s: string) => s)
-  if (topicsList.length) {
-    for (const topic of topicsList) {
-      if (summaryInfo.tags.includes(topic)) {
-        return true
-      }
-    }
-  }
-  // Note: Hashtagged posts without configured topics are NOT auto-promoted to priority
-  // They will be filtered as regular posts
-
-  return false
 }
 
 /**
@@ -696,7 +687,7 @@ function computeUserProbabilities(
     // Use followee-specific day count for denominator
     const userDayCount = followeeDayCount[username] || dayTotal
     const denominator = Math.max(minFolloweeDayCount, userDayCount)
-    userEntry.motx_daily = accum.motx_total / denominator
+    userEntry.periodic_daily = accum.periodic_total / denominator
     userEntry.priority_daily = accum.priority_total / denominator
     userEntry.original_daily = accum.original_total / denominator
     userEntry.followed_reply_daily = accum.followed_reply_total / denominator
@@ -705,6 +696,7 @@ function computeUserProbabilities(
     userEntry.engaged_daily = accum.engaged_total / denominator
 
     userEntry.total_daily = countTotalPostsForUser(userEntry)
+    userEntry.shown_daily = accum.shown_total / denominator
 
     // Normalize by amp factor
     accum.normalized_daily = accum.weight ? userEntry.total_daily / accum.weight : 0
@@ -755,12 +747,8 @@ function computeUserProbabilities(
       userEntry.original_daily + userEntry.followed_reply_daily +
       userEntry.unfollowed_reply_daily + userEntry.repost_daily)
     const userSkylimitNumber = skylimitNumber * (accum.weight || 1)
-    let availableViews = userSkylimitNumber - userEntry.motx_daily
-    
-    if (userSkylimitNumber < MOTD_MIN_SKYLIMIT_NUMBER) {
-      availableViews = userSkylimitNumber - Math.min(1 / 7 + 1 / 30, userEntry.motx_daily)
-    }
-    
+    let availableViews = userSkylimitNumber - userEntry.periodic_daily
+
     if (availableViews <= 0) {
       userEntry.priority_prob = 0
       userEntry.regular_prob = 0
@@ -772,12 +760,12 @@ function computeUserProbabilities(
       userEntry.regular_prob = Math.min(1, (availableViews - userEntry.priority_daily) / regularPostsPlusReposts)
     }
   }
-  
+
   // Calculate global stats - total posts across all users
   // postTotal now simply sums all counts - unfollowed replies are already filtered during accumulation
   const postTotal = Object.values(userAccum).reduce((sum, accum) =>
     sum + accum.original_total + accum.followed_reply_total + accum.unfollowed_reply_total +
-          accum.repost_total + accum.motx_total + accum.priority_total, 0
+          accum.repost_total + accum.periodic_total + accum.priority_total, 0
   )
 
   // Calculate posts breakdown
@@ -912,11 +900,7 @@ export async function recomputeProbabilities(
       entry.original_daily + entry.followed_reply_daily +
       entry.unfollowed_reply_daily + entry.repost_daily)
     const userSkylimitNumber = skylimitNumber * (item.weight || 1)
-    let availableViews = userSkylimitNumber - entry.motx_daily
-
-    if (userSkylimitNumber < MOTD_MIN_SKYLIMIT_NUMBER) {
-      availableViews = userSkylimitNumber - Math.min(1 / 7 + 1 / 30, entry.motx_daily)
-    }
+    let availableViews = userSkylimitNumber - entry.periodic_daily
 
     if (availableViews <= 0) {
       entry.priority_prob = 0

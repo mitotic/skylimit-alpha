@@ -65,6 +65,11 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
+          <img
+            src="/SkylimitLogo.png"
+            alt="Skylimit Logo"
+            className="w-[80px] h-[80px] mx-auto mb-4"
+          />
           <h1 className="text-3xl font-bold mb-2">
             <a
               href="https://github.com/mitotic/skylimit-alpha#readme"

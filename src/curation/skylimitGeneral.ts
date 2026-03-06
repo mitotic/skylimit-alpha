@@ -3,7 +3,7 @@
  */
 
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
-import { CurationMetadata, FeedPlatform, PostSummary } from './types'
+import { CurationMetadata, FeedPlatform, PostSummary, ENGAGEMENT_NONE, ENGAGEMENT_LIKED, ENGAGEMENT_BOOKMARKED, ENGAGEMENT_REPOSTED } from './types'
 import { clientNow, clientDate } from '../utils/clientClock'
 
 /**
@@ -199,7 +199,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   let cid: string
   let repostCount: number
   let inReplyToUri: string | undefined
-  let engaged: boolean
+  let postEngagement: number
   let postText: string | undefined
   let quotedText: string | undefined
 
@@ -226,7 +226,10 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
-    engaged = !!(post.post.viewer?.like || post.post.viewer?.repost)
+    postEngagement = ENGAGEMENT_NONE
+      + (post.post.viewer?.like ? ENGAGEMENT_LIKED : 0)
+      + (post.post.viewer?.bookmarked ? ENGAGEMENT_BOOKMARKED : 0)
+      + (post.post.viewer?.repost ? ENGAGEMENT_REPOSTED : 0)
     // Extract text from the original post (the one being reposted)
     postText = extractPostText(post.post.record)
     quotedText = extractQuotedText(post.post.embed)
@@ -240,7 +243,10 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
     inReplyToUri = getParentUri(post.post)
-    engaged = !!(post.post.viewer?.like || post.post.viewer?.repost)
+    postEngagement = ENGAGEMENT_NONE
+      + (post.post.viewer?.like ? ENGAGEMENT_LIKED : 0)
+      + (post.post.viewer?.bookmarked ? ENGAGEMENT_BOOKMARKED : 0)
+      + (post.post.viewer?.repost ? ENGAGEMENT_REPOSTED : 0)
     // Extract text from this post
     postText = extractPostText(post.post.record)
     quotedText = extractQuotedText(post.post.embed)
@@ -262,22 +268,33 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     inReplyToUri,
     timestamp,
     postTimestamp: timestamp.getTime(),
-    engaged,
+    postEngagement,
     postText,
     quotedText,
   }
 }
 
 /**
- * Extract topics from profile description
+ * Extract priority patterns from profile description.
+ * Parses "Skylimit: [m.n,] pattern1, pattern2, ..." format.
+ * The optional leading number (skylimit number) is skipped.
+ * Returns comma-separated patterns string, or empty string if none found.
  */
-export function extractTopicsFromProfile(profile: AppBskyActorDefs.ProfileViewDetailed): string[] {
+export function extractPriorityPatternsFromProfile(profile: AppBskyActorDefs.ProfileViewDetailed): string {
   const description = profile.description || ''
-  const match = description.match(/Topics:\s*([^\n]+)/i)
-  if (match) {
-    return match[1].split(/\s+/).map(t => t.toLowerCase().replace('#', ''))
+  const match = description.match(/Skylimit:\s*([^\n]+)/i)
+  if (!match) return ''
+
+  let rest = match[1].trim()
+  // Skip optional leading skylimit number (e.g., "2.5, #tech, ai*" → skip "2.5,")
+  const numMatch = rest.match(/^(\d+(?:\.\d+)?)\s*,\s*/)
+  if (numMatch) {
+    rest = rest.substring(numMatch[0].length)
   }
-  return []
+
+  // Return remaining comma-separated patterns (trimmed)
+  const patterns = rest.split(',').map(p => p.trim()).filter(p => p.length > 0)
+  return patterns.join(', ')
 }
 
 /**
@@ -332,44 +349,21 @@ export function oldestInterval(lastInterval: string, daysOfData: number, interva
 }
 
 /**
- * Check if two dates are in the same period (day/week/month)
+ * Check if two dates are in the same calendar week (Sunday to Saturday)
  */
-export function isSamePeriod(
+export function isSameWeek(
   date1: Date,
   date2: Date,
-  periodType: 'MOTD' | 'MOTW' | 'MOTM',
   timezone: string = 'UTC'
 ): boolean {
-  // Convert dates to specified timezone
   const d1 = new Date(date1.toLocaleString('en-US', { timeZone: timezone }))
   const d2 = new Date(date2.toLocaleString('en-US', { timeZone: timezone }))
-  
-  if (periodType === 'MOTD') {
-    return d1.getFullYear() === d2.getFullYear() &&
-           d1.getMonth() === d2.getMonth() &&
-           d1.getDate() === d2.getDate()
-  } else if (periodType === 'MOTW') {
-    // Same week (Monday to Sunday)
-    const week1 = getWeekNumber(d1)
-    const week2 = getWeekNumber(d2)
-    return d1.getFullYear() === d2.getFullYear() && week1 === week2
-  } else if (periodType === 'MOTM') {
-    return d1.getFullYear() === d2.getFullYear() &&
-           d1.getMonth() === d2.getMonth()
-  }
-  
-  return false
-}
 
-/**
- * Get week number (ISO week)
- */
-function getWeekNumber(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
-  const dayNum = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+  // Get the Sunday that starts each date's week
+  const sun1 = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate() - d1.getDay())
+  const sun2 = new Date(d2.getFullYear(), d2.getMonth(), d2.getDate() - d2.getDay())
+
+  return sun1.getTime() === sun2.getTime()
 }
 
 /**

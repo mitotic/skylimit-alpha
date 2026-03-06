@@ -986,11 +986,10 @@ export default function HomePage() {
                 <li>Posts are numbered, starting at midnight. Click on the post number to adjust whether you want to see more (or fewer) posts from that poster.</li>
                 <li>You can see posting and curation statistics for all those you follow in <em>Settings/Following</em>.</li>
               </ul>
-              {isReadOnlyMode() && (
-                <p className="text-red-600 dark:text-red-400 mt-2">
-                  Skylimit is running in a read-only mode that will not modify your Bluesky state/configuration. You can disable it in Settings.
-                </p>
-              )}
+              <p className="text-red-600 dark:text-red-400 mt-2">
+                Wait a minute or two for initialization to complete.
+                {isReadOnlyMode() && ' Initially, Skylimit runs in read-only mode that will not modify your Bluesky state/configuration. Use Settings to disable this mode.'}
+              </p>
             </div>
             <button
               onClick={() => {
@@ -1358,10 +1357,19 @@ export default function HomePage() {
           setReplyToUri(null)
           setQuotePost(null)
         }}
-        replyTo={replyToUri ? feed.find(p => p.post.uri === replyToUri)?.post ? {
-          uri: replyToUri,
-          cid: feed.find(p => p.post.uri === replyToUri)!.post.cid,
-        } : undefined : undefined}
+        replyTo={replyToUri ? (() => {
+          const parentPost = feed.find(p => p.post.uri === replyToUri)?.post
+          if (!parentPost) return undefined
+          const record = parentPost.record as any
+          return {
+            uri: replyToUri,
+            cid: parentPost.cid,
+            text: record?.text,
+            facets: record?.facets,
+            authorName: parentPost.author.displayName,
+            authorHandle: parentPost.author.handle,
+          }
+        })() : undefined}
         quotePost={quotePost || undefined}
         onPost={handlePost}
         onPostThread={handlePostThread}

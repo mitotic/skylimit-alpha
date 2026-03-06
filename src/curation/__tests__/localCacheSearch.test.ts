@@ -84,7 +84,7 @@ describe('matchPostSummary', () => {
       repostCount: 0,
       timestamp: new Date(),
       postTimestamp: Date.now(),
-      engaged: false,
+      postEngagement: undefined,
       postText: 'Hello world',
       ...overrides,
     }
