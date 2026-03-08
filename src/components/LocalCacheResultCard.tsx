@@ -93,6 +93,11 @@ export default function LocalCacheResultCard({ post, displayName, onClick }: Loc
         <span className="text-xs text-gray-500 dark:text-gray-400">
           {formatTimestamp(post.timestamp)}
         </span>
+        {post.curationNumber != null && post.curationNumber > 0 && (
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            #{post.curationNumber}
+          </span>
+        )}
         {!isShown && (
           <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">
             dropped

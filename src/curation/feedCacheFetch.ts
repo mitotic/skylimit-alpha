@@ -248,14 +248,14 @@ export async function fillGapToMidnight(
         // Check if already cached - if so, stop gap fill
         const existsInCache = await checkFeedCacheExists(uniqueId)
         if (existsInCache) {
-          log.debug('Gap Fill', `Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          log.info('Gap Fill', `Reached cached post boundary: ${new Date(postTimestamp).toLocaleString()}`)
           hitCachedPost = true
           break
         }
 
         // Stop if post is before midnight
         if (postTimestamp < localMidnight) {
-          log.verbose('Gap Fill', `Reached midnight boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          log.info('Gap Fill', `Reached midnight boundary: ${new Date(localMidnight).toLocaleString()}`)
           break
         }
 
@@ -391,7 +391,7 @@ export async function fetchUntilCached(
         // (curatePosts will preserve existing curation decisions from summaries cache)
         const inFeedCache = await checkFeedCacheExists(uniqueId)
         if (inFeedCache) {
-          log.debug('Fetch Until Cached', `Hit cached post at ${postTimestamp.toLocaleTimeString()}`)
+          log.info('Fetch Until Cached', `Reached cached post boundary: ${postTimestamp.toLocaleString()}`)
           hitCachedPost = true
           break
         }
@@ -728,7 +728,7 @@ export async function fetchToSecondaryFeedCache(
     for (const entry of entries) {
       // Check midnight boundary — stop if post is at or before boundary
       if (entry.postTimestamp <= midnightBoundary) {
-        log.debug(topic, ` Reached midnight boundary at ${new Date(entry.postTimestamp).toLocaleString()}`)
+        log.info(topic, ` Reached midnight boundary: ${new Date(midnightBoundary).toLocaleString()}`)
         stopReason = 'boundary'
         batchStopped = true
         break
@@ -740,7 +740,7 @@ export async function fetchToSecondaryFeedCache(
         if (entry.postTimestamp <= primaryNewestTimestamp) {
           // Timestamps overlap — do IndexedDB check to confirm
           if (await isInPrimaryCache(entry.uniqueId)) {
-            log.debug(topic, ` Found overlap with primary cache: ${entry.uniqueId}`)
+            log.info(topic, ` Reached cache overlap boundary: ${new Date(entry.postTimestamp).toLocaleString()}`)
             stopReason = 'overlap'
             batchStopped = true
             break

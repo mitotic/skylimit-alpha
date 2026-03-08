@@ -95,11 +95,11 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
           className="stroke-gray-400 dark:stroke-gray-500" strokeWidth={1} />
         {yTicks.map(v => (
           <text key={`y-${v}`} x={margin.left - 6} y={yScale(v) + 5}
-            textAnchor="end" fontSize={13}
+            textAnchor="end" style={{ fontSize: 'var(--post-secondary-text-size)' }}
             className="fill-gray-600 dark:fill-gray-400">{v}</text>
         ))}
         <text x={-8} y={margin.top + plotH / 2}
-          textAnchor="middle" fontSize={13} transform={`rotate(-90, -8, ${margin.top + plotH / 2})`}
+          textAnchor="middle" style={{ fontSize: 'var(--post-secondary-text-size)' }} transform={`rotate(-90, -8, ${margin.top + plotH / 2})`}
           className="fill-gray-600 dark:fill-gray-400">Posts / day</text>
 
         {/* X-axis */}
@@ -108,11 +108,11 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
           className="stroke-gray-400 dark:stroke-gray-500" strokeWidth={1} />
         {xTicks.map(i => (
           <text key={`x-${i}`} x={xScale(i)} y={margin.top + plotH + 18}
-            textAnchor="middle" fontSize={13}
+            textAnchor="middle" style={{ fontSize: 'var(--post-secondary-text-size)' }}
             className="fill-gray-600 dark:fill-gray-400">{i}</text>
         ))}
         <text x={margin.left + plotW / 2} y={height - 2}
-          textAnchor="middle" fontSize={13}
+          textAnchor="middle" style={{ fontSize: 'var(--post-secondary-text-size)' }}
           className="fill-gray-600 dark:fill-gray-400">{xAxisLabel}</text>
 
         {mode === 'normalized' ? (
@@ -147,17 +147,17 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
             {/* Legend */}
             <line x1={margin.left + 10} x2={margin.left + 28} y1={margin.top + 8} y2={margin.top + 8}
               className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
-            <text x={margin.left + 32} y={margin.top + 13} fontSize={13}
+            <text x={margin.left + 32} y={margin.top + 13} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Normalized rate</text>
 
             <polygon points={`${margin.left + 19},${margin.top + 21} ${margin.left + 15},${margin.top + 28} ${margin.left + 23},${margin.top + 28}`}
               className="fill-amber-500 dark:fill-amber-400" />
-            <text x={margin.left + 32} y={margin.top + 29} fontSize={13}
+            <text x={margin.left + 32} y={margin.top + 29} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Posting rate</text>
 
             <rect x={margin.left + 15.5} y={margin.top + 36.5} width={7} height={7}
               fill="none" className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
-            <text x={margin.left + 32} y={margin.top + 45} fontSize={13}
+            <text x={margin.left + 32} y={margin.top + 45} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Allow rate</text>
           </>
         ) : (
@@ -194,17 +194,17 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
             {/* Legend */}
             <polygon points={`${margin.left + 19},${margin.top + 5} ${margin.left + 15},${margin.top + 12} ${margin.left + 23},${margin.top + 12}`}
               className="fill-amber-500 dark:fill-amber-400" />
-            <text x={margin.left + 32} y={margin.top + 13} fontSize={13}
+            <text x={margin.left + 32} y={margin.top + 13} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Posting rate</text>
 
             <circle cx={margin.left + 19} cy={margin.top + 24} r={3.5}
               className="fill-green-600 dark:fill-green-400" />
-            <text x={margin.left + 32} y={margin.top + 29} fontSize={13}
+            <text x={margin.left + 32} y={margin.top + 29} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Show rate</text>
 
             <rect x={margin.left + 15.5} y={margin.top + 36.5} width={7} height={7}
               fill="none" className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
-            <text x={margin.left + 32} y={margin.top + 45} fontSize={13}
+            <text x={margin.left + 32} y={margin.top + 45} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Allow rate</text>
           </>
         )}

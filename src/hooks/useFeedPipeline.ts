@@ -162,6 +162,8 @@ export function useFeedPipeline({
   const previousPageFeedRef = useRef<CurationFeedViewPost[]>([])
   const isPrefetchingRef = useRef(false)
   const prevPageHadUnnumberedRef = useRef(false)
+  const resetPendingRef = useRef(false)
+  const lookbackInProgressRef = useRef(false)
 
   // Sync refs for IntersectionObserver callback (avoids stale closures)
   useEffect(() => {
@@ -253,6 +255,7 @@ export function useFeedPipeline({
     if (locationPathname !== '/') return
     if (activeTab !== 'curated') return
     if (isLoading) return
+    if (feed.length === 0) return
 
     const timeoutId = clientTimeout(async () => {
       const lowestVisiblePostTimestamp = findLowestVisiblePostTimestamp(feed)
@@ -870,6 +873,9 @@ export function useFeedPipeline({
 
           const skipIdleReturnLookback = isIdleReturnMode && (allEntriesHadSummaries || firstCachedSummaryIndex > 0)
           if ((isInitialLoadMode || isIdleReturnMode) && !cursor && !skipIdleReturnLookback) {
+            if (lookbackInProgressRef.current) {
+              log.info('Lookback', 'Skipping — another lookback is already in progress')
+            } else {
             const fetchMode = isIdleReturnMode ? 'idle_return' as const : 'initial' as const
             log.debug('Lookback', `Starting unified fetch (mode: ${fetchMode})...`)
 
@@ -877,6 +883,7 @@ export function useFeedPipeline({
               await clearPrevPageCursor()
             }
 
+            lookbackInProgressRef.current = true
             setLookingBack(true)
             setLookbackProgress(0)
             setInitPhase('posts')
@@ -906,6 +913,7 @@ export function useFeedPipeline({
                 log.debug('Lookback', `Transferred ${transferResult.postsTransferred} posts to primary`)
               }
 
+              lookbackInProgressRef.current = false
               setLookingBack(false)
               setLookbackProgress(100)
 
@@ -982,11 +990,13 @@ export function useFeedPipeline({
               }
             }).catch((err) => {
               log.error('Lookback', 'Failed:', err)
+              lookbackInProgressRef.current = false
               setLookingBack(false)
               setLookbackProgress(null)
               setInitPhase(null)
               setInitialPrefetchDone(true)
             })
+            } // end lookbackInProgressRef guard
           } else if (skipIdleReturnLookback) {
             log.debug('Feed', 'Gap already filled by first page - skipping background lookback')
 
@@ -1394,6 +1404,7 @@ export function useFeedPipeline({
   // Clear all time-variant data and logout
   const clearCacheAndReloadHomePage = useCallback(async () => {
     log.info('Debug', 'clearCacheAndReloadHomePage: Starting...')
+    resetPendingRef.current = true
     try {
       sessionStorage.removeItem(getFeedStateKey('curated'))
       sessionStorage.removeItem(getScrollStateKey('curated'))
@@ -1405,12 +1416,17 @@ export function useFeedPipeline({
       await clearAllTimeVariantDataAndLogout()
     } catch (error) {
       log.error('Debug', 'clearCacheAndReloadHomePage failed:', error)
+    } finally {
+      resetPendingRef.current = false
+      sessionStorage.removeItem('websky_reset_pending')
     }
   }, [])
 
   // Reset feed only (preserve summaries)
   const resetFeedAndReloadHomePage = useCallback(async () => {
     log.info('Debug', 'resetFeedAndReloadHomePage: Starting...')
+    resetPendingRef.current = true
+    lookbackInProgressRef.current = false
 
     try {
       sessionStorage.removeItem(getFeedStateKey('curated'))
@@ -1463,12 +1479,17 @@ export function useFeedPipeline({
 
     } catch (error) {
       log.error('Debug', 'resetFeedAndReloadHomePage failed:', error)
+    } finally {
+      resetPendingRef.current = false
+      sessionStorage.removeItem('websky_reset_pending')
     }
   }, [loadFeed])
 
   // Clear recent data and reload (preserve old summaries, idle return behavior)
   const clearRecentAndReloadHomePage = useCallback(async () => {
     log.info('Debug', 'clearRecentAndReloadHomePage: Starting...')
+    resetPendingRef.current = true
+    lookbackInProgressRef.current = false
 
     try {
       // Calculate lookback boundary
@@ -1515,6 +1536,9 @@ export function useFeedPipeline({
 
     } catch (error) {
       log.error('Debug', 'clearRecentAndReloadHomePage failed:', error)
+    } finally {
+      resetPendingRef.current = false
+      sessionStorage.removeItem('websky_reset_pending')
     }
   }, [loadFeed])
 
@@ -1549,17 +1573,25 @@ export function useFeedPipeline({
         return
       }
 
+      // Skip if a reset/refetch operation is pending — it will call loadFeed itself.
+      // Check both the ref (for in-component resets) and sessionStorage (for cross-route
+      // resets from Settings page, where navigate('/') mounts HomePage before the reset runs).
+      if (resetPendingRef.current || sessionStorage.getItem('websky_reset_pending')) {
+        log.info('Navigation', 'Skipping shouldRedisplay — reset pending')
+        return
+      }
+
       try {
         const savedStateJson = sessionStorage.getItem(getFeedStateKey('curated'))
         if (!savedStateJson) {
-          log.debug('Navigation', 'No saved feed state, calling loadFeed')
+          log.info('Navigation', 'No saved feed state, calling loadFeed')
           return loadFeed()
         }
 
         const savedState: SavedFeedState = JSON.parse(savedStateJson)
 
         if (savedState.sessionDid !== session?.did) {
-          log.debug('Navigation', 'Saved state is for different user, calling loadFeed')
+          log.info('Navigation', 'Saved state is for different user, calling loadFeed')
           sessionStorage.removeItem(getFeedStateKey('curated'))
           return loadFeed()
         }
@@ -1571,13 +1603,13 @@ export function useFeedPipeline({
         const isWithinIdleInterval = timeSinceSave < idleInterval
 
         if (isWithinIdleInterval && savedState.displayedFeed && savedState.displayedFeed.length > 0) {
-          log.debug('Navigation', 'Within idle interval, redisplaying feed:', {
+          log.info('Navigation', 'Within idle interval, redisplaying feed:', {
             timeSinceSave: Math.round(timeSinceSave / 1000) + 's',
             idleInterval: Math.round(idleInterval / 1000) + 's'
           })
           return redisplayFeed()
         } else {
-          log.debug('Navigation', 'Outside idle interval or no saved feed, calling loadFeed:', {
+          log.info('Navigation', 'Outside idle interval or no saved feed, calling loadFeed:', {
             timeSinceSave: Math.round(timeSinceSave / 1000) + 's',
             idleInterval: Math.round(idleInterval / 1000) + 's',
             hasFeed: !!savedState.displayedFeed && savedState.displayedFeed.length > 0

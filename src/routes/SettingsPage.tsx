@@ -20,6 +20,10 @@ import ConfirmModal from '../components/ConfirmModal'
 import EditionLayoutEditor from '../components/EditionLayoutEditor'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
+import {
+  exportCurationData, validateCurationImport, applyCurationImport,
+  downloadJson, type ImportValidation
+} from '../curation/curationDataTransfer'
 
 type Tab = 'general' | 'curation' | 'editions' | 'following'
 
@@ -128,7 +132,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [editionFeedback, setEditionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [editionWarning, setEditionWarning] = useState<string[] | null>(null)
-  const [visualEditorMode, setVisualEditorMode] = useState(false)
+  const [visualEditorMode, setVisualEditorMode] = useState(true)
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -147,6 +151,11 @@ export default function SettingsPage() {
   const [showClearRecentModal, setShowClearRecentModal] = useState(false)
   const [isClearingRecent, setIsClearingRecent] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importValidation, setImportValidation] = useState<ImportValidation | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
@@ -427,6 +436,7 @@ export default function SettingsPage() {
         setIsResettingFeed(false)
         navigate('/')
       } else {
+        sessionStorage.setItem('websky_reset_pending', '1')
         navigate('/')
         setTimeout(async () => {
           if (typeof (window as any).resetFeedAndReloadHomePage === 'function') {
@@ -453,6 +463,7 @@ export default function SettingsPage() {
         setIsClearingRecent(false)
         navigate('/')
       } else {
+        sessionStorage.setItem('websky_reset_pending', '1')
         navigate('/')
         setTimeout(async () => {
           if (typeof (window as any).clearRecentAndReloadHomePage === 'function') {
@@ -482,6 +493,60 @@ export default function SettingsPage() {
   const handleResetAll = () => {
     setIsResettingAll(true)
     resetEverything() // Redirects to /?reset=1
+  }
+
+  const handleExport = async () => {
+    if (!session?.handle) return
+    setIsExporting(true)
+    try {
+      const jsonString = await exportCurationData(session.handle)
+      const dateStr = new Date().toISOString().slice(0, 10)
+      downloadJson(jsonString, `websky-curation-${session.handle}-${dateStr}.json`)
+    } catch (error) {
+      log.error('Settings', 'Failed to export curation data:', error)
+      alert('Failed to export curation data')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  const handleImportFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !session?.handle) return
+    try {
+      const text = await file.text()
+      const result = await validateCurationImport(text, session.handle)
+      if (result.success) {
+        setImportValidation(result)
+        setImportError(null)
+      } else {
+        setImportValidation(null)
+        setImportError(result.error)
+      }
+      setShowImportModal(true)
+    } catch {
+      setImportError('Failed to read file')
+      setImportValidation(null)
+      setShowImportModal(true)
+    }
+    e.target.value = ''
+  }
+
+  const handleImportConfirm = async () => {
+    if (!importValidation) return
+    setIsImporting(true)
+    try {
+      const result = await applyCurationImport(importValidation.data)
+      setShowImportModal(false)
+      setImportValidation(null)
+      await loadSettings()
+      alert(`Import complete: ${result.settingsUpdated} settings updated, ${result.followsUpdated} followee preferences updated, ${result.followsSkipped} skipped (not followed on this device).`)
+    } catch (error) {
+      log.error('Settings', 'Failed to import curation data:', error)
+      alert('Failed to import curation data')
+    } finally {
+      setIsImporting(false)
+    }
   }
 
   // Render Basic tab content
@@ -1140,9 +1205,62 @@ This cannot be undone.`}
           </div>
         </form>
 
-        {/* Data Management */}
+        {/* Curation Settings Transfer */}
         <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
-        <DisclosureSection title="Data Management">
+          <h2 className="text-xl font-semibold mb-2">Curation Settings Transfer</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            Export curation settings and followee preferences to sync across devices.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleExport}
+              disabled={isExporting}
+              className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full"
+            >
+              {isExporting ? 'Exporting...' : 'Export settings to file'}
+            </Button>
+            <label className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full cursor-pointer font-medium transition-colors inline-flex items-center">
+              Import settings from file
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleImportFileSelect}
+                className="hidden"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Import Confirmation Modal */}
+        <ConfirmModal
+          isOpen={showImportModal && importValidation !== null}
+          onClose={() => { setShowImportModal(false); setImportValidation(null) }}
+          onConfirm={handleImportConfirm}
+          title="Import Curation Settings"
+          message={importValidation
+            ? `Import curation data from ${importValidation.data[0].username}?\n\nExported: ${importValidation.data[0].exported_at ? new Date(importValidation.data[0].exported_at).toLocaleString() : 'unknown'}\n\n• ${importValidation.totalSettingsKeys} curation settings will be overwritten\n• ${importValidation.matchedFollows} followee preferences will be updated\n• ${importValidation.skippedFollows} followees skipped (not followed on this device)\n\nThis will replace your current curation settings.`
+            : ''}
+          confirmText={isImporting ? 'Importing...' : 'Import'}
+          isLoading={isImporting}
+        />
+
+        {/* Import Error Modal */}
+        {showImportModal && importError && (
+          <ConfirmModal
+            isOpen={true}
+            onClose={() => { setShowImportModal(false); setImportError(null) }}
+            onConfirm={() => { setShowImportModal(false); setImportError(null) }}
+            title="Import Failed"
+            message={importError}
+            confirmText="OK"
+          />
+        )}
+
+        {/* Data Archive */}
+        <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
+        <DisclosureSection title="Data Archive">
 
           {/* Cache Statistics - only show if debug mode is enabled */}
           {settings.debugMode && (
@@ -1482,21 +1600,7 @@ You will be logged out and redirected to the login page.`}
 
     return (
       <div className="space-y-6">
-        <label className="flex items-center space-x-3">
-          <input
-            type="checkbox"
-            checked={settings.showEditionsInFeed || false}
-            onChange={async (e) => {
-              const newValue = e.target.checked
-              updateSetting('showEditionsInFeed', newValue)
-              await updateSettings({ ...settings, showEditionsInFeed: newValue })
-            }}
-            className="w-5 h-5"
-          />
-          <span>Show periodic editions in home feed</span>
-        </label>
-
-        <div className="space-y-4">
+          <div className="space-y-4">
             {visualEditorMode ? (
               <EditionLayoutEditor
                 layoutText={settings.editionLayout}
@@ -1578,6 +1682,25 @@ You will be logged out and redirected to the login page.`}
                 )}
               </div>
             )}
+        </div>
+
+        <div>
+          <label className="flex items-center space-x-3">
+            <input
+              type="checkbox"
+              checked={settings.showEditionsInFeed || false}
+              onChange={async (e) => {
+                const newValue = e.target.checked
+                updateSetting('showEditionsInFeed', newValue)
+                await updateSettings({ ...settings, showEditionsInFeed: newValue })
+              }}
+              className="w-5 h-5"
+            />
+            <span>Show periodic editions in home feed</span>
+          </label>
+          <p className="text-sm text-gray-500 ml-8 mt-1">
+            This inserts edition posts as timed reposts in the feed
+          </p>
         </div>
 
       </div>
