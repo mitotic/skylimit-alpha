@@ -20,6 +20,7 @@ import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
 import CurationPopup from './CurationPopup'
 import RichText from './RichText'
+import log from '../utils/logger'
 
 interface PostCardProps {
   post: AppBskyFeedDefs.FeedViewPost | CurationFeedViewPost
@@ -164,7 +165,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             // Removed to avoid TypeScript errors - can be re-enabled if needed
           }
         } catch (error) {
-          console.error('Error loading settings for post counter:', error)
+          log.error('PostCard', 'Error loading settings for post counter:', error)
           setShowCounterDisplay(false)
         }
       }
@@ -241,7 +242,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           const follow = await getFollow(ampUsername)
           setFollowInfo(follow)
         } catch (error) {
-          console.error('Error fetching popup data:', error)
+          log.error('PostCard', 'Error fetching popup data:', error)
         }
       }
       setShowPopup(!wasOpen)
@@ -275,7 +276,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       await ampUp(ampUsername, myUsername)
       await refreshAfterAmpChange()
     } catch (error) {
-      console.error('Failed to amp up:', error)
+      log.error('PostCard', 'Failed to amp up:', error)
       alert('Failed to update amplification factor')
     } finally {
       setLoading(false)
@@ -288,7 +289,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       await ampDown(ampUsername, myUsername)
       await refreshAfterAmpChange()
     } catch (error) {
-      console.error('Failed to amp down:', error)
+      log.error('PostCard', 'Failed to amp down:', error)
       alert('Failed to update amplification factor')
     } finally {
       setLoading(false)

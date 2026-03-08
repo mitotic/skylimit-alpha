@@ -5,6 +5,7 @@
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
 import { CurationMetadata, FeedPlatform, PostSummary, ENGAGEMENT_NONE, ENGAGEMENT_LIKED, ENGAGEMENT_BOOKMARKED, ENGAGEMENT_REPOSTED } from './types'
 import { clientNow, clientDate } from '../utils/clientClock'
+import log from '../utils/logger'
 
 /**
  * Check if a post is a periodic edition (synthetic repost created by edition assembly)
@@ -208,7 +209,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     const reposter = (post.reason as any)?.by
     if (!reposter) {
       // Fallback if reason.by is not available (shouldn't happen)
-      console.warn('Repost detected but reposter info not available')
+      log.warn('Repost', 'Repost detected but reposter info not available')
       username = post.post.author.handle
       accountDid = post.post.author.did
       orig_username = undefined
@@ -256,6 +257,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   // For original posts, use createdAt (when it was created)
   const timestamp = getFeedViewPostTimestamp(post, feedReceivedTime)
   
+  log.trace('fetched', username, timestamp.getTime(), postText || '')
   return {
     uniqueId,
     cid,

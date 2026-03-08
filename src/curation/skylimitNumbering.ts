@@ -11,6 +11,7 @@ import { getAllPostSummaries, getPostSummariesInRange, initDB } from './skylimit
 import { getLocalMidnight } from './skylimitFeedCache'
 import { PostSummary, isStatusDrop, isStatusShow } from './types'
 import { getSettings } from './skylimitStore'
+import log from '../utils/logger'
 
 /**
  * Get date string in local timezone (YYYY-MM-DD) for a given timestamp.
@@ -115,7 +116,7 @@ export async function assignNumbersForDay(
   // Batch save updates
   await saveNumberedSummaries(updatedSummaries)
 
-  console.log(`[Numbering] Assigned numbers for day ${getDateString(startOfDay)}: ${postNumber} posts, ${curationNumber} shown`)
+  log.debug('Numbering', `Assigned numbers for day ${getDateString(startOfDay)}: ${postNumber} posts, ${curationNumber} shown`)
 
   return { postCount: postNumber, shownCount: curationNumber }
 }
@@ -127,7 +128,7 @@ export async function assignNumbersForDay(
 export async function assignAllNumbers(): Promise<void> {
   const summaries = await getAllPostSummaries()
   if (summaries.length === 0) {
-    console.log('[Numbering] No summaries to number')
+    log.debug('Numbering', 'No summaries to number')
     return
   }
 
@@ -150,7 +151,7 @@ export async function assignAllNumbers(): Promise<void> {
   let currentDay = getLocalMidnight(startDate, timezone)
   const finalDay = getLocalMidnight(endDate, timezone)
 
-  console.log(`[Numbering] Assigning numbers from ${getDateString(currentDay.getTime(), timezone)} to ${getDateString(finalDay.getTime(), timezone)}`)
+  log.debug('Numbering', `Assigning numbers from ${getDateString(currentDay.getTime(), timezone)} to ${getDateString(finalDay.getTime(), timezone)}`)
 
   let totalPosts = 0
   let totalShown = 0
@@ -165,7 +166,7 @@ export async function assignAllNumbers(): Promise<void> {
     currentDay = nextDay
   }
 
-  console.log(`[Numbering] Complete: ${totalPosts} total posts, ${totalShown} shown across all days`)
+  log.info('Numbering', `Complete: ${totalPosts} total posts, ${totalShown} shown across all days`)
 }
 
 /**
@@ -224,7 +225,7 @@ export async function assignIncrementalNumbers(
       const postDate = new Date(summary.postTimestamp)
       const newCurationNum = isStatusShow(summary.curation_status) ? curationNumber + 1 :
                              isStatusDrop(summary.curation_status) ? 0 : null
-      console.warn(`[Numbering] WARNING: Overwriting existing numbers. ` +
+      log.warn('Numbering', `WARNING: Overwriting existing numbers. ` +
         `First occurrence at ${postDate.toLocaleString()}: ` +
         `postNumber ${summary.postNumber} → ${postNumber + 1}, ` +
         `curationNumber ${summary.curationNumber} → ${newCurationNum}`)
@@ -248,7 +249,7 @@ export async function assignIncrementalNumbers(
 
   await saveNumberedSummaries(newSummaries)
 
-  console.log(`[Numbering] Incremental: assigned numbers to ${newSummaries.length} posts (postNumber ${existingMaxPostNumber + 1}-${postNumber}, curationNumber up to ${curationNumber})`)
+  log.debug('Numbering', `Incremental: assigned numbers to ${newSummaries.length} posts (postNumber ${existingMaxPostNumber + 1}-${postNumber}, curationNumber up to ${curationNumber})`)
 }
 
 /**
@@ -257,13 +258,13 @@ export async function assignIncrementalNumbers(
  *
  * @param dayStart - Start of day (midnight timestamp in ms)
  * @param dayEnd - End of day (next midnight timestamp in ms)
- * @param label - Log label for debugging (e.g., "[Idle Return Lookback]")
+ * @param topic - Log topic for debugging (e.g., "Prefetch")
  * @returns Number of posts that were assigned numbers
  */
 export async function numberUnnumberedPostsForDay(
   dayStart: number,
   dayEnd: number,
-  label: string
+  topic: string
 ): Promise<number> {
   const { maxPostNumber, maxCurationNumber } = await getMaxNumbersForDay(dayStart, dayEnd)
   const allSummaries = await getPostSummariesInRange(dayStart, dayEnd)
@@ -272,7 +273,7 @@ export async function numberUnnumberedPostsForDay(
   )
   if (unnumbered.length > 0) {
     await assignIncrementalNumbers(unnumbered, maxPostNumber, maxCurationNumber)
-    console.log(`${label} Assigned numbers to ${unnumbered.length} posts`)
+    log.debug(topic, `Assigned numbers to ${unnumbered.length} posts`)
   }
   return unnumbered.length
 }

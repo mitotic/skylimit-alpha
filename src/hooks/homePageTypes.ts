@@ -2,6 +2,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import { CurationFeedViewPost } from '../curation/types'
 import { getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { clientDate } from '../utils/clientClock'
+import log from '../utils/logger'
 
 // Tab type for home page
 export type HomeTab = 'curated' | 'editions'
@@ -84,7 +85,7 @@ export function findLowestVisiblePostTimestamp(feed: AppBskyFeedDefs.FeedViewPos
 
     return null
   } catch (error) {
-    console.warn('Failed to find lowest visible post timestamp:', error)
+    log.warn('PageBoundary', 'Failed to find lowest visible post timestamp:', error)
     return null
   }
 }
@@ -151,7 +152,7 @@ export function alignFeedToPageBoundary(
   const finalLength = trimmedLength  // Already capped at 2 * pageLength above
 
   const newOldest = filteredFeed[finalLength - 1] as CurationFeedViewPost
-  console.log(`[PageBoundary] Trimmed feed from ${filteredFeed.length} to ${finalLength} posts ` +
+  log.debug('PageBoundary', `Trimmed feed from ${filteredFeed.length} to ${finalLength} posts ` +
     `(removed ${filteredFeed.length - finalLength} oldest, ` +
     `oldest curationNumber was #${oldestCurationNumber}, ` +
     `now #${newOldest.curation?.curationNumber ?? '?'})`)

@@ -17,6 +17,8 @@
  *   // Keep native setTimeout/setInterval for UI timers (toast, scroll debounce, etc.)
  */
 
+import log from './logger'
+
 // --- Skyspeed config types ---
 
 export interface SkyspeedConfig {
@@ -127,7 +129,7 @@ export function configureClientClock(config: SkyspeedConfig): void {
   const factor = config.skyspeedClockFactor
 
   if (factor <= 0) {
-    console.warn('[ClientClock] Invalid clock factor:', factor)
+    log.warn('ClientClock', 'Invalid clock factor:', factor)
     return
   }
 
@@ -137,13 +139,13 @@ export function configureClientClock(config: SkyspeedConfig): void {
   realEpoch = syncTimeMs
   clientEpoch = syncTimeMs + (config.skyspeedTimeShiftOffsetMs ?? 0)
 
-  console.log('[ClientClock] Configured:')
-  console.log(`  Clock factor: ${factor}x`)
-  console.log(`  Sync time: ${config.skyspeedSyncTime}`)
+  log.info('ClientClock', 'Configured:')
+  log.info('ClientClock', `  Clock factor: ${factor}x`)
+  log.debug('ClientClock', `  Sync time: ${config.skyspeedSyncTime}`)
   if (config.skyspeedTimeShiftOffsetMs) {
-    console.log(`  Time offset: +${(config.skyspeedTimeShiftOffsetMs / 60000).toFixed(0)} minutes`)
+    log.debug('ClientClock', `  Time offset: +${(config.skyspeedTimeShiftOffsetMs / 60000).toFixed(0)} minutes`)
   }
-  console.log(`  Client time now: ${new Date(clientNow()).toISOString()}`)
+  log.debug('ClientClock', `  Client time now: ${new Date(clientNow()).toISOString()}`)
   notifyClockChange()
 }
 
@@ -155,7 +157,7 @@ export function configureClientClock(config: SkyspeedConfig): void {
  */
 export function setClientClockManual(factor: number, startTimeISO?: string): void {
   if (factor <= 0) {
-    console.warn('[ClientClock] Invalid clock factor:', factor)
+    log.warn('ClientClock', 'Invalid clock factor:', factor)
     return
   }
 
@@ -163,8 +165,8 @@ export function setClientClockManual(factor: number, startTimeISO?: string): voi
   realEpoch = Date.now()
   clientEpoch = startTimeISO ? Date.parse(startTimeISO) : realEpoch
 
-  console.log(`[ClientClock] Manual config: ${factor}x from ${new Date(clientEpoch).toISOString()}`)
-  console.log(`  Client time now: ${new Date(clientNow()).toISOString()}`)
+  log.info('ClientClock', `Manual config: ${factor}x from ${new Date(clientEpoch).toISOString()}`)
+  log.debug('ClientClock', `  Client time now: ${new Date(clientNow()).toISOString()}`)
   notifyClockChange()
 }
 
@@ -175,7 +177,7 @@ export function resetClientClock(): void {
   clockFactor = 1
   realEpoch = 0
   clientEpoch = 0
-  console.log('[ClientClock] Reset to normal time')
+  log.info('ClientClock', 'Reset to normal time')
   notifyClockChange()
 }
 
@@ -191,8 +193,8 @@ export function applyTimeShift(shiftMs: number): void {
     saved.skyspeedTimeShiftOffsetMs = (saved.skyspeedTimeShiftOffsetMs ?? 0) + shiftMs
     saveSkyspeedConfig(saved)
   }
-  console.log(`[ClientClock] Time shift applied: +${(shiftMs / 60000).toFixed(0)} minutes`)
-  console.log(`  Client time now: ${new Date(clientNow()).toISOString()}`)
+  log.info('ClientClock', `Time shift applied: +${(shiftMs / 60000).toFixed(0)} minutes`)
+  log.debug('ClientClock', `  Client time now: ${new Date(clientNow()).toISOString()}`)
   notifyClockChange()
 }
 
@@ -229,7 +231,7 @@ export async function detectSkyspeed(
 
     const hasTimeOffset = (config.skyspeedTimeShiftOffsetMs ?? 0) > 0
     if (hasTimeOffset) {
-      console.log(`[Skyspeed] Server time offset: +${((config.skyspeedTimeShiftOffsetMs!) / 60000).toFixed(0)} minutes`)
+      log.info('Skyspeed', `Server time offset: +${((config.skyspeedTimeShiftOffsetMs!) / 60000).toFixed(0)} minutes`)
     }
 
     return config
@@ -269,12 +271,12 @@ export async function acknowledgeSkyspeed(
       }),
     })
     if (ackResponse.ok) {
-      console.log(`[Skyspeed] Clock factor ${config.skyspeedClockFactor}x acknowledged by server`)
+      log.info('Skyspeed', `Clock factor ${config.skyspeedClockFactor}x acknowledged by server`)
     } else {
-      console.warn('[Skyspeed] Failed to acknowledge clock factor:', await ackResponse.text())
+      log.warn('Skyspeed', 'Failed to acknowledge clock factor:', await ackResponse.text())
     }
   } catch (ackError) {
-    console.warn('[Skyspeed] Failed to send clock ack:', ackError)
+    log.warn('Skyspeed', 'Failed to send clock ack:', ackError)
   }
 }
 

@@ -16,6 +16,7 @@ import { resetEverything } from '../curation/skylimitCache'
 import { updateSettings } from '../curation/skylimitStore'
 import ConfirmModal from '../components/ConfirmModal'
 import type { Session, AutoLoginParams } from '../types'
+import log from '../utils/logger'
 
 
 interface SessionContextType {
@@ -67,7 +68,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setSession(updatedSession)
       updateSession(updatedSession)
     } else if (evt === 'expired') {
-      console.warn('Session expired, logging out')
+      log.warn('Session', 'Session expired, logging out')
       setSession(null)
       setAgent(null)
       clearSession()
@@ -80,11 +81,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const updates: Partial<{ viewsPerDay: number; debugMode: boolean }> = {}
     if (params.viewsPerDay !== undefined) {
       updates.viewsPerDay = params.viewsPerDay
-      console.log(`[AutoLogin] Setting viewsPerDay=${params.viewsPerDay}`)
+      log.debug('AutoLogin', `Setting viewsPerDay=${params.viewsPerDay}`)
     }
     if (params.debugMode !== undefined) {
       updates.debugMode = params.debugMode
-      console.log(`[AutoLogin] Setting debugMode=${params.debugMode}`)
+      log.debug('AutoLogin', `Setting debugMode=${params.debugMode}`)
     }
     if (Object.keys(updates).length > 0) {
       await updateSettings(updates)
@@ -97,13 +98,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     try {
       skyspeedConfig = await detectSkyspeed(getServiceUrl(), accessJwt)
       if (skyspeedConfig) {
-        console.log('[Skyspeed] Connected to Skyspeed test server')
+        log.info('Skyspeed', 'Connected to Skyspeed test server')
         if (hasSkyspeedConfigChanged(skyspeedConfig)) {
-          console.log('[Skyspeed] Server config changed since last session — accepting new config')
+          log.debug('Skyspeed', 'Server config changed since last session — accepting new config')
         }
       }
     } catch (error) {
-      console.warn('[Skyspeed] Failed to detect Skyspeed server:', error)
+      log.warn('Skyspeed', 'Failed to detect Skyspeed server:', error)
       return
     }
 
@@ -111,10 +112,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       await acknowledgeSkyspeed(getServiceUrl(), accessJwt, skyspeedConfig)
       configureClientClock(skyspeedConfig)
       saveSkyspeedConfig(skyspeedConfig)
-      console.log(`[Skyspeed] Handshake complete:`)
-      console.log(`  Server: ${getServiceUrl()}`)
-      console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
-      console.log(`  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
+      log.info('Skyspeed', `Handshake complete:`)
+      log.debug('Session', `  Server: ${getServiceUrl()}`)
+      log.debug('Session', `  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
+      log.debug('Session', `  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
     } else {
       resetClientClock()
       clearSkyspeedConfig()
@@ -129,7 +130,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         delete (window as any).__SKYLIMIT_AUTO_LOGIN__
         const autoLogin = autoLoginParamsRef.current
         if (autoLogin?.username !== undefined && autoLogin?.password !== undefined) {
-          console.log(`[AutoLogin] Auto-login initiated for ${autoLogin.username}`)
+          log.info('AutoLogin', `Auto-login initiated for ${autoLogin.username}`)
           try {
             const { session: newSession, agent: newAgent } = await loginAPI(
               autoLogin.username, autoLogin.password, handlePersistSession
@@ -141,9 +142,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
             setSession(newSession)
             setAgent(newAgent)
-            console.log('[AutoLogin] Auto-login complete')
+            log.info('AutoLogin', 'Auto-login complete')
           } catch (error) {
-            console.error('[AutoLogin] Auto-login failed:', error)
+            log.error('AutoLogin', 'Auto-login failed:', error)
             // Fall through to show login page
           }
           setIsLoading(false)
@@ -177,7 +178,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (skyspeedConfig && configChanged) {
           // Config changed — hold everything pending user decision.
           // Do NOT ack, configure clock, or expose session to children.
-          console.warn('[Skyspeed] Server config changed — holding session pending user decision')
+          log.warn('Skyspeed', 'Server config changed — holding session pending user decision')
           pendingSessionRef.current = savedSession
           pendingAgentRef.current = restoredAgent
           pendingSkyspeedConfigRef.current = skyspeedConfig
@@ -187,10 +188,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           await acknowledgeSkyspeed(getServiceUrl(), savedSession.accessJwt, skyspeedConfig)
           configureClientClock(skyspeedConfig)
           saveSkyspeedConfig(skyspeedConfig)
-          console.log(`[Skyspeed] Session restored — handshake complete:`)
-          console.log(`  Server: ${getServiceUrl()}`)
-          console.log(`  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
-          console.log(`  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
+          log.info('Skyspeed', `Session restored — handshake complete:`)
+          log.debug('Session', `  Server: ${getServiceUrl()}`)
+          log.debug('Session', `  Clock factor: ${skyspeedConfig.skyspeedClockFactor}x`)
+          log.debug('Session', `  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
           setSession(savedSession)
           setAgent(restoredAgent)
         } else {
@@ -203,7 +204,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
         if (autoLogin) await applyAutoSettings(autoLogin)
       } catch (error) {
-        console.error('Failed to restore session:', error)
+        log.error('Session', 'Failed to restore session:', error)
         clearSession()
       } finally {
         setIsLoading(false)

@@ -6,6 +6,7 @@ import { isRateLimited } from '../utils/rateLimitState'
 import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import ConfirmModal from './ConfirmModal'
+import log from '../utils/logger'
 
 export default function BurgerMenu() {
   const [isOpen, setIsOpen] = useState(false)
@@ -54,7 +55,7 @@ export default function BurgerMenu() {
         const count = await getUnreadCount(agent)
         setUnreadCount(count)
       } catch (error) {
-        console.warn('Failed to fetch unread count:', error)
+        log.warn('Navigation', 'Failed to fetch unread count:', error)
       }
     }
 

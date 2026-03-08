@@ -36,6 +36,7 @@ import {
 } from './skylimitEditionAssembly'
 import { getParsedEditions, EDITION_PRE_OFFSET_MS } from './skylimitEditions'
 import { isEditionInRegistry } from './editionRegistry'
+import log from '../utils/logger'
 
 /**
  * Save posts to feed cache AND curate them (save summaries)
@@ -206,12 +207,12 @@ export async function fillGapToMidnight(
 
   // If fromTimestamp is already at or before midnight, no gap fill needed
   if (fromTimestamp <= localMidnight) {
-    console.log('[Gap Fill] Already at or past midnight boundary, skipping')
+    log.debug('Gap Fill', 'Already at or past midnight boundary, skipping')
     return 0
   }
   const intervalHours = getIntervalHoursSync(settings)
 
-  console.log(`[Gap Fill] Filling gap from ${new Date(fromTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
+  log.debug('Gap Fill', `Filling gap from ${new Date(fromTimestamp).toLocaleTimeString()} to midnight ${new Date(localMidnight).toLocaleTimeString()}`)
 
   let currentOldestTimestamp = fromTimestamp
   let cursor: string | undefined
@@ -230,7 +231,7 @@ export async function fillGapToMidnight(
       })
 
       if (feed.length === 0) {
-        console.log('[Gap Fill] No more posts from server, stopping')
+        log.verbose('Gap Fill', 'No more posts from server, stopping')
         break
       }
 
@@ -247,14 +248,14 @@ export async function fillGapToMidnight(
         // Check if already cached - if so, stop gap fill
         const existsInCache = await checkFeedCacheExists(uniqueId)
         if (existsInCache) {
-          console.log(`[Gap Fill] Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          log.debug('Gap Fill', `Hit cached post at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
           hitCachedPost = true
           break
         }
 
         // Stop if post is before midnight
         if (postTimestamp < localMidnight) {
-          console.log(`[Gap Fill] Reached midnight boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
+          log.verbose('Gap Fill', `Reached midnight boundary at ${new Date(postTimestamp).toLocaleTimeString()}, stopping`)
           break
         }
 
@@ -274,7 +275,7 @@ export async function fillGapToMidnight(
         await savePostsWithCuration(entries, newCursor, agent, myUsername, myDid)
         totalNewPosts += newPosts.length
 
-        console.log(`[Gap Fill] Cached ${newPosts.length} new posts (total: ${totalNewPosts})`)
+        log.debug('Gap Fill', `Cached ${newPosts.length} new posts (total: ${totalNewPosts})`)
       }
 
       if (hitCachedPost) {
@@ -283,20 +284,20 @@ export async function fillGapToMidnight(
 
       cursor = newCursor
       if (!cursor) {
-        console.log('[Gap Fill] No more cursor, stopping')
+        log.debug('Gap Fill', 'No more cursor, stopping')
         break
       }
     } catch (error) {
-      console.warn('[Gap Fill] Error during fetch:', error)
+      log.warn('Gap Fill', 'Error during fetch:', error)
       break
     }
   }
 
   if (iterations >= maxIterations) {
-    console.warn('[Gap Fill] Hit max iterations limit')
+    log.warn('Gap Fill', 'Hit max iterations limit')
   }
 
-  console.log(`[Gap Fill] Completed - cached ${totalNewPosts} new posts`)
+  log.info('Gap Fill', `Completed - cached ${totalNewPosts} new posts`)
   return totalNewPosts
 }
 
@@ -330,7 +331,7 @@ export async function fetchUntilCached(
   myDid: string,
   pageLength: number = DEFAULT_PAGE_LENGTH
 ): Promise<{ posts: CurationFeedViewPost[]; postTimestamps: Map<string, number>; reachedEnd: boolean }> {
-  console.log(`[Fetch Until Cached] Starting from ${new Date(fromTimestamp).toLocaleTimeString()}, stopping at cached post`)
+  log.debug('Fetch Until Cached', `Starting from ${new Date(fromTimestamp).toLocaleTimeString()}, stopping at cached post`)
 
   // Get interval settings for cache entries
   const settings = await getSettings()
@@ -360,7 +361,7 @@ export async function fetchUntilCached(
       })
 
       if (feed.length === 0) {
-        console.log('[Fetch Until Cached] No more posts from server')
+        log.verbose('Fetch Until Cached', 'No more posts from server')
         break
       }
 
@@ -375,7 +376,7 @@ export async function fetchUntilCached(
         // Skip posts newer than or equal to fromTimestamp
         if (postTimestampMs >= fromTimestamp) {
           if (!startedCollecting) {
-            console.log(`[Fetch Until Cached] Skipping post at ${postTimestamp.toLocaleTimeString()} (newer than fromTimestamp)`)
+            log.debug('Fetch Until Cached', `Skipping post at ${postTimestamp.toLocaleTimeString()} (newer than fromTimestamp)`)
           }
           continue
         }
@@ -383,14 +384,14 @@ export async function fetchUntilCached(
         // Now we're past fromTimestamp - start collecting
         if (!startedCollecting) {
           startedCollecting = true
-          console.log(`[Fetch Until Cached] Started collecting at ${postTimestamp.toLocaleTimeString()}`)
+          log.debug('Fetch Until Cached', `Started collecting at ${postTimestamp.toLocaleTimeString()}`)
         }
 
         // Check if post already exists in feed cache - stop
         // (curatePosts will preserve existing curation decisions from summaries cache)
         const inFeedCache = await checkFeedCacheExists(uniqueId)
         if (inFeedCache) {
-          console.log(`[Fetch Until Cached] Hit cached post at ${postTimestamp.toLocaleTimeString()}`)
+          log.debug('Fetch Until Cached', `Hit cached post at ${postTimestamp.toLocaleTimeString()}`)
           hitCachedPost = true
           break
         }
@@ -409,7 +410,7 @@ export async function fetchUntilCached(
         allPosts.push(...curatedFeed)
         totalNewPosts += newPosts.length
 
-        console.log(`[Fetch Until Cached] Cached ${newPosts.length} posts (total: ${totalNewPosts})`)
+        log.debug('Fetch Until Cached', `Cached ${newPosts.length} posts (total: ${totalNewPosts})`)
       }
 
       if (hitCachedPost) {
@@ -418,21 +419,21 @@ export async function fetchUntilCached(
 
       cursor = newCursor
       if (!cursor) {
-        console.log('[Fetch Until Cached] No more cursor')
+        log.debug('Fetch Until Cached', 'No more cursor')
         break
       }
     } catch (error) {
-      console.warn('[Fetch Until Cached] Error during fetch:', error)
+      log.warn('Fetch Until Cached', 'Error during fetch:', error)
       break
     }
   }
 
   if (iterations >= maxIterations) {
-    console.warn('[Fetch Until Cached] Hit max iterations limit')
+    log.warn('Fetch Until Cached', 'Hit max iterations limit')
   }
 
   const reachedEnd = !cursor || hitCachedPost
-  console.log(`[Fetch Until Cached] Completed - returned ${allPosts.length} posts, reachedEnd: ${reachedEnd}`)
+  log.info('Fetch Until Cached', `Completed - returned ${allPosts.length} posts, reachedEnd: ${reachedEnd}`)
   return { posts: allPosts, postTimestamps: allPostTimestamps, reachedEnd }
 }
 
@@ -459,7 +460,7 @@ export async function fetchPageFromTimestamp(
   cursor: string | undefined;
   hasMore: boolean;
 }> {
-  console.log(`[Server Fallback] Fetching page from ${new Date(fromTimestamp).toLocaleTimeString()}, cursor: ${existingCursor ? 'provided' : 'none'}`)
+  log.debug('Server Fallback', `Fetching page from ${new Date(fromTimestamp).toLocaleTimeString()}, cursor: ${existingCursor ? 'provided' : 'none'}`)
 
   // Get interval settings for cache entries
   const settings = await getSettings()
@@ -484,7 +485,7 @@ export async function fetchPageFromTimestamp(
       })
 
       if (feed.length === 0) {
-        console.log('[Server Fallback] No more posts from server')
+        log.verbose('Server Fallback', 'No more posts from server')
         return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
       }
 
@@ -502,7 +503,7 @@ export async function fetchPageFromTimestamp(
         allPostTimestamps.set(uniqueId, postTimestamp.getTime())
       }
 
-      console.log(`[Server Fallback] Fetched ${curatedFeed.length} posts using cursor`)
+      log.debug('Server Fallback', `Fetched ${curatedFeed.length} posts using cursor`)
 
       // Save cursor for future Prev Page use
       if (newCursor && curatedFeed.length > 0) {
@@ -517,7 +518,7 @@ export async function fetchPageFromTimestamp(
         hasMore: !!newCursor && curatedFeed.length > 0
       }
     } catch (error) {
-      console.warn('[Server Fallback] Error fetching with cursor:', error)
+      log.warn('Server Fallback', 'Error fetching with cursor:', error)
       return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
     }
   }
@@ -536,7 +537,7 @@ export async function fetchPageFromTimestamp(
       })
 
       if (feed.length === 0) {
-        console.log('[Server Fallback] No more posts while skipping')
+        log.debug('Server Fallback', 'No more posts while skipping')
         return { posts: [], postTimestamps: allPostTimestamps, cursor: undefined, hasMore: false }
       }
 
@@ -564,7 +565,7 @@ export async function fetchPageFromTimestamp(
 
         // Check if we have enough posts
         if (allPosts.length >= pageLength) {
-          console.log(`[Server Fallback] Collected ${allPosts.length} posts after skipping ${skippedCount}`)
+          log.debug('Server Fallback', `Collected ${allPosts.length} posts after skipping ${skippedCount}`)
           return {
             posts: allPosts,
             postTimestamps: allPostTimestamps,
@@ -576,20 +577,20 @@ export async function fetchPageFromTimestamp(
 
       currentCursor = newCursor
       if (!currentCursor) {
-        console.log('[Server Fallback] No more cursor while collecting')
+        log.debug('Server Fallback', 'No more cursor while collecting')
         break
       }
     } catch (error) {
-      console.warn('[Server Fallback] Error during fetch:', error)
+      log.warn('Server Fallback', 'Error during fetch:', error)
       break
     }
   }
 
   if (iterations >= maxIterations) {
-    console.warn('[Server Fallback] Hit max iterations while skipping')
+    log.warn('Server Fallback', 'Hit max iterations while skipping')
   }
 
-  console.log(`[Server Fallback] Completed - returned ${allPosts.length} posts after skipping ${skippedCount}`)
+  log.info('Server Fallback', `Completed - returned ${allPosts.length} posts after skipping ${skippedCount}`)
 
   // Save cursor for future Prev Page use (if we have posts and a cursor)
   if (currentCursor && allPosts.length > 0) {
@@ -641,9 +642,9 @@ export async function fetchToSecondaryFeedCache(
   } = {}
 ): Promise<SecondaryFetchResult> {
   const pageLength = options.pageLength ?? DEFAULT_PAGE_LENGTH
-  const label = `[Unified Fetch/${mode}]`
+  const topic = `Fetch/${mode}`
 
-  console.log(`${label} Starting fetch`)
+  log.debug(topic, 'Starting fetch')
 
   // Get interval settings and curation context
   const settings = await getSettings()
@@ -667,7 +668,7 @@ export async function fetchToSecondaryFeedCache(
     ? (settings?.initialLookbackDays ?? 1)
     : (settings?.refillLookbackDays ?? 1)
   const midnightBoundary = todayMidnight.getTime() - lookbackDays * 24 * 60 * 60 * 1000
-  console.log(`${label} Midnight boundary: ${new Date(midnightBoundary).toLocaleString()}`)
+  log.debug(topic, ` Midnight boundary: ${new Date(midnightBoundary).toLocaleString()}`)
 
   // For non-initial modes, get primary cache newest timestamp for overlap detection
   let primaryNewestTimestamp: number | null = null
@@ -675,15 +676,15 @@ export async function fetchToSecondaryFeedCache(
     if (options.overlapTargetTimestamp !== undefined) {
       // Use explicit overlap target (e.g., pre-idle cache boundary before metadata was overwritten)
       primaryNewestTimestamp = options.overlapTargetTimestamp
-      console.log(`${label} Using explicit overlap target: ${new Date(primaryNewestTimestamp).toLocaleString()}`)
+      log.debug(topic, ` Using explicit overlap target: ${new Date(primaryNewestTimestamp).toLocaleString()}`)
     } else {
       const metadata = await getLastFetchMetadata()
       primaryNewestTimestamp = metadata?.newestCachedPostTimestamp ?? null
     }
     if (primaryNewestTimestamp) {
-      console.log(`${label} Primary newest: ${new Date(primaryNewestTimestamp).toLocaleString()}`)
+      log.debug(topic, ` Primary newest: ${new Date(primaryNewestTimestamp).toLocaleString()}`)
     } else {
-      console.warn(`${label} No primary cache metadata, will stop on boundary only`)
+      log.warn(topic, ` No primary cache metadata, will stop on boundary only`)
     }
   }
 
@@ -708,12 +709,12 @@ export async function fetchToSecondaryFeedCache(
       cursor,
       limit: batchSize,
       onRateLimit: (info) => {
-        console.warn(`${label} Rate limit encountered:`, info)
+        log.warn(topic, ` Rate limit encountered:`, info)
       }
     })
 
     if (feed.length === 0) {
-      console.log(`${label} No more posts from server`)
+      log.debug(topic, ` No more posts from server`)
       stopReason = 'exhausted'
       break
     }
@@ -727,7 +728,7 @@ export async function fetchToSecondaryFeedCache(
     for (const entry of entries) {
       // Check midnight boundary — stop if post is at or before boundary
       if (entry.postTimestamp <= midnightBoundary) {
-        console.log(`${label} Reached midnight boundary at ${new Date(entry.postTimestamp).toLocaleString()}`)
+        log.debug(topic, ` Reached midnight boundary at ${new Date(entry.postTimestamp).toLocaleString()}`)
         stopReason = 'boundary'
         batchStopped = true
         break
@@ -739,7 +740,7 @@ export async function fetchToSecondaryFeedCache(
         if (entry.postTimestamp <= primaryNewestTimestamp) {
           // Timestamps overlap — do IndexedDB check to confirm
           if (await isInPrimaryCache(entry.uniqueId)) {
-            console.log(`${label} Found overlap with primary cache: ${entry.uniqueId}`)
+            log.debug(topic, ` Found overlap with primary cache: ${entry.uniqueId}`)
             stopReason = 'overlap'
             batchStopped = true
             break
@@ -788,7 +789,7 @@ export async function fetchToSecondaryFeedCache(
       }
     }
 
-    console.log(`${label} Batch ${iterations}: ${entries.length} entries, ${secondaryEntries.length} total in secondary`)
+    log.debug(topic, ` Batch ${iterations}: ${entries.length} entries, ${secondaryEntries.length} total in secondary`)
 
     if (batchStopped) break
 
@@ -804,18 +805,18 @@ export async function fetchToSecondaryFeedCache(
     // Update cursor for next iteration
     cursor = newCursor
     if (!cursor) {
-      console.log(`${label} Server cursor exhausted`)
+      log.debug(topic, ` Server cursor exhausted`)
       stopReason = 'exhausted'
       break
     }
   }
 
   if (iterations >= maxIterations) {
-    console.warn(`${label} Reached max iterations limit (${maxIterations})`)
+    log.warn(topic, ` Reached max iterations limit (${maxIterations})`)
     stopReason = 'max_iterations'
   }
 
-  console.log(`${label} Complete: ${secondaryEntries.length} posts, stopReason=${stopReason}, ` +
+  log.debug(topic, ` Complete: ${secondaryEntries.length} posts, stopReason=${stopReason}, ` +
     `oldest=${oldestTimestamp ? new Date(oldestTimestamp).toLocaleString() : 'null'}, ` +
     `newest=${newestTimestamp ? new Date(newestTimestamp).toLocaleString() : 'null'}`)
 
@@ -923,10 +924,10 @@ export async function transferSecondaryToPrimary(
   pageLength: number = DEFAULT_PAGE_LENGTH,
   skipNumbering: boolean = false
 ): Promise<TransferResult> {
-  const label = `[Transfer/${transferMode}]`
+  const topic = `Transfer/${transferMode}`
 
   if (secondaryEntries.length === 0) {
-    console.log(`${label} No entries to transfer`)
+    log.debug(topic, ` No entries to transfer`)
     return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null, oldestTransferredTimestamp: null }
   }
 
@@ -951,7 +952,7 @@ export async function transferSecondaryToPrimary(
   // Get newest primary cache timestamp for edition gap detection
   const metadata = await getLastFetchMetadata()
   let newestPrimaryTimestamp = metadata?.newestCachedPostTimestamp ?? null
-  console.log(`${label} newestPrimaryTimestamp=${newestPrimaryTimestamp !== null ? new Date(newestPrimaryTimestamp).toLocaleString() + ' (from metadata)' : 'null (no metadata)'}`)
+  log.debug(topic, ` newestPrimaryTimestamp=${newestPrimaryTimestamp !== null ? new Date(newestPrimaryTimestamp).toLocaleString() + ' (from metadata)' : 'null (no metadata)'}`)
 
   // Initialize edition state
   const parsedEditions = await getParsedEditions()
@@ -959,7 +960,7 @@ export async function transferSecondaryToPrimary(
   // If primary cache is empty, use oldest secondary entry as the reference point
   if (newestPrimaryTimestamp === null) {
     newestPrimaryTimestamp = oldestEntryTimestamp
-    console.log(`${label} Primary cache empty, using oldest entry as reference: ${new Date(oldestEntryTimestamp).toLocaleString()}`)
+    log.debug(topic, ` Primary cache empty, using oldest entry as reference: ${new Date(oldestEntryTimestamp).toLocaleString()}`)
   }
 
   const newestEntryTimestamp = sorted[sorted.length - 1].entry.postTimestamp
@@ -988,9 +989,9 @@ export async function transferSecondaryToPrimary(
   }
   // Sort pending editions oldest-first for correct processing order
   pendingEditions.sort((a, b) => a.editionTimestamp - b.editionTimestamp)
-  console.log(`${label} Transferring ${sorted.length} entries: oldest=${new Date(oldestEntryTimestamp).toLocaleString()}, newest=${new Date(newestEntryTimestamp).toLocaleString()}`)
+  log.debug(topic, ` Transferring ${sorted.length} entries: oldest=${new Date(oldestEntryTimestamp).toLocaleString()}, newest=${new Date(newestEntryTimestamp).toLocaleString()}`)
   if (pendingEditions.length > 0) {
-    console.log(`${label} Edition timestamps to check: ${pendingEditions.map(p => `${p.editionTime} (${new Date(p.editionTimestamp).toLocaleString()}, ts=${p.editionTimestamp})`).join(', ')}`)
+    log.debug(topic, ` Edition timestamps to check: ${pendingEditions.map(p => `${p.editionTime} (${new Date(p.editionTimestamp).toLocaleString()}, ts=${p.editionTimestamp})`).join(', ')}`)
   }
 
   // Collect entries to write
@@ -1019,14 +1020,14 @@ export async function transferSecondaryToPrimary(
   for (const pending of pendingEditions) {
     // Check lead time window (now >= editionTimestamp - 15 min)
     if (now < pending.editionTimestamp - EDITION_PRE_OFFSET_MS) {
-      console.log(`[Transfer/edition] ${pending.editionTime} SKIPPED: lead time not met (now=${new Date(now).toLocaleString()}, earliest=${new Date(pending.editionTimestamp - EDITION_PRE_OFFSET_MS).toLocaleString()})`)
+      log.verbose('Transfer/edition', `${pending.editionTime} SKIPPED: lead time not met (now=${new Date(now).toLocaleString()}, earliest=${new Date(pending.editionTimestamp - EDITION_PRE_OFFSET_MS).toLocaleString()})`)
       continue
     }
 
     // Check staleness (edition must be within 48 hours of now)
     const ageMs = now - pending.editionTimestamp
     if (ageMs > STALENESS_MS) {
-      console.log(`[Transfer/edition] ${pending.editionTime} SKIPPED: edition too old (${Math.round(ageMs / 3600000)}h ago)`)
+      log.verbose('Transfer/edition', `${pending.editionTime} SKIPPED: edition too old (${Math.round(ageMs / 3600000)}h ago)`)
       continue
     }
 
@@ -1075,12 +1076,12 @@ export async function transferSecondaryToPrimary(
       gapIdx = fallbackGapIdx
       gapBeforeTs = fallbackGapBeforeTs
     } else {
-      console.log(`[Transfer/edition] ${pending.editionTime} (${new Date(pending.editionTimestamp).toLocaleString()}) SKIPPED: no suitable gap found`)
+      log.verbose('Transfer/edition', `${pending.editionTime} (${new Date(pending.editionTimestamp).toLocaleString()}) SKIPPED: no suitable gap found`)
       continue
     }
 
     const gapAfterTs = sorted[gapIdx].entry.postTimestamp
-    console.log(`[Transfer/edition] Gap found: ${pending.editionTime} (${new Date(pending.editionTimestamp).toLocaleString()}) between [${new Date(gapBeforeTs).toLocaleString()}, ${new Date(gapAfterTs).toLocaleString()}] (gap=${gapAfterTs - gapBeforeTs}ms)`)
+    log.verbose('Transfer/edition', `Gap found: ${pending.editionTime} (${new Date(pending.editionTimestamp).toLocaleString()}) between [${new Date(gapBeforeTs).toLocaleString()}, ${new Date(gapAfterTs).toLocaleString()}] (gap=${gapAfterTs - gapBeforeTs}ms)`)
 
     // Determine the interval string from the entry at the gap
     const gapInterval = sorted[gapIdx].entry.interval
@@ -1141,7 +1142,7 @@ export async function transferSecondaryToPrimary(
       // Insert synthetic entries into sorted array at gapIdx position
       sorted.splice(gapIdx, 0, ...syntheticEntries)
 
-      console.log(`[Transfer/edition] Injected ${syntheticPosts.length} synthetic edition posts`)
+      log.verbose('Transfer/edition', `Injected ${syntheticPosts.length} synthetic edition posts`)
     }
 
   }
@@ -1218,7 +1219,7 @@ export async function transferSecondaryToPrimary(
   // Update primary cache metadata
   await updateFeedCacheNewestPostTimestamp()
 
-  console.log(`${label} Complete: ${savedCount} saved to primary (${primaryEntries.length} processed), ${displayableCount} displayable${skipNumbering ? ', numbering deferred' : ''}`)
+  log.debug(topic, ` Complete: ${savedCount} saved to primary (${primaryEntries.length} processed), ${displayableCount} displayable${skipNumbering ? ', numbering deferred' : ''}`)
 
   return {
     postsTransferred: savedCount,

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import Hls from 'hls.js'
+import log from '../utils/logger'
 
 interface VideoPlayerProps {
   playlist: string
@@ -27,7 +28,7 @@ export default function VideoPlayer({ playlist, thumbnail, alt, aspectRatio }: V
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = playlist
       video.play().catch((err) => {
-        console.error('Video play error:', err)
+        log.error('Media', 'Video play error:', err)
         setError('Failed to play video')
       })
     } else if (Hls.isSupported()) {
@@ -42,14 +43,14 @@ export default function VideoPlayer({ playlist, thumbnail, alt, aspectRatio }: V
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch((err) => {
-          console.error('Video play error:', err)
+          log.error('Media', 'Video play error:', err)
           setError('Failed to play video')
         })
       })
 
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
-          console.error('HLS fatal error:', data)
+          log.error('Media', 'HLS fatal error:', data)
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
               setError('Network error loading video')

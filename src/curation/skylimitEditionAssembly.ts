@@ -17,6 +17,7 @@ import { getEditorHandle, getEditorUser, editorUserToProfileView, getParsedEditi
 import { clientNow } from '../utils/clientClock'
 import { getSettings } from './skylimitStore'
 import { getEditionRegistry } from './editionRegistry'
+import log from '../utils/logger'
 
 export async function getEditionLookbackMs(): Promise<number> {
   const settings = await getSettings()
@@ -54,13 +55,13 @@ export async function tryCreateEdition(
   const dbUniqueIds = new Set(dbSummaries.map(s => s.uniqueId))
   const duplicateCount = inMemoryHeld.filter(s => dbUniqueIds.has(s.uniqueId)).length
   if (duplicateCount > 0) {
-    console.warn(`[Edition] ${duplicateCount} duplicate summaries found between in-memory and IndexedDB sources`)
+    log.warn('Edition', `${duplicateCount} duplicate summaries found between in-memory and IndexedDB sources`)
   }
   const dedupedInMemory = inMemoryHeld.filter(s => !dbUniqueIds.has(s.uniqueId))
   const summaries = [...dedupedInMemory, ...dbSummaries]
 
   const heldCount = summaries.filter(s => s.edition_status === 'hold').length
-  console.log(`[Edition] Lookback window: ${new Date(lookbackStart).toLocaleString()} to ${new Date(gapStart).toLocaleString()} | sources: ${dedupedInMemory.length} in-memory, ${dbSummaries.length} IndexedDB (${summaries.length} total, ${heldCount} held)`)
+  log.debug('Edition', `Lookback window: ${new Date(lookbackStart).toLocaleString()} to ${new Date(gapStart).toLocaleString()} | sources: ${dedupedInMemory.length} in-memory, ${dbSummaries.length} IndexedDB (${summaries.length} total, ${heldCount} held)`)
 
   // Collect held posts: match timed edition letter, editionA ('a'), and editionZ ('z')
   const edLetter = editionLetter(editionNumber)
@@ -71,11 +72,11 @@ export async function tryCreateEdition(
   )
 
   if (heldPosts.length === 0) {
-    console.log(`[Edition] No held posts for edition ${editionNumber} (${editionTime})`)
+    log.debug('Edition', `No held posts for edition ${editionNumber} (${editionTime})`)
     return []
   }
 
-  console.log(`[Edition] Assembling edition ${editionNumber} (${editionTime}) with ${heldPosts.length} held posts`)
+  log.debug('Edition', `Assembling edition ${editionNumber} (${editionTime}) with ${heldPosts.length} held posts`)
 
   // Compute editionKey early so we can store it on published summaries
   const keyDate = new Date(editionTimestamp)
@@ -141,7 +142,7 @@ export async function tryCreateEdition(
     const editorUser = getEditorUser(editorHandle)
 
     if (!editorUser) {
-      console.warn(`[Edition] No editor user found for handle: ${editorHandle}`)
+      log.warn('Edition', `No editor user found for handle: ${editorHandle}`)
       continue
     }
 
@@ -179,10 +180,12 @@ export async function tryCreateEdition(
 
     syntheticPosts.push(syntheticPost)
 
-    console.log(`[Edition/DEBUG] Synthetic: insertTime=${new Date(insertTime).toLocaleTimeString()} editor=@${editorHandle} ("${editorUser.displayName}") original=@${summary.username} tag=${summary.edition_tag} pattern="${summary.edition_pattern || ''}"`)
+    log.verbose('Edition', `Synthetic: insertTime=${new Date(insertTime).toLocaleTimeString()} editor=@${editorHandle} ("${editorUser.displayName}") original=@${summary.username} tag=${summary.edition_tag} pattern="${summary.edition_pattern || ''}"`)
 
     // Mark the held post as published with its edition key
     summary.edition_status = `published:${editionKey}`
+    log.trace('edited', summary.username, summary.postTimestamp, summary.postText || '',
+      `edition=${editionTime} key=${editionKey} pattern="${summary.edition_pattern}"`)
   }
 
   // Save the updated summaries (with edition_status = "published:KEY").
@@ -210,10 +213,10 @@ export async function tryCreateEdition(
       endPostTimestamp: insertStartTime + syntheticPosts.length - 1,
       oldestOriginalTimestamp: Math.min(...heldPosts.map(s => s.postTimestamp)),
     })
-    console.log(`[Edition] Saved registry entry: ${editionKey} (${editionName}), ${syntheticPosts.length} posts`)
+    log.debug('Edition', `Saved registry entry: ${editionKey} (${editionName}), ${syntheticPosts.length} posts`)
   }
 
-  console.log(`[Edition] Created ${syntheticPosts.length} synthetic reposts for edition ${editionNumber} (${editionTime})`)
+  log.debug('Edition', `Created ${syntheticPosts.length} synthetic reposts for edition ${editionNumber} (${editionTime})`)
 
   return syntheticPosts
 }
@@ -389,7 +392,7 @@ export async function getEditionContent(registryEntry: EditionRegistryEntry, age
   // Fetch missing posts from server (older editions where originals were evicted)
   const missingUris = [...originalPostUris].filter(uri => !originalPostMap.has(uri))
   if (missingUris.length > 0 && agent) {
-    console.log(`[Edition] Fetching ${missingUris.length} posts from server (not in feed cache)`)
+    log.debug('Edition', `Fetching ${missingUris.length} posts from server (not in feed cache)`)
     try {
       for (let i = 0; i < missingUris.length; i += 25) {
         const batch = missingUris.slice(i, i + 25)
@@ -399,7 +402,7 @@ export async function getEditionContent(registryEntry: EditionRegistryEntry, age
         }
       }
     } catch (error) {
-      console.warn('[Edition] Failed to fetch posts from server:', error)
+      log.warn('Edition', 'Failed to fetch posts from server:', error)
     }
   }
 
@@ -492,7 +495,7 @@ export async function getEditionContent(registryEntry: EditionRegistryEntry, age
 
   const cachedCount = syntheticSummaries.filter(s => s.repostUri && originalPostMap.has(s.repostUri)).length
   const fetchedCount = missingUris.filter(uri => originalPostMap.has(uri)).length
-  console.log(`[Edition] Loaded ${editionName} (${registryEntry.editionKey}): ${syntheticSummaries.length} synthetic posts, ${cachedCount} from cache, ${fetchedCount} from server`)
+  log.debug('Edition', `Loaded ${editionName} (${registryEntry.editionKey}): ${syntheticSummaries.length} synthetic posts, ${cachedCount} from cache, ${fetchedCount} from server`)
 
   return { editionTime, editionDate, editionName, sections }
 }

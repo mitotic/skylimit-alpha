@@ -5,6 +5,7 @@
 import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryRepostIndex, TextSuggestions, SuggestionsMap, ENGAGEMENT_NONE, hasEngagementLevel } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 import { clientNow } from '../utils/clientClock'
+import log from '../utils/logger'
 
 const DB_NAME = 'skylimit_db'
 const DB_VERSION = 9 // Increment version: migrated summaries to post_summaries store keyed by uniqueId
@@ -43,7 +44,7 @@ function openDB(): Promise<IDBDatabase> {
     const timeout = setTimeout(() => {
       if (!settled) {
         settled = true
-        console.warn(`[InitDB] Timed out after ${TIMEOUT_MS}ms waiting for IndexedDB open`)
+        log.warn('InitDB', `Timed out after ${TIMEOUT_MS}ms waiting for IndexedDB open`)
         reject(new Error('IndexedDB open timed out'))
       }
     }, TIMEOUT_MS)
@@ -114,7 +115,7 @@ function openDB(): Promise<IDBDatabase> {
     }
 
     request.onblocked = () => {
-      console.warn('[InitDB] Open blocked by another connection')
+      log.warn('InitDB', 'Open blocked by another connection')
     }
 
     request.onerror = () => {
@@ -207,10 +208,11 @@ export async function savePostSummaries(summaries: PostSummary[]): Promise<void>
       continue  // Skip existing summaries (preserve original curation decisions and viewedAt)
     }
     store.put(summary)
+    log.trace('summary-cached', summary.username, summary.postTimestamp, summary.postText || '')
   }
 
   if (skipped > 0) {
-    console.log(`[Post Summaries] Skipped ${skipped} already-cached summaries`)
+    log.debug('Post Summaries', `Skipped ${skipped} already-cached summaries`)
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -281,7 +283,7 @@ export async function clearAllNumbering(): Promise<void> {
     transaction.onerror = () => reject(transaction.error)
   })
 
-  console.log(`[Cache] Cleared numbering from ${allSummaries.length} summaries`)
+  log.debug('Cache', `Cleared numbering from ${allSummaries.length} summaries`)
 }
 
 /**
@@ -371,7 +373,7 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get curation init stats:', error)
+    log.error('Cache', 'Failed to get curation init stats:', error)
     return {
       totalCount: 0,
       droppedCount: 0,
@@ -408,7 +410,7 @@ export async function getNewestSummaryTimestamp(): Promise<number | null> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get newest summary timestamp:', error)
+    log.error('Cache', 'Failed to get newest summary timestamp:', error)
     return null
   }
 }
@@ -440,7 +442,7 @@ export async function getOldestSummaryTimestamp(): Promise<number | null> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get oldest summary timestamp:', error)
+    log.error('Cache', 'Failed to get oldest summary timestamp:', error)
     return null
   }
 }
@@ -570,7 +572,7 @@ export async function wasRepostOrOriginalDisplayedWithinInterval(
 
     return false
   } catch (error) {
-    console.error('[Repost Check] Failed to check interval display:', error)
+    log.error('Repost Check', 'Failed to check interval display:', error)
     return false  // On error, allow the repost
   }
 }
@@ -696,9 +698,9 @@ export async function clearPostSummaries(): Promise<void> {
     // Clear sessionStorage feed state to maintain consistency
     sessionStorage.removeItem('websky_home_feed_state')
     sessionStorage.removeItem('websky_home_scroll_state')
-    console.log('Cleared all post summaries')
+    log.debug('Cache', 'Cleared all post summaries')
   } catch (error) {
-    console.error('Failed to clear post summaries:', error)
+    log.error('Cache', 'Failed to clear post summaries:', error)
     throw error
   }
 }
@@ -869,7 +871,7 @@ export async function removePostSummariesBefore(beforeTimestamp: number): Promis
         deletedCount++
         cursor.continue()
       } else {
-        console.log(`Removed ${deletedCount} old post summaries before ${new Date(beforeTimestamp).toISOString()}`)
+        log.debug('Cache', `Removed ${deletedCount} old post summaries before ${new Date(beforeTimestamp).toISOString()}`)
         resolve(deletedCount)
       }
     }
@@ -901,7 +903,7 @@ export async function removePostSummariesAfter(afterTimestamp: number): Promise<
         deletedCount++
         cursor.continue()
       } else {
-        console.log(`[ClearRecent] Removed ${deletedCount} post summaries after ${new Date(afterTimestamp).toISOString()}`)
+        log.debug('ClearRecent', `Removed ${deletedCount} post summaries after ${new Date(afterTimestamp).toISOString()}`)
         resolve(deletedCount)
       }
     }
@@ -916,7 +918,7 @@ export async function removePostSummariesAfter(afterTimestamp: number): Promise<
  * Preserves session, follows, filter, settings, and parent posts cache.
  */
 export async function clearRecentData(lookbackBoundaryMs: number): Promise<void> {
-  console.log(`[ClearRecent] Starting with boundary ${new Date(lookbackBoundaryMs).toISOString()}`)
+  log.debug('ClearRecent', `Starting with boundary ${new Date(lookbackBoundaryMs).toISOString()}`)
 
   const database = await getDB()
 
@@ -927,7 +929,7 @@ export async function clearRecentData(lookbackBoundaryMs: number): Promise<void>
     req.onsuccess = () => resolve()
     req.onerror = () => reject(req.error)
   })
-  console.log('[ClearRecent] Cleared feed_cache')
+  log.debug('ClearRecent', 'Cleared feed_cache')
 
   // 2. Clear feed_metadata entirely (resets lookbackCompleted flags)
   const metaTx = database.transaction(['feed_metadata'], 'readwrite')
@@ -936,18 +938,18 @@ export async function clearRecentData(lookbackBoundaryMs: number): Promise<void>
     req.onsuccess = () => resolve()
     req.onerror = () => reject(req.error)
   })
-  console.log('[ClearRecent] Cleared feed_metadata')
+  log.debug('ClearRecent', 'Cleared feed_metadata')
 
   // 3. Remove recent post summaries (>= boundary)
   const removedSummaries = await removePostSummariesAfter(lookbackBoundaryMs)
-  console.log(`[ClearRecent] Removed ${removedSummaries} recent post summaries`)
+  log.debug('ClearRecent', `Removed ${removedSummaries} recent post summaries`)
 
   // 4. Prune recent edition registry entries
   const { cullRecentEditionRegistry } = await import('./editionRegistry')
   const removedEditions = cullRecentEditionRegistry(lookbackBoundaryMs)
-  console.log(`[ClearRecent] Removed ${removedEditions} recent edition registry entries`)
+  log.debug('ClearRecent', `Removed ${removedEditions} recent edition registry entries`)
 
-  console.log('[ClearRecent] Complete')
+  log.debug('ClearRecent', 'Complete')
 }
 
 /**
@@ -1090,7 +1092,7 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get post summaries cache stats:', error)
+    log.error('Cache', 'Failed to get post summaries cache stats:', error)
     return {
       totalCount: 0,
       oldestTimestamp: null,
@@ -1128,7 +1130,7 @@ export async function getPostSummaryTimestamps(): Promise<number[]> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get post summary timestamps:', error)
+    log.error('Cache', 'Failed to get post summary timestamps:', error)
     return []
   }
 }
@@ -1147,7 +1149,7 @@ export async function clearSkylimitSettings(): Promise<void> {
     transaction.onerror = () => reject(transaction.error)
   })
 
-  console.log('Skylimit settings cleared - defaults will be used')
+  log.info('Cache', 'Skylimit settings cleared - defaults will be used')
 }
 
 // ============================================================================
@@ -1173,7 +1175,7 @@ export async function isInPrimaryCache(uniqueId: string): Promise<boolean> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('[Primary Cache] Failed to check existence:', error)
+    log.error('Primary Cache', 'Failed to check existence:', error)
     return false
   }
 }
@@ -1320,7 +1322,7 @@ export async function savePostSummariesForce(summaries: PostSummary[]): Promise<
  * 3. This ensures the deletion always succeeds
  */
 export function resetEverything(): void {
-  console.log('[Reset] Redirecting to /?reset=1 for clean reset')
+  log.info('Reset', 'Redirecting to /?reset=1 for clean reset')
   window.location.href = '/?reset=1'
 }
 
@@ -1331,7 +1333,7 @@ export function resetEverything(): void {
  * Skylimit settings (viewsPerDay, editionLayout, etc.) are preserved.
  */
 export async function clearAllTimeVariantDataAndLogout(): Promise<void> {
-  console.log('[Debug] clearAllTimeVariantDataAndLogout: Starting...')
+  log.debug('Debug', 'clearAllTimeVariantDataAndLogout: Starting...')
 
   const database = await getDB()
 
@@ -1347,28 +1349,28 @@ export async function clearAllTimeVariantDataAndLogout(): Promise<void> {
       req.onsuccess = () => resolve()
       req.onerror = () => reject(req.error)
     })
-    console.log(`[Debug] Cleared ${storeName}`)
+    log.debug('Debug', `Cleared ${storeName}`)
   }
 
   // Scrub lastBrowserTimezone from settings (saveSettings resets timestamp)
   const { updateSettings } = await import('./skylimitStore')
   await updateSettings({ lastBrowserTimezone: undefined })
-  console.log('[Debug] Scrubbed lastBrowserTimezone from settings')
+  log.debug('Debug', 'Scrubbed lastBrowserTimezone from settings')
 
   // Clear edition registry and legacy edition tracking
   const { clearEditionRegistry } = await import('./editionRegistry')
   clearEditionRegistry()
   localStorage.removeItem('lastCreatedEditionTimestamp') // legacy cleanup
-  console.log('[Debug] Cleared edition registry')
+  log.debug('Debug', 'Cleared edition registry')
 
   // Close DB so in-flight React effects get a fresh connection instead of a closing one
   closeDB()
-  console.log('[Debug] Closed DB connection')
+  log.debug('Debug', 'Closed DB connection')
 
   // Clear session and redirect to login
   const { clearSession } = await import('../auth/session-storage')
   clearSession()
-  console.log('[Debug] Cleared session, redirecting to /login')
+  log.debug('Debug', 'Cleared session, redirecting to /login')
   window.location.href = '/login'
 }
 

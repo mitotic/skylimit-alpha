@@ -8,6 +8,7 @@
 import { BskyAgent } from '@atproto/api'
 import type { AtpSessionEvent, AtpSessionData } from '@atproto/api'
 import type { Session } from '../types'
+import log from '../utils/logger'
 
 // Default BlueSky service URL
 const DEFAULT_BSKY_SERVICE = 'https://bsky.social'
@@ -77,7 +78,7 @@ export async function createAgentWithSession(
     
     await agent.resumeSession(sessionData)
   } catch (error) {
-    console.warn('Failed to restore session:', error)
+    log.warn('Session', 'Failed to restore session:', error)
     throw new Error('Session expired or invalid')
   }
   

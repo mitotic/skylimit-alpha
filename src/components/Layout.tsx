@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import Navigation from './Navigation'
 import BurgerMenu from './BurgerMenu'
-import Avatar from './Avatar'
+import FeedSelector from './FeedSelector'
 import { useSession } from '../auth/SessionContext'
-import { getProfile } from '../api/profile'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -13,32 +12,12 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { session, agent } = useSession()
-  const [userAvatar, setUserAvatar] = useState<string | undefined>()
+  const { session } = useSession()
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
 
   const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications' && location.pathname !== '/saved'
-
-  // Fetch user avatar
-  useEffect(() => {
-    if (!agent || !session) {
-      setUserAvatar(undefined)
-      return
-    }
-
-    const fetchUserAvatar = async () => {
-      try {
-        const profile = await getProfile(agent, session.handle)
-        setUserAvatar(profile.avatar)
-      } catch (error) {
-        console.warn('Failed to fetch user profile for avatar:', error)
-      }
-    }
-
-    fetchUserAvatar()
-  }, [agent, session])
 
   // Load click to Bluesky setting (reload on navigation to pick up changes from settings page)
   useEffect(() => {
@@ -89,20 +68,7 @@ export default function Layout({ children }: LayoutProps) {
               <span className="text-sm text-gray-500 dark:text-gray-400">Alpha version</span>
             </div>
             <div className="flex justify-end min-w-0 flex-shrink">
-              {session && (
-                <button
-                  onClick={() => navigate(`/profile/${session.handle}`)}
-                  className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline transition-colors min-w-0"
-                  aria-label="View profile"
-                >
-                  <Avatar
-                    src={userAvatar}
-                    alt={session.handle}
-                    size="sm"
-                  />
-                  <span className="truncate hidden sm:inline">@{session.handle}</span>
-                </button>
-              )}
+              {session && <FeedSelector />}
             </div>
           </div>
         </header>
@@ -125,7 +91,3 @@ export default function Layout({ children }: LayoutProps) {
     </div>
   )
 }
-
-
-
-

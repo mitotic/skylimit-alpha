@@ -7,6 +7,7 @@
 import { AppBskyFeedDefs } from '@atproto/api'
 import { getDB, STORE_PARENT_POSTS } from './skylimitCache'
 import { clientNow } from '../utils/clientClock'
+import log from '../utils/logger'
 
 // Cache configuration
 const MAX_CACHE_SIZE = 500 // Maximum number of cached root posts
@@ -63,7 +64,7 @@ export async function getCachedRootPost(
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get cached root post:', error)
+    log.warn('Root Post Cache', 'Failed to get cached root post:', error)
     return null
   }
 }
@@ -91,10 +92,10 @@ export async function saveCachedRootPost(
 
     // Check cache size and flush if needed (async, don't block)
     checkAndFlushCache().catch(err => {
-      console.warn('Failed to flush root post cache:', err)
+      log.warn('Root Post Cache', 'Failed to flush root post cache:', err)
     })
   } catch (error) {
-    console.warn('Failed to save cached root post:', error)
+    log.warn('Root Post Cache', 'Failed to save cached root post:', error)
   }
 }
 
@@ -147,7 +148,7 @@ async function checkAndFlushCache(): Promise<void> {
             deleteRequest.onsuccess = () => {
               deleted++
               if (deleted === entriesToDelete.length) {
-                console.log(`[Root Post Cache] Flushed ${deleted} old entries`)
+                log.debug('Root Post Cache', `Flushed ${deleted} old entries`)
                 resolve()
               }
             }
@@ -164,7 +165,7 @@ async function checkAndFlushCache(): Promise<void> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to check and flush root post cache:', error)
+    log.warn('Root Post Cache', 'Failed to check and flush root post cache:', error)
   }
 }
 
@@ -177,9 +178,9 @@ export async function clearRootPostCache(): Promise<void> {
     const transaction = database.transaction([STORE_PARENT_POSTS], 'readwrite')
     const store = transaction.objectStore(STORE_PARENT_POSTS)
     await store.clear()
-    console.log('[Root Post Cache] Cleared all cached root posts')
+    log.debug('Root Post Cache', 'Cleared all cached root posts')
   } catch (error) {
-    console.warn('Failed to clear root post cache:', error)
+    log.warn('Root Post Cache', 'Failed to clear root post cache:', error)
     throw error
   }
 }
@@ -223,7 +224,7 @@ export async function flushExpiredRootPosts(): Promise<number> {
             deleteRequest.onsuccess = () => {
               deleted++
               if (deleted === entriesToDelete.length) {
-                console.log(`[Root Post Cache] Removed ${deleted} expired entries`)
+                log.debug('Root Post Cache', `Removed ${deleted} expired entries`)
                 resolve(deleted)
               }
             }
@@ -240,7 +241,7 @@ export async function flushExpiredRootPosts(): Promise<number> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to flush expired root posts:', error)
+    log.warn('Root Post Cache', 'Failed to flush expired root posts:', error)
     return 0
   }
 }
@@ -287,7 +288,7 @@ export async function getRootPostCacheStats(): Promise<{
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get root post cache stats:', error)
+    log.warn('Root Post Cache', 'Failed to get root post cache stats:', error)
     return {
       totalEntries: 0,
       oldestEntry: null,

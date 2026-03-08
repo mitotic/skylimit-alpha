@@ -10,6 +10,7 @@ import PostMedia from './PostMedia'
 import Spinner from './Spinner'
 import { getPostUrl, getProfileUrl } from '../curation/skylimitGeneral'
 import RichText from './RichText'
+import log from '../utils/logger'
 
 // Request deduplication: track in-flight requests to avoid duplicate calls for the same post
 const inFlightRequests = new Map<string, Promise<AppBskyFeedDefs.PostView | null>>()
@@ -102,7 +103,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
                 }
                 return null
               } catch (error) {
-                console.error('Failed to fetch full quoted post:', error)
+                log.error('QuotedPost', 'Failed to fetch full quoted post:', error)
                 return null
               } finally {
                 // Remove from in-flight requests
@@ -119,7 +120,7 @@ export default function QuotedPost({ record, onClick, maxDepth = 1, depth = 0 }:
             setFullPost(fetchedPost)
           }
         } catch (error) {
-          console.error('Failed to fetch full quoted post:', error)
+          log.error('QuotedPost', 'Failed to fetch full quoted post:', error)
         } finally {
           setIsLoadingFullPost(false)
         }

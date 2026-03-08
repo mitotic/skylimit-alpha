@@ -7,6 +7,7 @@ import { removePostSummariesBefore } from './skylimitCache'
 import { getSettings } from './skylimitStore'
 import { clientNow, clientTimeout, clearClientTimeout } from '../utils/clientClock'
 import { cullEditionRegistry } from './editionRegistry'
+import log from '../utils/logger'
 
 // Cleanup constants (matching Mahoot's approach)
 const CURATION_DELAY = 5 * 60 * 1000 // 5 minutes debounce delay
@@ -18,7 +19,7 @@ let cleanupTimeoutId: ReturnType<typeof setTimeout> | null = null
  */
 export async function performCleanup(): Promise<void> {
   try {
-    console.log('Starting Skylimit cleanup...')
+    log.info('Cleanup', 'Starting Skylimit cleanup...')
 
     const settings = await getSettings()
     const daysOfData = settings?.daysOfData || 30
@@ -33,9 +34,9 @@ export async function performCleanup(): Promise<void> {
     // Cull edition registry entries whose original posts are past retention
     const culledEditions = cullEditionRegistry(cutoffTimestamp)
 
-    console.log(`Cleanup complete: removed ${deletedSummaries} post summaries, ${culledEditions} edition registry entries`)
+    log.info('Cleanup', `Cleanup complete: removed ${deletedSummaries} post summaries, ${culledEditions} edition registry entries`)
   } catch (error) {
-    console.error('Error during cleanup:', error)
+    log.error('Cleanup', 'Error during cleanup:', error)
   }
 }
 
@@ -52,7 +53,7 @@ export function scheduleCleanup(): void {
   // Schedule cleanup after delay (uses client clock for accelerated time)
   cleanupTimeoutId = clientTimeout(() => {
     performCleanup().catch(err => {
-      console.error('Scheduled cleanup failed:', err)
+      log.error('Cleanup', 'Scheduled cleanup failed:', err)
     })
     cleanupTimeoutId = null
   }, CURATION_DELAY)

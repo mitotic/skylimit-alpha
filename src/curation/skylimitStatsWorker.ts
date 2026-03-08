@@ -9,6 +9,7 @@ import { refreshFollows } from './skylimitFollows'
 import { scheduleCleanup } from './skylimitCleanup'
 import { getIntervalHoursSync } from './types'
 import { clientInterval, clearClientInterval, clientTimeout, clearClientTimeout } from '../utils/clientClock'
+import log from '../utils/logger'
 
 /**
  * Compute statistics in the background
@@ -28,7 +29,7 @@ export async function computeStatsInBackground(
     try {
       await refreshFollows(agent, myDid, forceRefreshFollows, onFollowsProgress)
     } catch (err) {
-      console.warn('[Stats Worker] refreshFollows failed (non-critical):', err)
+      log.warn('Stats Worker', 'refreshFollows failed (non-critical):', err)
     }
 
     // Compute statistics (follows are now cached)
@@ -43,7 +44,7 @@ export async function computeStatsInBackground(
     // Schedule cleanup after stats computation
     scheduleCleanup()
   } catch (error) {
-    console.error('Failed to compute statistics:', error)
+    log.error('Stats Worker', 'Failed to compute statistics:', error)
   }
 }
 
@@ -82,7 +83,7 @@ export function scheduleStatsComputation(
       computeStatsInBackground(agent, myUsername, myDid, false)
     }, 5000) // Wait 5 seconds after page load
   }).catch(err => {
-    console.warn('Failed to get settings for stats scheduling:', err)
+    log.warn('Stats Worker', 'Failed to get settings for stats scheduling:', err)
   })
 
   // Return cleanup function

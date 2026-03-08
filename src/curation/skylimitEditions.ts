@@ -14,6 +14,7 @@
  */
 
 import { AppBskyActorDefs } from '@atproto/api'
+import log from '../utils/logger'
 
 /** Pre-offset before edition time for gap searching (15 minutes in ms) */
 export const EDITION_PRE_OFFSET_MS = 15 * 60 * 1000
@@ -431,7 +432,7 @@ export function parseEditionFile(text: string): ParsedEditions {
   // Must have at least one pattern
   const totalPatterns = editions.reduce((sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0)
   if (totalPatterns === 0) {
-    errors.push('Edition layout must contain at least one pattern (@...)')
+    errors.push('Edition layout must contain at least one user/topic specification (@...)')
   }
 
   // Edition times must be in chronological order
@@ -582,7 +583,7 @@ export async function getParsedEditions(): Promise<ParsedEditions> {
   cachedEditionText = editionText
 
   if (cachedParsedEditions.errors.length > 0) {
-    console.warn('[Editions] Parse errors:', cachedParsedEditions.errors)
+    log.warn('Editions', 'Parse errors:', cachedParsedEditions.errors)
   }
 
   // Sync editor users to follows store (add new, remove stale)

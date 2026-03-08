@@ -12,6 +12,7 @@ import SettingsPage from './routes/SettingsPage'
 import ThreadPage from './routes/ThreadPage'
 import NotificationsPage from './routes/NotificationsPage'
 import SavedPage from './routes/SavedPage'
+import FeedPage from './routes/FeedPage'
 
 function App() {
   const { session, isLoading } = useSession()
@@ -41,6 +42,7 @@ function App() {
                   <Route path="/saved" element={<SavedPage />} />
                   <Route path="/profile/:actor" element={<ProfilePage />} />
                   <Route path="/post/:uri" element={<ThreadPage />} />
+                  <Route path="/feed/:feedUri" element={<FeedPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>

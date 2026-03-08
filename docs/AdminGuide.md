@@ -50,7 +50,7 @@ Since Skylimit builds to static files, it can be deployed to any static hosting 
 
 ### Build Configuration
 
-- Dev server port: **5181** (configured in `vite.config.ts`)
+- Dev server port: **5181** (configured in `vite.config.ts`). To use a different port (e.g., when testing multiple forks on separate origins): `npm run dev -- --port 5182`
 - Build output: `dist/`
 - No environment variables are required for production (API endpoint defaults to `bsky.social`)
 - HTTPS is recommended for production (session tokens are stored in browser storage)

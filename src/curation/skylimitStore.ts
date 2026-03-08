@@ -27,7 +27,8 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   minFolloweeDayCount: 1, // minimum followee day count (debug setting)
   hideUnfollowedReplies: false, // hide all replies to non-followees, default false
   showViewedStatus: true, // show viewed-post visual indicators, default true
-  quietMode: false, // suppress [Paged Updates] and [Idle Timer] console logs
+  consoleLogLevel: 2, // console log verbosity: 0=errors, 1=warnings, 2=milestones, 3=debug, 4=verbose
+  traceUsers: '', // comma-separated list of handles to trace
   repostDisplayIntervalHours: REPOST_DISPLAY_INTERVAL_DEFAULT, // hide reposts shown within this interval
   initialLookbackDays: 1, // days to look back on initial load
   refillLookbackDays: 1, // days to look back for refill fetches

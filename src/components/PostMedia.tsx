@@ -3,6 +3,7 @@ import { AppBskyEmbedImages, AppBskyEmbedExternal, AppBskyEmbedVideo } from '@at
 import Modal from './Modal'
 import QuotedPost from './QuotedPost'
 import VideoPlayer from './VideoPlayer'
+import log from '../utils/logger'
 
 type EmbedView =
   | AppBskyEmbedImages.View
@@ -45,7 +46,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
               : 1
 
             if (!thumbUrl) {
-              console.warn('Image missing thumb URL:', image)
+              log.warn('Media', 'Image missing thumb URL:', image)
               return null
             }
 
@@ -64,7 +65,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
                   className="w-full h-full object-cover object-top hover:opacity-90 transition-opacity"
                   loading="lazy"
                   onError={(e) => {
-                    console.error('Failed to load image:', thumbUrl)
+                    log.error('Media', 'Failed to load image:', thumbUrl)
                     ;(e.target as HTMLImageElement).style.display = 'none'
                   }}
                 />
@@ -194,7 +195,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
 
   // Fallback: log unknown embed types in development
   if (process.env.NODE_ENV === 'development') {
-    console.warn('Unknown embed type:', embed.$type, embed)
+    log.warn('Media', 'Unknown embed type:', embed.$type, embed)
   }
 
   return null

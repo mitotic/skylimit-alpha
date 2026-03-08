@@ -4,13 +4,8 @@
 
 import { throttleRequest } from './requestThrottle'
 import { updateRateLimitState, clearRateLimitState } from './rateLimitState'
+import log from './logger'
 // Rate limiting uses real clock — accelerated clock is not designed for rate limit behavior
-
-/** Real wall-clock time as hh:mm:ss for log prefixes */
-function realTime(): string {
-  const d = new Date()
-  return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`
-}
 
 export interface RateLimitError extends Error {
   status?: number
@@ -117,7 +112,7 @@ export function getRetryAfter(error: RateLimitError): number | undefined {
   // Parse retry-after (can be seconds as number or HTTP date)
   const seconds = parseInt(String(retryAfter), 10)
   if (!isNaN(seconds) && seconds > 0) {
-    console.log(`[Rate Limit ${realTime()}] Found retry-after: ${seconds}s`)
+    log.debug('Rate Limit', `Found retry-after: ${seconds}s`)
     return seconds
   }
   
@@ -126,7 +121,7 @@ export function getRetryAfter(error: RateLimitError): number | undefined {
   if (!isNaN(date.getTime())) {
     const secondsUntil = Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
     if (secondsUntil > 0) {
-      console.log(`[Rate Limit ${realTime()}] Found retry-after date: ${secondsUntil}s until clear`)
+      log.debug('Rate Limit', `Found retry-after date: ${secondsUntil}s until clear`)
       return secondsUntil
     }
   }
@@ -233,7 +228,7 @@ export async function retryWithBackoff<T>(
           )
         }
         
-        console.log(`[Rate Limit ${realTime()}] Retrying after ${Math.ceil(delay / 1000)}s (attempt ${attempt + 1}/${maxRetries + 1})`)
+        log.debug('Rate Limit', `Retrying after ${Math.ceil(delay / 1000)}s (attempt ${attempt + 1}/${maxRetries + 1})`)
         
         // Wait before retrying
         await sleep(delay)

@@ -17,6 +17,7 @@ import { useState, useEffect } from 'react'
 import { useSession } from '../auth/SessionContext'
 import { checkFollowStatus, follow } from '../api/social'
 import ToastContainer, { ToastMessage } from './ToastContainer'
+import log from '../utils/logger'
 
 interface AggregatedNotificationProps {
   notification: AggregatedNotification
@@ -68,7 +69,7 @@ export default function AggregatedNotificationComponent({
           setIsFollowing(!!followUri)
         })
         .catch(error => {
-          console.warn('Failed to check follow status:', error)
+          log.warn('Notifications', 'Failed to check follow status:', error)
           setIsFollowing(null)
         })
     }
@@ -92,7 +93,7 @@ export default function AggregatedNotificationComponent({
       setIsFollowing(true)
       addToast('Now following', 'success')
     } catch (error) {
-      console.error('Failed to follow:', error)
+      log.error('Notifications', 'Failed to follow:', error)
       addToast(error instanceof Error ? error.message : 'Failed to follow user', 'error')
     } finally {
       setIsFollowingLoading(false)

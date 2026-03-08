@@ -12,6 +12,7 @@ import { getProfiles } from '../api/profile'
 import { AppBskyActorDefs } from '@atproto/api'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 import { clientNow, clientDate } from '../utils/clientClock'
+import log from '../utils/logger'
 
 /**
  * Get last follow refresh time from cache
@@ -35,7 +36,7 @@ async function saveLastFollowRefreshTime(): Promise<void> {
     const settings = await getSettings() || {}
     await saveSettings({ ...settings, lastFollowRefreshTime: clientNow() })
   } catch (err) {
-    console.warn('Failed to save last follow refresh time:', err)
+    log.warn('Follows', 'Failed to save last follow refresh time:', err)
   }
 }
 
@@ -71,7 +72,7 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
         3, // max retries
         2000, // base delay 2 seconds (longer for batch operations)
         (rateLimitInfo) => {
-          console.warn('Rate limit in getFollows:', rateLimitInfo)
+          log.warn('Follows', 'Rate limit in getFollows:', rateLimitInfo)
         }
       ).catch(error => {
         if (isRateLimitError(error)) {
@@ -118,7 +119,7 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
 
     if (didsNeedingProfiles.length > 0) {
       const numBatches = Math.ceil(didsNeedingProfiles.length / BATCH_SIZE)
-      console.log(`[Follows] Fetching ${didsNeedingProfiles.length} profiles in ${numBatches} batches of ${BATCH_SIZE}`)
+      log.debug('Follows', `Fetching ${didsNeedingProfiles.length} profiles in ${numBatches} batches of ${BATCH_SIZE}`)
 
       for (let i = 0; i < didsNeedingProfiles.length; i += BATCH_SIZE) {
         const batch = didsNeedingProfiles.slice(i, i + BATCH_SIZE)
@@ -129,9 +130,9 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
           for (const profile of response.profiles) {
             profileMap.set(profile.did, profile)
           }
-          console.log(`[Follows] Batch ${batchNum}/${numBatches}: fetched ${response.profiles.length} profiles`)
+          log.debug('Follows', `Batch ${batchNum}/${numBatches}: fetched ${response.profiles.length} profiles`)
         } catch (err) {
-          console.warn(`[Follows] Batch ${batchNum}/${numBatches} failed:`, err)
+          log.warn('Follows', `Batch ${batchNum}/${numBatches} failed:`, err)
         }
 
         onProgress?.(10 + Math.round(90 * batchNum / numBatches))
@@ -142,7 +143,7 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
         }
       }
 
-      console.log(`[Follows] Completed batch fetching: ${profileMap.size} profiles retrieved`)
+      log.info('Follows', `Completed batch fetching: ${profileMap.size} profiles retrieved`)
     } else {
       onProgress?.(100)
     }
@@ -200,7 +201,7 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
     // }
     
   } catch (error) {
-    console.error('Failed to refresh follows:', error)
+    log.error('Follows', 'Failed to refresh follows:', error)
     throw error
   }
 }

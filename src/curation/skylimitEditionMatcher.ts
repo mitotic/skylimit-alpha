@@ -18,6 +18,7 @@
 import { PostSummary } from './types'
 import { Edition, EditionPattern, TextPattern, ParsedEditions, HEAD_EDITION_NUMBER, TAIL_EDITION_NUMBER, editionLetter } from './skylimitEditions'
 import { clientDate } from '../utils/clientClock'
+import log from '../utils/logger'
 
 /**
  * Match result when a post matches an edition pattern
@@ -388,7 +389,7 @@ export async function rematchHeldPosts(): Promise<{ total: number; rematched: nu
   const postsToRematch = summaries.filter(s => s.edition_status === 'hold' || s.edition_status === 'orphaned')
 
   if (postsToRematch.length === 0) {
-    console.log('[Edition/Rematch] No held or orphaned posts to re-match')
+    log.debug('Edition/Rematch', 'No held or orphaned posts to re-match')
     return { total: 0, rematched: 0, fallback: 0, released: 0 }
   }
 
@@ -410,7 +411,7 @@ export async function rematchHeldPosts(): Promise<{ total: number; rematched: nu
       await savePostSummariesForce(heldPosts)
       await assignAllNumbers()
     }
-    console.log(`[Edition/Rematch] Released ${heldPosts.length} held posts (no timed editions remain)`)
+    log.debug('Edition/Rematch', `Released ${heldPosts.length} held posts (no timed editions remain)`)
     return { total: heldPosts.length, rematched: 0, fallback: 0, released: heldPosts.length }
   }
 
@@ -445,6 +446,6 @@ export async function rematchHeldPosts(): Promise<{ total: number; rematched: nu
     await savePostSummariesForce(changed)
   }
 
-  console.log(`[Edition/Rematch] Re-matched ${postsToRematch.length} posts (${heldCount} held, ${orphanedCount} orphaned): ${rematched} matched, ${fallback} fallback`)
+  log.debug('Edition/Rematch', `Re-matched ${postsToRematch.length} posts (${heldCount} held, ${orphanedCount} orphaned): ${rematched} matched, ${fallback} fallback`)
   return { total: postsToRematch.length, rematched, fallback, released: 0 }
 }

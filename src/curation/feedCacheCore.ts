@@ -13,6 +13,7 @@ import { FeedCacheEntry, FeedCacheEntryWithPost, CurationFeedViewPost, getInterv
 import { getSettings } from './skylimitStore'
 import { clientNow, clientDate } from '../utils/clientClock'
 import { getMidnightInTimezone } from '../utils/timezoneUtils'
+import log from '../utils/logger'
 
 // Get database instance (reuse from skylimitCache)
 async function getDB(): Promise<IDBDatabase> {
@@ -88,7 +89,7 @@ export async function validateFeedCacheIntegrity(): Promise<{ valid: boolean; cl
     })
 
     if (entries.length === 0) {
-      console.log('[Cache Integrity] Feed cache is empty, nothing to validate')
+      log.debug('Cache/Integrity', 'Feed cache is empty, nothing to validate')
       return { valid: true, cleared: false, empty: true }
     }
 
@@ -99,22 +100,22 @@ export async function validateFeedCacheIntegrity(): Promise<{ valid: boolean; cl
       const summary = await getPostSummary(uniqueId)
       if (!summary) {
         missingCount++
-        console.log(`[Cache Integrity] Missing summary for feed entry: ${uniqueId}`)
+        log.debug('Cache/Integrity', `Missing summary for feed entry: ${uniqueId}`)
       }
     }
 
     if (missingCount > 0) {
-      console.log(`[Cache Integrity] Found ${missingCount}/${entries.length} feed entries without summaries, clearing feed cache`)
+      log.debug('Cache/Integrity', `Found ${missingCount}/${entries.length} feed entries without summaries, clearing feed cache`)
       await clearFeedCache()
       // Also clear feed metadata to reset lookback status
       await clearFeedMetadata()
       return { valid: false, cleared: true, empty: false }
     }
 
-    console.log(`[Cache Integrity] All ${entries.length} sampled feed entries have summaries`)
+    log.debug('Cache/Integrity', `All ${entries.length} sampled feed entries have summaries`)
     return { valid: true, cleared: false, empty: false }
   } catch (error) {
-    console.error('[Cache Integrity] Failed to validate feed cache:', error)
+    log.error('Cache/Integrity', 'Failed to validate feed cache:', error)
     // On error, assume cache is valid to avoid clearing good data
     return { valid: true, cleared: false, empty: false }
   }
@@ -133,9 +134,9 @@ export async function clearFeedMetadata(): Promise<void> {
       request.onsuccess = () => resolve()
       request.onerror = () => reject(request.error)
     })
-    console.log('[Feed Cache] Cleared feed metadata')
+    log.debug('Feed Cache', 'Cleared feed metadata')
   } catch (error) {
-    console.warn('Failed to clear feed metadata:', error)
+    log.warn('Feed Cache', 'Failed to clear feed metadata:', error)
   }
 }
 
@@ -147,7 +148,7 @@ export async function clearAllCaches(): Promise<void> {
   await clearFeedCache()
   await clearPostSummaries()
   await clearFeedMetadata()
-  console.log('[Cache] Cleared all caches (feed, summaries, metadata)')
+  log.info('Cache', 'Cleared all caches (feed, summaries, metadata)')
 }
 
 /**
@@ -275,7 +276,7 @@ export async function savePostsToFeedCache(
     const newEntries = entries.filter(entry => !existingUniqueIds.has(entry.uniqueId))
 
     if (existingUniqueIds.size > 0) {
-      console.log(`[Feed Cache] Skipping ${existingUniqueIds.size} already-cached posts, saving ${newEntries.length} new posts`)
+      log.debug('Feed Cache', `Skipping ${existingUniqueIds.size} already-cached posts, saving ${newEntries.length} new posts`)
     }
 
     // Step 2: Write only new entries (write transaction)
@@ -308,6 +309,8 @@ export async function savePostsToFeedCache(
         reposterDid: entry.reposterDid,
       }
       feedStore.put(cacheEntry)  // Queue synchronously, don't await
+      const postRecord = entry.originalPost?.post?.record as any
+      log.trace('post-cached', entry.originalPost?.post?.author?.handle || '', entry.postTimestamp, postRecord?.text || '')
     }
 
     // Save metadata only if we have new entries (must be queued synchronously in the same transaction)
@@ -334,13 +337,13 @@ export async function savePostsToFeedCache(
       try {
         await clearOldFeedCache(FEED_CACHE_RETENTION_HOURS)
       } catch (err) {
-        console.warn('Failed to clean up old feed cache:', err)
+        log.warn('Feed Cache', 'Failed to clean up old feed cache:', err)
       }
     }, 0)
 
     return newEntries.length
   } catch (error) {
-    console.warn('Failed to save posts to feed cache:', error)
+    log.warn('Feed Cache', 'Failed to save posts to feed cache:', error)
     return 0
   }
 }
@@ -365,7 +368,7 @@ export async function updateFeedCacheOldestPostTimestamp(
       getRequest.onsuccess = () => {
         const currentMetadata = getRequest.result as FeedCacheMetadata | undefined
         if (!currentMetadata) {
-          console.warn('No metadata found to update oldestCachedPostTimestamp')
+          log.warn('Feed Cache', 'No metadata found to update oldestCachedPostTimestamp')
           resolve()
           return
         }
@@ -378,7 +381,7 @@ export async function updateFeedCacheOldestPostTimestamp(
 
         const putRequest = store.put(updatedMetadata)
         putRequest.onsuccess = () => {
-          console.log(`[Feed Cache] Updated oldestCachedPostTimestamp from ${new Date(currentMetadata.oldestCachedPostTimestamp).toISOString()} to ${new Date(newOldestCachedPostTimestamp).toISOString()}`)
+          log.debug('Feed Cache', `Updated oldestCachedPostTimestamp from ${new Date(currentMetadata.oldestCachedPostTimestamp).toISOString()} to ${new Date(newOldestCachedPostTimestamp).toISOString()}`)
           resolve()
         }
         putRequest.onerror = () => reject(putRequest.error)
@@ -386,7 +389,7 @@ export async function updateFeedCacheOldestPostTimestamp(
       getRequest.onerror = () => reject(getRequest.error)
     })
   } catch (error) {
-    console.warn('Failed to update feed cache oldestCachedPostTimestamp:', error)
+    log.warn('Feed Cache', 'Failed to update feed cache oldestCachedPostTimestamp:', error)
   }
 }
 
@@ -454,7 +457,7 @@ export async function detectSummaryCacheGap(beforeTimestamp: number): Promise<bo
 
     if (!summaries || summaries.length === 0) {
       // No summaries in this window - potential gap
-      console.log(`[Gap Detection] No summaries found in time window before ${new Date(beforeTimestamp).toLocaleTimeString()}`)
+      log.debug('Gap Detection', `No summaries found in time window before ${new Date(beforeTimestamp).toLocaleTimeString()}`)
       return true
     }
 
@@ -464,12 +467,12 @@ export async function detectSummaryCacheGap(beforeTimestamp: number): Promise<bo
 
     const hasGap = (beforeTimestamp - oldestSummaryTimestamp) > GAP_THRESHOLD
     if (hasGap) {
-      console.log(`[Gap Detection] Gap detected: ${new Date(oldestSummaryTimestamp).toLocaleTimeString()} to ${new Date(beforeTimestamp).toLocaleTimeString()}`)
+      log.debug('Gap Detection', `Gap detected: ${new Date(oldestSummaryTimestamp).toLocaleTimeString()} to ${new Date(beforeTimestamp).toLocaleTimeString()}`)
     }
 
     return hasGap
   } catch (error) {
-    console.warn('[Gap Detection] Error checking for gap:', error)
+    log.warn('Gap Detection', 'Error checking for gap:', error)
     return false
   }
 }
@@ -492,7 +495,7 @@ export async function getLastFetchMetadata(): Promise<FeedCacheMetadata | null> 
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get last fetch metadata:', error)
+    log.warn('Feed Cache', 'Failed to get last fetch metadata:', error)
     return null
   }
 }
@@ -533,9 +536,9 @@ export async function savePrevPageCursor(
       putRequest.onerror = () => reject(putRequest.error)
     })
 
-    console.log(`[Prev Page Cursor] Saved cursor, oldest timestamp: ${new Date(oldestPostTimestamp).toLocaleTimeString()}`)
+    log.verbose('Prev Page Cursor', `Saved cursor, oldest timestamp: ${new Date(oldestPostTimestamp).toLocaleTimeString()}`)
   } catch (error) {
-    console.warn('Failed to save Prev Page cursor:', error)
+    log.warn('Feed Cache', 'Failed to save Prev Page cursor:', error)
   }
 }
 
@@ -563,7 +566,7 @@ export async function getFreshPrevPageCursor(): Promise<{
       oldestPostTimestamp: metadata.prevPageCursorOldestTimestamp || clientNow()
     }
   } catch (error) {
-    console.warn('Failed to get fresh Prev Page cursor:', error)
+    log.warn('Feed Cache', 'Failed to get fresh Prev Page cursor:', error)
     return null
   }
 }
@@ -597,10 +600,10 @@ export async function clearPrevPageCursor(): Promise<void> {
         putRequest.onerror = () => reject(putRequest.error)
       })
 
-      console.log('[Prev Page Cursor] Cleared')
+      log.debug('Prev Page Cursor', 'Cleared')
     }
   } catch (error) {
-    console.warn('Failed to clear Prev Page cursor:', error)
+    log.warn('Feed Cache', 'Failed to clear Prev Page cursor:', error)
   }
 }
 
@@ -732,10 +735,10 @@ export async function markLookbackComplete(): Promise<void> {
         request.onerror = () => reject(request.error)
       })
 
-      console.log('[Lookback] Marked lookback as complete')
+      log.debug('Lookback', 'Marked lookback as complete')
     }
   } catch (error) {
-    console.error('Failed to mark lookback complete:', error)
+    log.error('Feed Cache', 'Failed to mark lookback complete:', error)
   }
 }
 
@@ -769,10 +772,10 @@ export async function resetLookbackStatus(): Promise<void> {
         request.onerror = () => reject(request.error)
       })
 
-      console.log('[Lookback] Reset lookback status')
+      log.debug('Lookback', 'Reset lookback status')
     }
   } catch (error) {
-    console.error('Failed to reset lookback status:', error)
+    log.error('Feed Cache', 'Failed to reset lookback status:', error)
   }
 }
 
@@ -785,7 +788,7 @@ export async function isInitialLookbackCompleted(): Promise<boolean> {
     const metadata = await getLastFetchMetadata()
     return metadata?.initialLookbackCompleted ?? false
   } catch (error) {
-    console.warn('Failed to check initial lookback status:', error)
+    log.warn('Feed Cache', 'Failed to check initial lookback status:', error)
     return false
   }
 }
@@ -820,10 +823,10 @@ export async function markInitialLookbackCompleted(): Promise<void> {
         request.onerror = () => reject(request.error)
       })
 
-      console.log('[Lookback] Marked initial lookback as complete')
+      log.debug('Lookback', 'Marked initial lookback as complete')
     }
   } catch (error) {
-    console.error('Failed to mark initial lookback complete:', error)
+    log.error('Feed Cache', 'Failed to mark initial lookback complete:', error)
   }
 }
 
@@ -865,7 +868,7 @@ export async function getCachedPostUniqueIds(): Promise<Set<string>> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get cached post unique IDs:', error)
+    log.error('Feed Cache', 'Failed to get cached post unique IDs:', error)
     return new Set()
   }
 }
@@ -889,7 +892,7 @@ export async function checkFeedCacheExists(uniqueId: string): Promise<boolean> {
       request.onerror = () => resolve(false)
     })
   } catch (error) {
-    console.warn('Failed to check feed cache existence:', error)
+    log.warn('Feed Cache', 'Failed to check feed cache existence:', error)
     return false
   }
 }
@@ -955,7 +958,7 @@ export async function getCachedFeedBefore(
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get cached feed before timestamp:', error)
+    log.warn('Feed Cache', 'Failed to get cached feed before timestamp:', error)
     return { posts: [], postTimestamps: new Map() }
   }
 }
@@ -1028,7 +1031,7 @@ export async function getCachedFeed(limit: number = 50): Promise<CurationFeedVie
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get cached feed:', error)
+    log.warn('Feed Cache', 'Failed to get cached feed:', error)
     return []
   }
 }
@@ -1068,8 +1071,8 @@ export async function getCachedFeedAfter(
           cursor.continue()
         } else {
           if (count > 0) {
-            console.log(`[New Posts] getCachedFeedAfter found ${count} posts newer than ${new Date(afterTimestamp).toISOString()}`)
-            console.log(`[New Posts] Found post timestamps:`, foundTimestamps.slice(0, 5).map(t => new Date(t).toISOString()))
+            log.verbose('New Posts', `getCachedFeedAfter found ${count} posts newer than ${new Date(afterTimestamp).toISOString()}`)
+            log.verbose('New Posts', `Found post timestamps:`, foundTimestamps.slice(0, 5).map(t => new Date(t).toISOString()))
           }
           resolve(count)
         }
@@ -1078,7 +1081,7 @@ export async function getCachedFeedAfter(
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get cached feed after timestamp:', error)
+    log.warn('Feed Cache', 'Failed to get cached feed after timestamp:', error)
     return 0
   }
 }
@@ -1131,7 +1134,7 @@ export async function getCachedFeedAfterPosts(
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get cached feed after timestamp:', error)
+    log.warn('Feed Cache', 'Failed to get cached feed after timestamp:', error)
     return []
   }
 }
@@ -1164,7 +1167,7 @@ export async function getNewestCachedPostTimestamp(): Promise<number | null> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get newest cached post timestamp:', error)
+    log.warn('Feed Cache', 'Failed to get newest cached post timestamp:', error)
     return null
   }
 }
@@ -1198,7 +1201,7 @@ export async function getOldestCachedPostTimestamp(): Promise<number | null> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get oldest cached post timestamp:', error)
+    log.warn('Feed Cache', 'Failed to get oldest cached post timestamp:', error)
     return null
   }
 }
@@ -1220,7 +1223,7 @@ export async function clearFeedCache(): Promise<void> {
     sessionStorage.removeItem('websky_home_feed_state')
     sessionStorage.removeItem('websky_home_scroll_state')
   } catch (error) {
-    console.warn('Failed to clear feed cache:', error)
+    log.warn('Feed Cache', 'Failed to clear feed cache:', error)
   }
 }
 
@@ -1239,7 +1242,7 @@ export async function getCachedPostCount(): Promise<number> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get cached post count:', error)
+    log.warn('Feed Cache', 'Failed to get cached post count:', error)
     return 0
   }
 }
@@ -1271,7 +1274,7 @@ export async function getLastCachedPostTimestamp(): Promise<number | null> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to get last cached post timestamp:', error)
+    log.warn('Feed Cache', 'Failed to get last cached post timestamp:', error)
     return null
   }
 }
@@ -1309,7 +1312,7 @@ export async function clearOldFeedCache(olderThanHours: number = FEED_CACHE_RETE
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.warn('Failed to clear old feed cache:', error)
+    log.warn('Feed Cache', 'Failed to clear old feed cache:', error)
     return 0
   }
 }
@@ -1383,7 +1386,7 @@ export async function getFeedCacheStats(): Promise<FeedCacheStats> {
       countRequest.onerror = () => reject(countRequest.error)
     })
   } catch (error) {
-    console.error('Failed to get feed cache stats:', error)
+    log.error('Feed Cache', 'Failed to get feed cache stats:', error)
     return {
       totalCount: 0,
       oldestTimestamp: null,
@@ -1420,7 +1423,7 @@ export async function getFeedCacheTimestamps(): Promise<number[]> {
       request.onerror = () => reject(request.error)
     })
   } catch (error) {
-    console.error('Failed to get feed cache timestamps:', error)
+    log.error('Feed Cache', 'Failed to get feed cache timestamps:', error)
     return []
   }
 }
@@ -1452,11 +1455,11 @@ export async function isPrimaryCacheStale(): Promise<boolean> {
 
     const isStale = newest < twoDaysAgo
     if (isStale) {
-      console.log(`[Stale Check] Primary cache is stale. Newest post: ${newest.toISOString()}, threshold: ${twoDaysAgo.toISOString()}`)
+      log.debug('Stale Check', `Primary cache is stale. Newest post: ${newest.toISOString()}, threshold: ${twoDaysAgo.toISOString()}`)
     }
     return isStale
   } catch (error) {
-    console.error('[Stale Check] Failed to check primary cache staleness:', error)
+    log.error('Stale Check', 'Failed to check primary cache staleness:', error)
     return false
   }
 }
@@ -1512,9 +1515,9 @@ export async function updateFeedCacheNewestPostTimestamp(): Promise<void> {
         request.onerror = () => reject(request.error)
       })
 
-      console.log(`[Merge] Updated metadata newestCachedPostTimestamp: ${new Date(newestTimestamp).toISOString()}`)
+      log.debug('Merge', `Updated metadata newestCachedPostTimestamp: ${new Date(newestTimestamp).toISOString()}`)
     }
   } catch (error) {
-    console.error('[Merge] Failed to update feed cache metadata:', error)
+    log.error('Merge', 'Failed to update feed cache metadata:', error)
   }
 }

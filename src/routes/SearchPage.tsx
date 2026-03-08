@@ -14,6 +14,7 @@ import { clientNow } from '../utils/clientClock'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 import { PostSummary } from '../curation/types'
 import { searchLocalCache } from '../curation/localCacheSearch'
+import log from '../utils/logger'
 
 type SearchTab = 'local' | 'people' | 'posts'
 
@@ -153,7 +154,7 @@ export default function SearchPage() {
         isRestoringRef.current = false
       }, 100)
     } catch (error) {
-      console.warn('Failed to restore search state:', error)
+      log.warn('Search', 'Failed to restore search state:', error)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -246,7 +247,7 @@ export default function SearchPage() {
         try {
           sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(searchState))
         } catch (error) {
-          console.warn('Failed to save search state:', error)
+          log.warn('Search', 'Failed to save search state:', error)
         }
       }
     }
@@ -316,7 +317,7 @@ export default function SearchPage() {
             const data = await searchActors(agent, searchQuery, 25)
             setResults(data.actors || [])
           } catch (error) {
-            console.error('Search failed:', error)
+            log.error('Search', 'Search failed:', error)
             addToast(error instanceof Error ? error.message : 'Search failed', 'error')
             setResults([])
           } finally {
@@ -346,7 +347,7 @@ export default function SearchPage() {
             setPostResults(data.posts || [])
             setPostCursor(data.cursor)
           } catch (error) {
-            console.error('Post search failed:', error)
+            log.error('Search', 'Post search failed:', error)
             addToast(error instanceof Error ? error.message : 'Post search failed', 'error')
             setPostResults([])
             setPostCursor(undefined)
@@ -386,7 +387,7 @@ export default function SearchPage() {
             setLocalTotal(total)
             setLocalOffset(50)
           } catch (error) {
-            console.error('Local archive search failed:', error)
+            log.error('Search', 'Local archive search failed:', error)
             addToast(error instanceof Error ? error.message : 'Local archive search failed', 'error')
             setLocalResults([])
           } finally {
@@ -410,7 +411,7 @@ export default function SearchPage() {
       setLocalResults(prev => [...prev, ...r])
       setLocalOffset(prev => prev + 50)
     } catch (error) {
-      console.error('Failed to load more local results:', error)
+      log.error('Search', 'Failed to load more local results:', error)
       addToast(error instanceof Error ? error.message : 'Failed to load more results', 'error')
     } finally {
       setIsLoadingMoreLocal(false)
@@ -455,7 +456,7 @@ export default function SearchPage() {
       setPostResults(prev => [...prev, ...(data.posts || [])])
       setPostCursor(data.cursor)
     } catch (error) {
-      console.error('Failed to load more posts:', error)
+      log.error('Search', 'Failed to load more posts:', error)
       addToast(error instanceof Error ? error.message : 'Failed to load more posts', 'error')
     } finally {
       setIsLoadingMorePosts(false)

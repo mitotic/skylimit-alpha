@@ -6,6 +6,7 @@
  */
 
 import type { Session } from '../types'
+import log from '../utils/logger'
 
 const SESSION_STORAGE_KEY = 'websky_session'
 const REMEMBER_ME_KEY = 'websky_remember_me'
@@ -38,7 +39,7 @@ export function loadSession(): Session | null {
     
     return JSON.parse(data) as Session
   } catch (error) {
-    console.error('Failed to load session:', error)
+    log.error('Session', 'Failed to load session:', error)
     return null
   }
 }

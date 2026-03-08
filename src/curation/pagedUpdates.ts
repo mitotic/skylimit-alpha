@@ -13,6 +13,7 @@ import { getCachedPostUniqueIds, getLocalMidnight } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
 import { FollowInfo, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost, SecondaryRepostIndex, addToRepostIndex } from './types'
+import log from '../utils/logger'
 
 // Maximum PageRaw to prevent excessive API calls
 const MAX_PAGE_RAW = 100
@@ -228,7 +229,7 @@ export async function probeForNewPosts(
 
     // Phase 2: If no displayable posts in same day, process next-day posts
     if (result.filteredPostCount === 0 && nextDayPosts.length > 0) {
-      console.log(`[Probe] No same-day posts available, processing ${nextDayPosts.length} next-day posts`)
+      log.verbose('Probe', `No same-day posts available, processing ${nextDayPosts.length} next-day posts`)
       for (const { post, timestamp } of nextDayPosts) {
         await processPost(post, timestamp)
       }
@@ -243,7 +244,7 @@ export async function probeForNewPosts(
       const newestMidnight = getLocalMidnight(newestDate, settings?.timezone).getTime()
       const oldestMidnight = getLocalMidnight(oldestDate, settings?.timezone).getTime()
       if (newestMidnight !== oldestMidnight) {
-        console.warn(`[Probe] WARNING: Probed posts span midnight boundary! ` +
+        log.warn('Probe', `WARNING: Probed posts span midnight boundary! ` +
           `Newest: ${newestDate.toLocaleString()}, Oldest: ${oldestDate.toLocaleString()}`)
       }
     }
@@ -255,7 +256,7 @@ export async function probeForNewPosts(
     result.pageCount = Math.floor(result.filteredPostCount / pageSize)
 
   } catch (error) {
-    console.error('probeForNewPosts: Error probing for posts:', error)
+    log.error('Probe', 'probeForNewPosts: Error probing for posts:', error)
   }
 
   return result

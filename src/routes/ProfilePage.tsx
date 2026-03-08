@@ -16,6 +16,7 @@ import ConfirmModal from '../components/ConfirmModal'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RichText from '../components/RichText'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
+import log from '../utils/logger'
 
 type Tab = 'posts' | 'replies' | 'likes'
 
@@ -81,7 +82,7 @@ export default function ProfilePage() {
       }
     } catch (error) {
       if (isMountedRef.current && currentActorRef.current === actorAtCallTime) {
-        console.error('Failed to load profile:', error)
+        log.error('Profile', 'Failed to load profile:', error)
         addToast(error instanceof Error ? error.message : 'Failed to load profile', 'error')
       }
     } finally {
@@ -141,7 +142,7 @@ export default function ProfilePage() {
         // Suppress "Profiles not found" errors (common when navigating away)
         const errorMessage = error instanceof Error ? error.message : 'Failed to load feed'
         if (!errorMessage.includes('Profiles not found') && !errorMessage.includes('Profile not found')) {
-          console.error('Failed to load feed:', error)
+          log.error('Profile', 'Failed to load feed:', error)
           addToast(errorMessage, 'error')
         }
       }

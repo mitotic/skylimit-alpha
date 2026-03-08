@@ -13,6 +13,7 @@ import { useSession } from '../auth/SessionContext'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 import CurationPopup from './CurationPopup'
 import { clientNow } from '../utils/clientClock'
+import log from '../utils/logger'
 
 interface AccountStatistics {
   username: string
@@ -408,7 +409,7 @@ export default function SkylimitStatistics() {
 
       setAccountStats(activeAccounts)
     } catch (error) {
-      console.error('Failed to load statistics:', error)
+      log.error('Stats', 'Failed to load statistics:', error)
     } finally {
       setLoading(false)
     }
@@ -473,7 +474,7 @@ export default function SkylimitStatistics() {
       // Reload statistics to reflect recomputed probabilities
       await loadStatistics()
     } catch (error) {
-      console.error('Failed to amp up:', error)
+      log.error('Stats', 'Failed to amp up:', error)
       alert('Failed to update amplification factor')
     } finally {
       setLoadingAmp(false)
@@ -487,7 +488,7 @@ export default function SkylimitStatistics() {
       // Reload statistics to reflect recomputed probabilities
       await loadStatistics()
     } catch (error) {
-      console.error('Failed to amp down:', error)
+      log.error('Stats', 'Failed to amp down:', error)
       alert('Failed to update amplification factor')
     } finally {
       setLoadingAmp(false)

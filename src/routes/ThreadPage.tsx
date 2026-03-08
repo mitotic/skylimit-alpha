@@ -15,6 +15,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import EngagementList from '../components/EngagementList'
 import SelfReplyChain from '../components/SelfReplyChain'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
+import log from '../utils/logger'
 
 // Scroll state preservation constant for thread pages
 const WEBSKY_THREAD_SCROLL_POSITION = 'websky_thread_scroll_position'
@@ -128,7 +129,7 @@ export default function ThreadPage() {
           const chain = await fetchParentChain(agent, record.reply.parent.uri, MAX_PARENT_CHAIN_DEPTH)
           setParentChain(chain)
         } catch (parentError) {
-          console.warn('Failed to fetch parent chain:', parentError)
+          log.warn('Thread', 'Failed to fetch parent chain:', parentError)
           // Non-fatal - we still show the thread without parent context
         } finally {
           setIsLoadingParents(false)
@@ -145,7 +146,7 @@ export default function ThreadPage() {
         }
       }
     } catch (error) {
-      console.error('Failed to load thread:', error)
+      log.error('Thread', 'Failed to load thread:', error)
       addToast(error instanceof Error ? error.message : 'Failed to load thread', 'error')
     } finally {
       setIsLoading(false)
@@ -169,9 +170,9 @@ export default function ThreadPage() {
       const scrollY = window.scrollY || document.documentElement.scrollTop
       try {
         sessionStorage.setItem(WEBSKY_THREAD_SCROLL_POSITION, scrollY.toString())
-        console.log('Saved thread scroll position before navigation:', scrollY)
+        log.debug('Thread', 'Saved thread scroll position before navigation:', scrollY)
       } catch (error) {
-        console.warn('Failed to save thread scroll position:', error)
+        log.warn('Thread', 'Failed to save thread scroll position:', error)
       }
     }
     
@@ -189,7 +190,7 @@ export default function ThreadPage() {
       if (savedScrollPosition) {
         // Just prevent scroll to top, don't restore yet (content might not be loaded)
         scrollRestoredRef.current = false
-        console.log('Detected return to thread page, will restore after content loads')
+        log.debug('Thread', 'Detected return to thread page, will restore after content loads')
       }
     }
     
@@ -260,7 +261,7 @@ export default function ThreadPage() {
         setSelfReplyChain(prev => [...prev, ...posts])
       }
     } catch (error) {
-      console.warn('Failed to fetch more chain posts:', error)
+      log.warn('Thread', 'Failed to fetch more chain posts:', error)
       setChainMayHaveMore(false)
     } finally {
       setIsLoadingChain(false)
@@ -307,7 +308,7 @@ export default function ThreadPage() {
         setSelfReplyChain(posts)
         setChainMayHaveMore(mayHaveMore)
       } catch (error) {
-        console.warn('Failed to fetch self-reply chain:', error)
+        log.warn('Thread', 'Failed to fetch self-reply chain:', error)
         if (!cancelled) {
           setSelfReplyChain([])
           setChainMayHaveMore(false)
@@ -341,9 +342,9 @@ export default function ThreadPage() {
         if (!isReturning && savedScrollPosition) {
           try {
             sessionStorage.removeItem(WEBSKY_THREAD_SCROLL_POSITION)
-            console.log('Cleared saved thread scroll position for new thread')
+            log.debug('Thread', 'Cleared saved thread scroll position for new thread')
           } catch (error) {
-            console.warn('Failed to clear thread scroll position:', error)
+            log.warn('Thread', 'Failed to clear thread scroll position:', error)
           }
         }
         
@@ -355,7 +356,7 @@ export default function ThreadPage() {
             
             // Only restore if we're near the top (meaning restoration hasn't happened yet)
             if (currentScroll < 100) {
-              console.log('Restoring thread scroll position after load:', scrollY)
+              log.debug('Thread', 'Restoring thread scroll position after load:', scrollY)
               scrollRestoredRef.current = true
               
               // Use retry mechanism to ensure DOM is ready
@@ -377,7 +378,7 @@ export default function ThreadPage() {
                       document.documentElement.scrollTop = targetScroll
                       document.body.scrollTop = targetScroll
                       
-                      console.log('Thread scroll position restored:', targetScroll)
+                      log.debug('Thread', 'Thread scroll position restored:', targetScroll)
                       
                       setTimeout(() => {
                         isProgrammaticScrollRef.current = false
@@ -386,7 +387,7 @@ export default function ThreadPage() {
                       attemptRestore(attempt + 1)
                     } else {
                       isProgrammaticScrollRef.current = false
-                      console.log('Max attempts reached for thread scroll restoration')
+                      log.debug('Thread', 'Max attempts reached for thread scroll restoration')
                     }
                   })
                 }, delay)
@@ -395,7 +396,7 @@ export default function ThreadPage() {
               attemptRestore()
             } else {
               scrollRestoredRef.current = true
-              console.log('Thread scroll already positioned, skipping restoration')
+              log.debug('Thread', 'Thread scroll already positioned, skipping restoration')
             }
           } else {
             scrollRestoredRef.current = true
@@ -406,7 +407,7 @@ export default function ThreadPage() {
           window.scrollTo(0, 0)
         }
       } catch (error) {
-        console.warn('Failed to restore thread scroll position:', error)
+        log.warn('Thread', 'Failed to restore thread scroll position:', error)
         scrollRestoredRef.current = true
       }
     }
@@ -429,7 +430,7 @@ export default function ThreadPage() {
         try {
           sessionStorage.removeItem(WEBSKY_THREAD_SCROLL_POSITION)
         } catch (error) {
-          console.warn('Failed to clear thread scroll position:', error)
+          log.warn('Thread', 'Failed to clear thread scroll position:', error)
         }
         return
       }
@@ -442,7 +443,7 @@ export default function ThreadPage() {
         try {
           sessionStorage.setItem(WEBSKY_THREAD_SCROLL_POSITION, scrollY.toString())
         } catch (error) {
-          console.warn('Failed to save thread scroll position:', error)
+          log.warn('Thread', 'Failed to save thread scroll position:', error)
         }
       }, 200)
     }

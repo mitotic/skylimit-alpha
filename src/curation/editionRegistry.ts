@@ -4,6 +4,7 @@
  */
 
 import { EditionRegistryEntry } from './types'
+import log from '../utils/logger'
 
 const EDITION_REGISTRY_KEY = 'skylimit_edition_registry'
 
@@ -15,7 +16,7 @@ export function getEditionRegistry(): EditionRegistryEntry[] {
     const entries: EditionRegistryEntry[] = JSON.parse(raw)
     return entries.sort((a, b) => b.createdAt - a.createdAt)
   } catch {
-    console.warn('[EditionRegistry] Failed to parse registry, clearing')
+    log.warn('EditionRegistry', 'Failed to parse registry, clearing')
     localStorage.removeItem(EDITION_REGISTRY_KEY)
     return []
   }

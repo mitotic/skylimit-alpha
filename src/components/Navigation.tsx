@@ -5,6 +5,7 @@ import { getUnreadCount } from '../api/notifications'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
+import log from '../utils/logger'
 import ConfirmModal from './ConfirmModal'
 import { clientInterval, clearClientInterval, clientTimeout } from '../utils/clientClock'
 
@@ -36,8 +37,7 @@ export default function Navigation() {
       // Skip if rate limited
       if (isRateLimited()) {
         const timeUntilClear = getTimeUntilClear()
-        const quietMode = await getSetting('quietMode')
-        if (!quietMode) console.log(`[Navigation] Skipping unread count fetch - rate limited for ${Math.ceil(timeUntilClear)}s`)
+        log.verbose('Navigation', `Skipping unread count fetch - rate limited for ${Math.ceil(timeUntilClear)}s`)
         return
       }
 
@@ -45,7 +45,7 @@ export default function Navigation() {
         const count = await getUnreadCount(agent)
         setUnreadCount(count)
       } catch (error) {
-        console.warn('Failed to fetch unread count:', error)
+        log.warn('Navigation', 'Failed to fetch unread count:', error)
         // Don't show error to user, just silently fail
       }
     }

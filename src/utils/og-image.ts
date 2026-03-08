@@ -3,6 +3,7 @@
  */
 
 import tlds from 'tlds'
+import log from './logger'
 
 // Build a Set of valid IANA TLDs for O(1) lookup
 const tldSet = new Set((tlds as string[]).map(t => t.toLowerCase()))
@@ -110,7 +111,7 @@ export async function fetchOGImage(url: string): Promise<OGImageData | null> {
       description,
     }
   } catch (error) {
-    console.error('Failed to fetch OG image:', error)
+    log.error('OGImage', 'Failed to fetch OG image:', error)
     return null
   }
 }

@@ -29,6 +29,7 @@ import { useScrollManagement } from '../hooks/useScrollManagement'
 import { usePullToRefresh } from '../hooks/usePullToRefresh'
 import { useViewTracking } from '../hooks/useViewTracking'
 import { useFeedPipeline } from '../hooks/useFeedPipeline'
+import log from '../utils/logger'
 
 export default function HomePage() {
   const location = useLocation()
@@ -223,9 +224,9 @@ export default function HomePage() {
 
         try {
           sessionStorage.setItem(getFeedStateKey(activeTab), JSON.stringify(feedState))
-          console.log(`[Save DEBUG] Saved feed state: feed=${feed.length} posts, previousPageFeed=${previousPageFeed.length} posts, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'}`)
+          log.verbose('Save', `Saved feed state: feed=${feed.length} posts, previousPageFeed=${previousPageFeed.length} posts, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'}`)
         } catch (error) {
-          console.warn('Failed to save feed state:', error)
+          log.warn('Feed', 'Failed to save feed state:', error)
         }
       }
     }
@@ -250,7 +251,7 @@ export default function HomePage() {
 
       if (isRefreshShortcut) {
         e.preventDefault()
-        console.log('[Refresh] Desktop soft-refresh intercepted')
+        log.debug('Refresh', 'Desktop soft-refresh intercepted')
         handleSoftRefresh()
       }
     }
@@ -268,24 +269,24 @@ export default function HomePage() {
   // Handle loading new posts
   const handleLoadNewPosts = useCallback(async () => {
     if (lookingBack) {
-      console.log('[New Posts] Background lookback in progress, ignoring click')
+      log.debug('New Posts', 'Background lookback in progress, ignoring click')
       addToast('Still syncing posts... Please wait.', 'info')
       return
     }
 
     if (isLoadingMore) {
-      console.log('[New Posts] Already loading, ignoring click')
+      log.debug('New Posts', 'Already loading, ignoring click')
       return
     }
 
     if (!agent || !session) {
-      console.warn('[New Posts] Missing agent or session')
+      log.warn('New Posts', 'Missing agent or session')
       addToast('Unable to load new posts: not authenticated', 'error')
       return
     }
 
     if (!newestDisplayedPostTimestamp) {
-      console.warn('[New Posts] No newestDisplayedPostTimestamp available')
+      log.warn('New Posts', 'No newestDisplayedPostTimestamp available')
     }
 
     try {
@@ -296,7 +297,7 @@ export default function HomePage() {
 
       const effectivePageLength = postsNeededForPage ?? pageLength
 
-      console.log(`[New Posts] SINGLE PAGE: Loading via unified fetch (effectivePageLength=${effectivePageLength})...`)
+      log.debug('New Posts', `SINGLE PAGE: Loading via unified fetch (effectivePageLength=${effectivePageLength})...`)
 
       setSyncInProgress(true)
       setSyncProgress(0)
@@ -312,12 +313,12 @@ export default function HomePage() {
             onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),
           }
         )
-        console.log(`[New Posts] SINGLE PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
+        log.debug('New Posts', `SINGLE PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
 
         setSyncProgress(80)
         const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'page', effectivePageLength)
         setSyncProgress(100)
-        console.log(`[New Posts] SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
+        log.debug('New Posts', `SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
           `${transferResult.displayableCount} displayable`)
 
         setNewPostsCount(0)
@@ -338,7 +339,7 @@ export default function HomePage() {
           })
 
           if (result) {
-            console.log(`[Next Page] Displayed ${result.alignedPosts.length} posts via refreshDisplayedFeed`)
+            log.debug('Next Page', `Displayed ${result.alignedPosts.length} posts via refreshDisplayedFeed`)
             const stateToSave: SavedFeedState = {
               displayedFeed: result.alignedPosts,
               previousPageFeed: [],
@@ -371,7 +372,7 @@ export default function HomePage() {
       }
 
     } catch (error) {
-      console.error('Failed to load new posts:', error)
+      log.error('Feed', 'Failed to load new posts:', error)
       addToast('Failed to load new posts', 'error')
     } finally {
       setIsLoadingMore(false)
@@ -381,13 +382,13 @@ export default function HomePage() {
   // Handle "All n new posts" button click
   const handleLoadAllNewPosts = useCallback(async () => {
     if (lookingBack) {
-      console.log('[All New Posts] Background lookback in progress, ignoring click')
+      log.debug('New Posts', 'Background lookback in progress, ignoring click')
       addToast('Still syncing posts... Please wait.', 'info')
       return
     }
 
     if (isLoadingMore || !agent || !session) {
-      console.log('[All New Posts] Cannot load: isLoadingMore or missing agent/session')
+      log.debug('New Posts', 'Cannot load: isLoadingMore or missing agent/session')
       return
     }
 
@@ -399,11 +400,11 @@ export default function HomePage() {
     const isMultiPage = multiPageCount > 0 || isExtendedIdle
 
     if (isExtendedIdle) {
-      console.log(`[New Posts] Extended idle detected: ${Math.round(timeSinceTopPost / 60000)} min exceeds ${Math.round(idleThreshold / 60000)} min threshold`)
+      log.debug('New Posts', `Extended idle detected: ${Math.round(timeSinceTopPost / 60000)} min exceeds ${Math.round(idleThreshold / 60000)} min threshold`)
     }
 
     if (isMultiPage) {
-      console.log(`[New Posts] MULTI-PAGE: Using unified fetch (${multiPageCount} posts expected)`)
+      log.debug('New Posts', `MULTI-PAGE: Using unified fetch (${multiPageCount} posts expected)`)
 
       setIsLoadingMore(true)
       setSyncInProgress(true)
@@ -421,7 +422,7 @@ export default function HomePage() {
             onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),
           }
         )
-        console.log(`[New Posts] MULTI-PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
+        log.debug('New Posts', `MULTI-PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
 
         if (fetchResult.postsFetched === 0) {
           addToast('No new posts available', 'info')
@@ -431,7 +432,7 @@ export default function HomePage() {
         setSyncProgress(80)
         const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'all', pageLength)
         setSyncProgress(100)
-        console.log(`[New Posts] MULTI-PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
+        log.debug('New Posts', `MULTI-PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
           `${transferResult.displayableCount} displayable`)
 
         setNewPostsCount(0)
@@ -450,7 +451,7 @@ export default function HomePage() {
             showAllNewPosts: false,
           })
           if (result) {
-            console.log(`[New Posts] MULTI-PAGE: Displayed ${result.alignedPosts.length} posts via refreshDisplayedFeed`)
+            log.debug('New Posts', `MULTI-PAGE: Displayed ${result.alignedPosts.length} posts via refreshDisplayedFeed`)
           } else {
             addToast('No new posts to display (filtered by settings)', 'info')
           }
@@ -466,14 +467,14 @@ export default function HomePage() {
         }, 1000)
 
       } catch (error) {
-        console.error('[All New Posts] Multi-page load failed:', error)
+        log.error('New Posts', 'Multi-page load failed:', error)
         addToast('Failed to load new posts', 'error')
       } finally {
         setIsLoadingMore(false)
         setSyncInProgress(false)
       }
     } else {
-      console.log(`[New Posts] PARTIAL PAGE: ${partialPageCount} posts, using single page flow`)
+      log.debug('New Posts', `PARTIAL PAGE: ${partialPageCount} posts, using single page flow`)
       await handleLoadNewPosts()
       setIdleTimerTriggered(false)
     }
@@ -488,24 +489,24 @@ export default function HomePage() {
       return
     }
 
-    console.log(`[Prev Page] INSTANT: Displaying ${previousPageFeed.length} pre-fetched posts`)
+    log.debug('Prev Page', `INSTANT: Displaying ${previousPageFeed.length} pre-fetched posts`)
 
     const feedReceivedTime = clientDate()
 
     const existingUris = new Set(feed.map(p => getPostUniqueId(p)))
     const newPosts = previousPageFeed.filter(p => !existingUris.has(getPostUniqueId(p)))
-    console.log(`[Prev Page] Appending ${newPosts.length} pre-fetched posts`)
+    log.debug('Prev Page', `Appending ${newPosts.length} pre-fetched posts`)
     if (newPosts.length > 0) {
       const ppNewest = getFeedViewPostTimestamp(newPosts[0], feedReceivedTime).getTime()
       const ppOldest = getFeedViewPostTimestamp(newPosts[newPosts.length - 1], feedReceivedTime).getTime()
       const ppFirst = newPosts[0] as CurationFeedViewPost
       const ppLast = newPosts[newPosts.length - 1] as CurationFeedViewPost
-      console.log(`[Prev Page DEBUG] Appending range: newest=${new Date(ppNewest).toLocaleTimeString()} (#${ppFirst.curation?.curationNumber ?? '?'}), oldest=${new Date(ppOldest).toLocaleTimeString()} (#${ppLast.curation?.curationNumber ?? '?'})`)
+      log.verbose('Prev Page', `Appending range: newest=${new Date(ppNewest).toLocaleTimeString()} (#${ppFirst.curation?.curationNumber ?? '?'}), oldest=${new Date(ppOldest).toLocaleTimeString()} (#${ppLast.curation?.curationNumber ?? '?'})`)
     }
     if (feed.length > 0) {
       const feedOldest = getFeedViewPostTimestamp(feed[feed.length - 1], feedReceivedTime).getTime()
       const feedOldestPost = feed[feed.length - 1] as CurationFeedViewPost
-      console.log(`[Prev Page DEBUG] Current feed oldest: ${new Date(feedOldest).toLocaleTimeString()} (#${feedOldestPost.curation?.curationNumber ?? '?'})`)
+      log.verbose('Prev Page', `Current feed oldest: ${new Date(feedOldest).toLocaleTimeString()} (#${feedOldestPost.curation?.curationNumber ?? '?'})`)
     }
 
     let nextPrefetchTimestamp: number
@@ -521,7 +522,7 @@ export default function HomePage() {
       ).getTime()
     }
 
-    console.log(`[Prev Page DEBUG] nextPrefetchTimestamp=${new Date(nextPrefetchTimestamp).toLocaleTimeString()} (${nextPrefetchTimestamp})`)
+    log.verbose('Prev Page', `nextPrefetchTimestamp=${new Date(nextPrefetchTimestamp).toLocaleTimeString()} (${nextPrefetchTimestamp})`)
 
     const settings = await getSettings()
     const curationSuspendedLocal = !settings || settings?.curationSuspended
@@ -544,7 +545,7 @@ export default function HomePage() {
             const extraTrim = remainder
             const newTrimCount = actualTrimCount + extraTrim
             if (newTrimCount < combined.length - pageLength) {
-              console.log(`[Prev Page] Aligning top to chunk boundary: #${topCurationNumber} → #${topCurationNumber - remainder} (trimming ${extraTrim} extra)`)
+              log.debug('Prev Page', `Aligning top to chunk boundary: #${topCurationNumber} → #${topCurationNumber - remainder} (trimming ${extraTrim} extra)`)
               actualTrimCount = newTrimCount
             }
           }
@@ -553,7 +554,7 @@ export default function HomePage() {
 
       setFeed(() => {
         const trimmed = combined.slice(actualTrimCount)
-        console.log(`[Prev Page] Trimmed ${actualTrimCount} newest posts (${combined.length} → ${trimmed.length})`)
+        log.debug('Prev Page', `Trimmed ${actualTrimCount} newest posts (${combined.length} → ${trimmed.length})`)
         return trimmed
       })
       if (actualTrimCount < combined.length) {
@@ -578,7 +579,7 @@ export default function HomePage() {
 
         if (positionInPage !== 0) {
           targetSize = positionInPage
-          console.log(`[Prev Page] Aligning to boundary: need ${targetSize} posts to reach curationNumber ${oldestCurationNumber - positionInPage}`)
+          log.debug('Prev Page', `Aligning to boundary: need ${targetSize} posts to reach curationNumber ${oldestCurationNumber - positionInPage}`)
         }
       }
     }
@@ -608,7 +609,7 @@ export default function HomePage() {
       const batchPosts = await getCachedFeedAfterPosts(fetchAfterTimestamp, 2 * pageLength, true)
 
       if (batchPosts.length === 0) {
-        console.log('[Fast Forward] Cache exhausted')
+        log.debug('Fast Forward', 'Cache exhausted')
         cacheExhausted = true
         break
       }
@@ -624,12 +625,12 @@ export default function HomePage() {
 
       if (newPosts.length === 0) {
         consecutiveNoProgress++
-        console.log(`[Fast Forward] No new displayable posts from batch of ${batchPosts.length} (stall ${consecutiveNoProgress}/${MAX_NO_PROGRESS})`)
+        log.debug('Fast Forward', `No new displayable posts from batch of ${batchPosts.length} (stall ${consecutiveNoProgress}/${MAX_NO_PROGRESS})`)
         if (consecutiveNoProgress >= MAX_NO_PROGRESS) break
       } else {
         consecutiveNoProgress = 0
         accumulatedFiltered = [...accumulatedFiltered, ...newPosts]
-        console.log(`[Fast Forward] Added ${newPosts.length} displayable posts, total: ${accumulatedFiltered.length}`)
+        log.debug('Fast Forward', `Added ${newPosts.length} displayable posts, total: ${accumulatedFiltered.length}`)
       }
 
       fetchAfterTimestamp = getFeedViewPostTimestamp(batchPosts[0], feedReceivedTime).getTime()
@@ -637,7 +638,7 @@ export default function HomePage() {
       if (cacheExhausted) break
     }
 
-    console.log(`[Fast Forward] Accumulated ${accumulatedFiltered.length} displayable posts (cacheExhausted=${cacheExhausted})`)
+    log.debug('Fast Forward', `Accumulated ${accumulatedFiltered.length} displayable posts (cacheExhausted=${cacheExhausted})`)
 
     if (accumulatedFiltered.length === 0) {
       setFeedTopTrimmed(null)
@@ -659,7 +660,7 @@ export default function HomePage() {
     const combined = [...accumulatedFiltered, ...feed]
     const actualRemove = Math.min(removeCount, combined.length - pageLength)
     const trimmed = actualRemove > 0 ? combined.slice(0, combined.length - actualRemove) : combined
-    console.log(`[Fast Forward] Feed: ${feed.length} → prepend ${accumulatedFiltered.length}, remove ${combined.length - trimmed.length} from bottom → ${trimmed.length}`)
+    log.debug('Fast Forward', `Feed: ${feed.length} → prepend ${accumulatedFiltered.length}, remove ${combined.length - trimmed.length} from bottom → ${trimmed.length}`)
 
     setFeed(trimmed)
 
@@ -725,7 +726,7 @@ export default function HomePage() {
   useEffect(() => {
     const handleCommand = (command: SkyspeedCommand) => {
       if (command.type === 'CLICK') {
-        console.log(`[Skyspeed Command] Executing: CLICK ${command.buttonName}`)
+        log.debug('Skyspeed Command', `Executing: CLICK ${command.buttonName}`)
         switch (command.buttonName) {
           case 'NextPage':
             handleLoadNewPosts()
@@ -738,7 +739,7 @@ export default function HomePage() {
             break
         }
       } else if (command.type === 'SCROLL') {
-        console.log(`[Skyspeed Command] Executing: SCROLL ${command.direction}`)
+        log.debug('Skyspeed Command', `Executing: SCROLL ${command.direction}`)
         switch (command.direction) {
           case 'TOP':
             window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -748,7 +749,7 @@ export default function HomePage() {
             break
         }
       } else if (command.type === 'FIND') {
-        console.log(`[Skyspeed Command] Executing: FIND ${command.target}`)
+        log.debug('Skyspeed Command', `Executing: FIND ${command.target}`)
         const target = command.target
 
         let matchUri: string | null = null
@@ -790,10 +791,10 @@ export default function HomePage() {
           if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'center' })
           } else {
-            console.warn(`[Skyspeed Command] FIND: DOM element not found for URI ${matchUri}`)
+            log.warn('Skyspeed Command', `FIND: DOM element not found for URI ${matchUri}`)
           }
         } else {
-          console.warn(`[Skyspeed Command] FIND: No matching post found for "${target}"`)
+          log.warn('Skyspeed Command', `FIND: No matching post found for "${target}"`)
         }
       }
     }
@@ -891,7 +892,7 @@ export default function HomePage() {
       try {
         sessionStorage.setItem(currentFeedStateKey, JSON.stringify(feedState))
       } catch (error) {
-        console.warn('Failed to save feed state on tab change:', error)
+        log.warn('Feed', 'Failed to save feed state on tab change:', error)
       }
     }
 
@@ -917,16 +918,25 @@ export default function HomePage() {
           {skylimitStats ? (
             <div className="flex items-center gap-4 text-sm w-full">
               <span className="font-semibold text-gray-800 dark:text-gray-200">Skylimit:</span>
-              <a
-                href="https://github.com/mitotic/skylimit-alpha#readme"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-                title="About Skylimit"
-              >
-                About
-              </a>
-              <InstallHelp />
+              {lookingBack ? (
+                <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                  <Spinner size="sm" />
+                  <span>Fetching posts{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}...</span>
+                </div>
+              ) : (
+                <>
+                  <a
+                    href="https://github.com/mitotic/skylimit-alpha#readme"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                    title="About Skylimit"
+                  >
+                    About
+                  </a>
+                  <InstallHelp />
+                </>
+              )}
               <div className="flex items-center gap-4 ml-auto">
                 {getNonStandardServerName() && (
                   <span className="text-orange-500 dark:text-orange-400 font-medium">
@@ -1111,7 +1121,7 @@ export default function HomePage() {
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    console.log('[Next Page] Button clicked', { newPostsCount, isLoadingMore, nextPageReady, lookingBack })
+                    log.debug('Next Page', 'Button clicked', { newPostsCount, isLoadingMore, nextPageReady, lookingBack })
                     handleLoadNewPosts()
                   }}
                   disabled={isLoadingMore || !nextPageReady || lookingBack || feedTopTrimmed !== null}
@@ -1141,7 +1151,7 @@ export default function HomePage() {
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      console.log('[New Posts] Partial button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
+                      log.debug('New Posts', 'Partial button clicked', { partialPageCount, idleTimerTriggered, newPostsCount })
                       handleLoadAllNewPosts()
                     }}
                     disabled={isLoadingMore || lookingBack}
@@ -1168,7 +1178,7 @@ export default function HomePage() {
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      console.log('[All New Posts] Multi-page button clicked', { multiPageCount, idleTimerTriggered, newPostsCount })
+                      log.debug('New Posts', 'Multi-page button clicked', { multiPageCount, idleTimerTriggered, newPostsCount })
                       handleLoadAllNewPosts()
                     }}
                     disabled={isLoadingMore || lookingBack}

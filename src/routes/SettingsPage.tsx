@@ -13,8 +13,9 @@ import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
 import { getBrowserTimezone } from '../utils/timezoneUtils'
 import Button from '../components/Button'
+import log from '../utils/logger'
 import SkylimitStatistics from '../components/SkylimitStatistics'
-import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout } from '../curation/skylimitCache'
+import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout, getAllFollows } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
 import EditionLayoutEditor from '../components/EditionLayoutEditor'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
@@ -126,6 +127,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [editionFeedback, setEditionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [editionWarning, setEditionWarning] = useState<string[] | null>(null)
   const [visualEditorMode, setVisualEditorMode] = useState(false)
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
@@ -279,7 +281,7 @@ export default function SettingsPage() {
       setFeedCacheStats(feedStats)
       setSummariesStats(summariesCacheStats)
     } catch (error) {
-      console.error('Failed to load cache stats:', error)
+      log.error('Settings', 'Failed to load cache stats:', error)
     } finally {
       setLoadingStats(false)
     }
@@ -324,7 +326,7 @@ export default function SettingsPage() {
             ? startSummary
             : (endSummaries[0] ?? null)
 
-          console.log(`[Cache Gaps] Range ${new Date(range.startTime).toLocaleString()} – ${new Date(range.endTime).toLocaleString()}: startSummaries=${startSummaries.length}, endSummaries=${endSummaries.length}, startPostNum=${startSummary?.postNumber}, endPostNum=${endSummary?.postNumber}`)
+          log.debug('Settings', `Range ${new Date(range.startTime).toLocaleString()} – ${new Date(range.endTime).toLocaleString()}: startSummaries=${startSummaries.length}, endSummaries=${endSummaries.length}, startPostNum=${startSummary?.postNumber}, endPostNum=${endSummary?.postNumber}`)
 
           return {
             ...range,
@@ -335,7 +337,7 @@ export default function SettingsPage() {
       setSummariesCacheRanges(enrichedRanges)
       setShowCacheGaps(true)
     } catch (error) {
-      console.error('Failed to load cache gaps:', error)
+      log.error('Settings', 'Failed to load cache gaps:', error)
     } finally {
       setLoadingCacheGaps(false)
     }
@@ -347,7 +349,7 @@ export default function SettingsPage() {
       setSettings(s)
       setOriginalSettings(structuredClone(s))
     } catch (error) {
-      console.error('Failed to load settings:', error)
+      log.error('Settings', 'Failed to load settings:', error)
     } finally {
       setLoading(false)
     }
@@ -366,15 +368,16 @@ export default function SettingsPage() {
         ? { ...settings, lastBrowserTimezone: getBrowserTimezone() }
         : settings
       await updateSettings(settingsToSave)
+      await log.refreshLevel()
 
       // If timezone changed, clear numbering and re-assign
       if (timezoneChanged && settings.timezone) {
-        console.log(`[Settings] Timezone changed to ${settings.timezone}, re-numbering posts...`)
+        log.info('Settings', `Timezone changed to ${settings.timezone}, re-numbering posts...`)
         const { clearAllNumbering } = await import('../curation/skylimitCache')
         await clearAllNumbering()
         const { assignAllNumbers } = await import('../curation/skylimitNumbering')
         await assignAllNumbers()
-        console.log('[Settings] Post re-numbering complete')
+        log.info('Settings', 'Post re-numbering complete')
       }
 
       // Mark settings as saved (no longer dirty)
@@ -382,7 +385,7 @@ export default function SettingsPage() {
 
       alert(timezoneChanged ? 'Settings saved! Posts re-numbered for new timezone.' : 'Settings saved!')
     } catch (error) {
-      console.error('Failed to save settings:', error)
+      log.error('Settings', 'Failed to save settings:', error)
       alert('Failed to save settings')
     } finally {
       setSaving(false)
@@ -410,7 +413,7 @@ export default function SettingsPage() {
       await clearAllTimeVariantDataAndLogout()
       // Function handles logout and redirect to /login
     } catch (error) {
-      console.error('Failed to reset data:', error)
+      log.error('Settings', 'Failed to reset data:', error)
       setIsResettingData(false)
     }
   }
@@ -433,13 +436,16 @@ export default function SettingsPage() {
         }, 500)
       }
     } catch (error) {
-      console.error('Failed to reset feed:', error)
+      log.error('Settings', 'Failed to reset feed:', error)
       setIsResettingFeed(false)
     }
   }
 
   const handleClearRecent = async () => {
     setIsClearingRecent(true)
+    // Clear saved scroll position before navigating so scroll restoration doesn't override scroll-to-top
+    sessionStorage.removeItem('websky_home_scroll_state')
+    sessionStorage.removeItem('websky_home_editions_scroll_state')
     try {
       if (typeof (window as any).clearRecentAndReloadHomePage === 'function') {
         await (window as any).clearRecentAndReloadHomePage()
@@ -456,7 +462,7 @@ export default function SettingsPage() {
         }, 500)
       }
     } catch (error) {
-      console.error('Failed to clear recent:', error)
+      log.error('Settings', 'Failed to clear recent:', error)
       setIsClearingRecent(false)
     }
   }
@@ -468,7 +474,7 @@ export default function SettingsPage() {
       // Refresh page to apply default settings
       window.location.reload()
     } catch (error) {
-      console.error('Failed to clear settings:', error)
+      log.error('Settings', 'Failed to clear settings:', error)
       setIsClearingSettings(false)
     }
   }
@@ -591,6 +597,15 @@ export default function SettingsPage() {
         <Button
           type="button"
           variant="secondary"
+          onClick={() => setShowClearRecentModal(true)}
+          disabled={isClearingRecent}
+          className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+        >
+          Refetch recent posts
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
           onClick={() => setShowClearSettingsModal(true)}
           disabled={isClearingSettings}
           className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
@@ -607,6 +622,28 @@ export default function SettingsPage() {
           Reset ALL
         </Button>
       </div>
+
+      {/* Refetch Recent Posts Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showClearRecentModal}
+        onClose={() => setShowClearRecentModal(false)}
+        onConfirm={handleClearRecent}
+        title="Refetch Recent Posts"
+        message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
+• Feed cache and pagination state (cleared entirely)
+• Post summaries newer than yesterday's midnight (removed)
+• Edition registry entries created within the lookback period (removed)
+
+Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
+
+Your Skylimit settings, follow list, and login session will be preserved.
+
+You will be redirected to the home page with a fresh lookback.`}
+        confirmText={isClearingRecent ? 'Refetching...' : 'Refetch Recent Posts'}
+        cancelText="Cancel"
+        isDangerous={false}
+        isLoading={isClearingRecent}
+      />
 
       {/* Reset Settings Confirmation Modal */}
       <ConfirmModal
@@ -900,13 +937,36 @@ This cannot be undone.`}
               </label>
 
               <label className="flex items-center space-x-3">
+                <span>Console log level</span>
+                <select
+                  value={settings.consoleLogLevel ?? 2}
+                  onChange={(e) => {
+                    const level = Number(e.target.value)
+                    updateSetting('consoleLogLevel', level)
+                    log.setLevel(level)
+                  }}
+                  className="ml-2 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm"
+                >
+                  <option value={0}>0 - Errors only</option>
+                  <option value={1}>1 - Warnings</option>
+                  <option value={2}>2 - Milestones</option>
+                  <option value={3}>3 - Debug</option>
+                  <option value={4}>4 - Verbose</option>
+                </select>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <span>Trace users:</span>
                 <input
-                  type="checkbox"
-                  checked={settings.quietMode ?? false}
-                  onChange={(e) => updateSetting('quietMode', e.target.checked)}
-                  className="w-5 h-5"
+                  type="text"
+                  value={settings.traceUsers ?? ''}
+                  onChange={(e) => {
+                    updateSetting('traceUsers', e.target.value)
+                    log.setTraceUsers(e.target.value)
+                  }}
+                  placeholder="handle1, handle2, ..."
+                  className="ml-2 flex-1 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm"
                 />
-                <span>Quiet mode (suppress [Paged Updates] and [Idle Timer] console logs)</span>
               </label>
 
               <label className="flex items-center space-x-3">
@@ -1323,6 +1383,7 @@ You will be logged out and redirected to the login page.`}
   // Render Editions tab content
   const handleSaveEditionLayout = async (text: string) => {
     if (!settings) return
+    setEditionWarning(null)
     const trimmed = text.trim()
     if (!trimmed) {
       // Empty layout: clear editions — check for held posts first
@@ -1379,7 +1440,27 @@ You will be logged out and redirected to the login page.`}
       if (rematchResult.released > 0) rematchParts.push(`${rematchResult.released} released`)
       debugInfo = ` [${rematchResult.total} held post${rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
     }
-    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo}` })
+    // Check for unfollowed handles in the layout
+    const literalHandles = new Set<string>()
+    for (const edition of result.editions) {
+      for (const section of edition.sections) {
+        for (const pattern of section.patterns) {
+          if (!pattern.userPattern.includes('*')) {
+            literalHandles.add(pattern.userPattern)
+          }
+        }
+      }
+    }
+    if (literalHandles.size > 0) {
+      const allFollows = await getAllFollows()
+      const followedSet = new Set(
+        allFollows.filter(f => !f.username.startsWith('editor_')).map(f => f.username)
+      )
+      const unfollowed = [...literalHandles].filter(h => !followedSet.has(h)).sort()
+      setEditionWarning(unfollowed.length > 0 ? unfollowed : null)
+    }
+
+    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo} To re-assemble editions using recent posts, "Refetch recent posts" using the button in Settings/General.` })
   }
 
   const renderEditionsTab = () => {
@@ -1420,7 +1501,9 @@ You will be logged out and redirected to the login page.`}
               <EditionLayoutEditor
                 layoutText={settings.editionLayout}
                 onSave={handleSaveEditionLayout}
+                onTextChange={(text) => updateSetting('editionLayout', text)}
                 feedback={editionFeedback}
+                unfollowedWarning={editionWarning}
                 headerContent={
                   <button
                     type="button"
@@ -1461,7 +1544,7 @@ You will be logged out and redirected to the login page.`}
                 />
                 <p className="text-sm text-gray-500 mt-1">
                   Configure edition layout patterns. Lines starting with @ define user patterns
-                  (with optional text patterns after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
+                  (with optional topics after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
                   # HEAD and # TAIL mark leading/trailing sections that apply to all editions.
                   * denotes wildcard match to word boundary. Patterns are matched top-to-bottom (first match wins).
                 </p>
@@ -1478,42 +1561,25 @@ You will be logged out and redirected to the login page.`}
                     </span>
                   )}
                 </div>
+                {editionWarning && editionWarning.length > 0 && (
+                  <div className="mt-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200 p-3 rounded-lg text-sm">
+                    <div className="font-medium mb-1">
+                      {editionWarning.length} unfollowed user{editionWarning.length !== 1 ? 's' : ''} in layout — their posts won't appear in editions:
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      {editionWarning.map(handle => (
+                        <a key={handle} href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noopener noreferrer"
+                           className="text-blue-600 dark:text-blue-400 hover:underline">
+                          @{handle}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
         </div>
 
-        <div className="flex flex-wrap gap-3 mt-6">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setShowClearRecentModal(true)}
-            disabled={isClearingRecent}
-            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-          >
-            Clear recent
-          </Button>
-        </div>
-
-        <ConfirmModal
-          isOpen={showClearRecentModal}
-          onClose={() => setShowClearRecentModal(false)}
-          onConfirm={handleClearRecent}
-          title="Clear Recent Data"
-          message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
-• Feed cache and pagination state (cleared entirely)
-• Post summaries newer than yesterday's midnight (removed)
-• Edition registry entries created within the lookback period (removed)
-
-Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
-
-Your Skylimit settings, follow list, and login session will be preserved.
-
-You will be redirected to the home page with a fresh lookback.`}
-          confirmText={isClearingRecent ? 'Clearing...' : 'Clear Recent'}
-          cancelText="Cancel"
-          isDangerous={false}
-          isLoading={isClearingRecent}
-        />
       </div>
     )
   }

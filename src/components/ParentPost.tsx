@@ -11,6 +11,7 @@ import Avatar from './Avatar'
 import PostMedia from './PostMedia'
 import Spinner from './Spinner'
 import RichText from './RichText'
+import log from '../utils/logger'
 
 interface ParentPostProps {
   parentUri: string
@@ -53,7 +54,7 @@ export default function ParentPost({ parentUri, childPost, onClick }: ParentPost
           setParentPost(fetchedParent)
         }
       } catch (error) {
-        console.error('Failed to fetch parent post:', error)
+        log.error('ParentPost', 'Failed to fetch parent post:', error)
       } finally {
         setIsLoading(false)
       }

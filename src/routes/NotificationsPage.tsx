@@ -11,6 +11,7 @@ import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import AggregatedNotificationComponent from '../components/AggregatedNotification'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
+import log from '../utils/logger'
 
 type Notification = AppBskyNotificationListNotifications.Notification
 
@@ -113,7 +114,7 @@ export default function NotificationsPage() {
               postCache.set(post.uri, post)
             }
           } catch (error) {
-            console.warn('Batch fetch failed:', error)
+            log.warn('Notifications', 'Batch fetch failed:', error)
           }
         }
 
@@ -129,7 +130,7 @@ export default function NotificationsPage() {
               }
             }
           } catch (error) {
-            console.warn('Failed to fetch thread:', uri, error)
+            log.warn('Notifications', 'Failed to fetch thread:', uri, error)
           }
         })
 
@@ -179,7 +180,7 @@ export default function NotificationsPage() {
             postCache.set(post.uri, post)
           }
         } catch (error) {
-          console.warn('Batch fetch resolved reposts failed:', error)
+          log.warn('Notifications', 'Batch fetch resolved reposts failed:', error)
         }
       }
 
@@ -230,19 +231,19 @@ export default function NotificationsPage() {
         setNotifications(notificationsWithPosts)
         // Mark notifications as seen when first loading (skip in read-only mode)
         if (isReadOnlyMode()) {
-          console.warn('Read-only mode: skipping updateSeenNotifications')
+          log.warn('Notifications', 'Read-only mode: skipping updateSeenNotifications')
         } else {
           try {
             await updateSeenNotifications(agent, new Date().toISOString())
           } catch (error) {
-            console.warn('Failed to mark notifications as seen:', error)
+            log.warn('Notifications', 'Failed to mark notifications as seen:', error)
           }
         }
       }
 
       setCursor(newCursor)
     } catch (error) {
-      console.error('Failed to load notifications:', error)
+      log.error('Notifications', 'Failed to load notifications:', error)
       const errorMessage = error instanceof Error ? error.message : 'Failed to load notifications'
       addToast(errorMessage, 'error')
       

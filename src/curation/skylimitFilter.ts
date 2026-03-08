@@ -29,6 +29,7 @@ import { TextPattern } from './skylimitEditions'
 import { saveFollow, wasRepostOrOriginalDisplayedWithinInterval } from './skylimitCache'
 import { clientNow } from '../utils/clientClock'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
+import log from '../utils/logger'
 
 /**
  * Count total posts per day for a user entry.
@@ -132,10 +133,19 @@ export async function curateSinglePost(
 ): Promise<CurationResult> {
   const summary = createPostSummary(post)
   const modStatus: CurationResult = { curation_msg: '' }
+  let dropReason = ''
+
+  const traceReturn = () => {
+    log.trace('curated', summary.username, summary.postTimestamp, summary.postText || '',
+      `status=${modStatus.curation_status}` +
+      (modStatus.edition_tag ? ` edition_tag=${modStatus.edition_tag} pattern="${modStatus.edition_pattern}"` : '') +
+      (dropReason ? ` drop="${dropReason}"` : ''))
+  }
 
   // Always show own posts
   if (summary.username === myUsername || summary.username === summary.orig_username) {
     modStatus.curation_status = 'self_show'
+    traceReturn()
     return modStatus
   }
 
@@ -184,7 +194,8 @@ export async function curateSinglePost(
       modStatus.edition_pattern = editionMatch.editionPattern
       modStatus.edition_status = 'hold'
       modStatus.curation_msg = `[Dropped edition hold [${editionMatch.editionTag}] ${editionMatch.editionPattern}]`
-      console.log(`[Edition/DEBUG] Hold: @${summary.username} post=${new Date(summary.postTimestamp).toLocaleString()} tag=${editionMatch.editionTag} pattern="${editionMatch.editionPattern}"`)
+      log.verbose('Edition', `Hold: @${summary.username} post=${new Date(summary.postTimestamp).toLocaleString()} tag=${editionMatch.editionTag} pattern="${editionMatch.editionPattern}"`)
+      traceReturn()
       return modStatus
     }
   }
@@ -200,6 +211,7 @@ export async function curateSinglePost(
     } else {
       modStatus.curation_msg = '(Pending curation)'
     }
+    traceReturn()
     return modStatus
   }
   
@@ -265,6 +277,7 @@ export async function curateSinglePost(
         if (wasDisplayedWithinInterval) {
           modStatus.curation_status = 'repost_drop'
           modStatus.curation_msg = handledStatus + `\n[Dropped: repost/original shown within ${intervalHours}h]`
+          traceReturn()
           return modStatus
         }
       }
@@ -274,7 +287,6 @@ export async function curateSinglePost(
     const regularDrop = randomNum >= userEntry.regular_prob
 
     // Set curation_status based on decision
-    let dropReason = ''
     if (periodicAccepted) {
       modStatus.curation_status = 'periodic_show'
     } else if (priority) {
@@ -373,6 +385,7 @@ export async function curateSinglePost(
     currentFollows[summary.username] = updatedFollow  // Update in-memory for batch efficiency
   }
 
+  traceReturn()
   return modStatus
 }
 

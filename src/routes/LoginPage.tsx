@@ -146,8 +146,10 @@ export default function LoginPage() {
                 )}
               </button>
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Use an app password from your Bluesky settings, not your account password.
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+              Use a Bluesky app password, not your account password.
+              {' '}If you don't have an app password,{' '}
+              <a href="https://bsky.app/settings/app-passwords" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">create one in Bluesky settings</a>.
             </p>
           </div>
 
@@ -201,18 +203,6 @@ export default function LoginPage() {
             )}
           </Button>
         </form>
-
-        <p className="text-center text-sm text-gray-500 dark:text-gray-400 mt-4">
-          Don't have an app password?{' '}
-          <a
-            href="https://bsky.app/settings/app-passwords"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 hover:underline"
-          >
-            Create one in Bluesky settings
-          </a>
-        </p>
 
         <div className="text-center mt-6">
           <a

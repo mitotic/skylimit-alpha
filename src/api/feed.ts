@@ -4,9 +4,10 @@
  * Handles fetching timelines, home feeds, and post threads
  */
 
-import { BskyAgent, AppBskyFeedGetTimeline, AppBskyFeedGetAuthorFeed, AppBskyFeedGetPostThread, AppBskyFeedGetLikes, AppBskyFeedGetRepostedBy, AppBskyFeedDefs, AppBskyBookmarkDefs } from '@atproto/api'
+import { BskyAgent, AppBskyFeedGetTimeline, AppBskyFeedGetAuthorFeed, AppBskyFeedGetPostThread, AppBskyFeedGetLikes, AppBskyFeedGetRepostedBy, AppBskyFeedDefs, AppBskyBookmarkDefs, AppBskyActorDefs } from '@atproto/api'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 import { applyTimeShift, isClockAccelerated } from '../utils/clientClock'
+import log from '../utils/logger'
 
 // --- Skyspeed Command Event System ---
 
@@ -33,7 +34,7 @@ function notifySkyspeedCommand(command: SkyspeedCommand): void {
     try {
       listener(command)
     } catch (e) {
-      console.warn('[Skyspeed Command] Listener error:', e)
+      log.warn('Skyspeed Command', 'Listener error:', e)
     }
   }
 }
@@ -102,10 +103,10 @@ export async function getHomeFeed(
       if (commandHeader && skyspeedCommandListeners.size > 0) {
         const command = parseSkyspeedCommandHeader(commandHeader)
         if (command) {
-          console.log('[Skyspeed Command] Received:', commandHeader)
+          log.debug('Skyspeed Command', 'Received:', commandHeader)
           notifySkyspeedCommand(command)
         } else {
-          console.warn('[Skyspeed Command] Unrecognized command:', commandHeader)
+          log.warn('Skyspeed Command', 'Unrecognized command:', commandHeader)
         }
       }
 
@@ -318,7 +319,7 @@ export async function fetchParentChain(
       const record = threadPost.post.record as { reply?: { parent?: { uri: string } } }
       currentUri = record?.reply?.parent?.uri
     } catch (error) {
-      console.warn('Failed to fetch parent post:', error)
+      log.warn('Feed', 'Failed to fetch parent post:', error)
       break
     }
   }
@@ -451,5 +452,72 @@ export async function getBookmarks(
       throw new Error(`Failed to fetch bookmarks: ${error.message}`)
     }
     throw new Error('Failed to fetch bookmarks: Unknown error')
+  })
+}
+
+/**
+ * Fetches the user's saved/pinned feed generators with their display info.
+ * Returns GeneratorView objects for feeds of type 'feed' (excludes lists and timelines).
+ */
+export async function getSavedFeeds(
+  agent: BskyAgent
+): Promise<AppBskyFeedDefs.GeneratorView[]> {
+  const prefs = await agent.getPreferences()
+  const feedItems = (prefs.savedFeeds || []).filter(
+    (f: AppBskyActorDefs.SavedFeed) => f.type === 'feed' && f.pinned
+  )
+  if (feedItems.length === 0) return []
+
+  const feedUris = feedItems.map((f: AppBskyActorDefs.SavedFeed) => f.value)
+  const response = await agent.app.bsky.feed.getFeedGenerators({ feeds: feedUris })
+  return response.data.feeds
+}
+
+/**
+ * Fetches posts from a custom feed generator with rate limit handling
+ */
+export async function getCustomFeed(
+  agent: BskyAgent,
+  feedUri: string,
+  options: FeedOptions = {}
+): Promise<{
+  feed: AppBskyFeedDefs.FeedViewPost[]
+  cursor?: string
+}> {
+  return retryWithBackoff(
+    async () => {
+      const response = await agent.app.bsky.feed.getFeed({
+        feed: feedUri,
+        limit: options.limit || 25,
+        cursor: options.cursor,
+      })
+
+      return {
+        feed: response.data.feed,
+        cursor: response.data.cursor,
+      }
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to fetch custom feed: ${error.message}`)
+    }
+    throw new Error('Failed to fetch custom feed: Unknown error')
   })
 }

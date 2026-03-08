@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { HomeTab, getFeedStateKey, getScrollStateKey } from './homePageTypes'
+import log from '../utils/logger'
 
 interface UseScrollManagementParams {
   locationPathname: string
@@ -217,7 +218,7 @@ export function useScrollManagement({
           try {
             sessionStorage.removeItem(getScrollStateKey(activeTab))
           } catch (error) {
-            console.warn('Failed to clear scroll position:', error)
+            log.warn('Scroll', 'Failed to clear scroll position:', error)
           }
           return
         }
@@ -226,7 +227,7 @@ export function useScrollManagement({
         try {
           sessionStorage.setItem(getScrollStateKey(activeTab), scrollY.toString())
         } catch (error) {
-          console.warn('Failed to save scroll position:', error)
+          log.warn('Scroll', 'Failed to save scroll position:', error)
         }
       }, 150) // 150ms debounce
     }

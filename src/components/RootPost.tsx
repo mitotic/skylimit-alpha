@@ -10,6 +10,7 @@ import { getPostUrl, getProfileUrl } from '../curation/skylimitGeneral'
 import Avatar from './Avatar'
 import Spinner from './Spinner'
 import RichText from './RichText'
+import log from '../utils/logger'
 
 interface RootPostProps {
   rootUri: string
@@ -54,7 +55,7 @@ export default function RootPost({ rootUri, isDirectReply, onClick }: RootPostPr
         // Silently handle "Post not found" errors (deleted posts are expected)
         const errorMessage = error instanceof Error ? error.message : String(error)
         if (!errorMessage.includes('Post not found')) {
-          console.warn('Failed to fetch root post:', error)
+          log.warn('RootPost', 'Failed to fetch root post:', error)
         }
       } finally {
         setIsLoading(false)

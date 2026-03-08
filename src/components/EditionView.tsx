@@ -21,6 +21,7 @@ import { CurationFeedViewPost, EditionRegistryEntry } from '../curation/types'
 import { getPostSummariesByIds } from '../curation/skylimitCache'
 import { markEditionViewed } from '../curation/editionRegistry'
 import { clientNow } from '../utils/clientClock'
+import log from '../utils/logger'
 
 /** Format a registry entry's date as a short string like "Mar 2, 9 AM" */
 function formatEditionDate(entry: EditionRegistryEntry): string {
@@ -111,7 +112,7 @@ export default function EditionView({
           }
         }
       } catch (error) {
-        console.error('[EditionView] Failed to load edition registry:', error)
+        log.error('Edition', 'Failed to load edition registry:', error)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -181,7 +182,7 @@ export default function EditionView({
           }
         }
       } catch (error) {
-        console.error('[EditionView] Failed to load edition content:', error)
+        log.error('Edition', 'Failed to load edition content:', error)
       } finally {
         if (!cancelled) setEditionLoading(false)
       }

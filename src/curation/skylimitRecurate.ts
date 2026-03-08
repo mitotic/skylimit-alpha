@@ -11,6 +11,7 @@ import { getEditionTimeStrs } from './skylimitGeneral'
 import { getPostUniqueIdFromCache } from './skylimitFeedCache'
 import { PostSummary } from './types'
 import { assignAllNumbers } from './skylimitNumbering'
+import log from '../utils/logger'
 
 /**
  * Recompute curation status for all posts in summaries cache
@@ -26,7 +27,7 @@ export async function recomputeCurationDecisions(
   myDid: string
 ): Promise<{ updated: number; skipped: number }> {
   try {
-    console.log('Starting curation status recomputation...')
+    log.debug('Recuration', 'Starting curation status recomputation...')
     
     const settings = await getSettings()
     const [currentStats, currentProbs] = await getFilter() || [null, null]
@@ -139,13 +140,13 @@ export async function recomputeCurationDecisions(
     }
 
     // After re-curation completes, assign invariant post numbers
-    console.log('Assigning post numbers after curation recomputation...')
+    log.debug('Recuration', 'Assigning post numbers after curation recomputation...')
     await assignAllNumbers()
 
-    console.log(`Curation recomputation complete: ${updatedCount} updated, ${skippedCount} skipped`)
+    log.info('Recuration', `Curation recomputation complete: ${updatedCount} updated, ${skippedCount} skipped`)
     return { updated: updatedCount, skipped: skippedCount }
   } catch (error) {
-    console.error('Error during curation recomputation:', error)
+    log.error('Recuration', 'Error during curation recomputation:', error)
     throw error
   }
 }

@@ -5,6 +5,7 @@ import App from './App'
 import { SessionProvider } from './auth/SessionContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import './styles/index.css'
+import log from './utils/logger'
 
 // Migrate old larger-text boolean to new text-size setting
 if (localStorage.getItem('websky_larger_text') !== null) {
@@ -55,7 +56,7 @@ function performFullReset(preserveKeys: Record<string, string> = {}): never {
     const database = request.result
     const storeNames = Array.from(database.objectStoreNames)
     if (storeNames.length === 0) {
-      console.log('[Reset] No stores to clear, redirecting')
+      log.debug('Reset', 'No stores to clear, redirecting')
       database.close()
       redirectToHome()
       return
@@ -67,29 +68,29 @@ function performFullReset(preserveKeys: Record<string, string> = {}): never {
       clearReq.onsuccess = () => {
         cleared++
         if (cleared === storeNames.length) {
-          console.log(`[Reset] Cleared ${cleared} object stores`)
+          log.debug('Reset', `Cleared ${cleared} object stores`)
         }
       }
     }
     tx.oncomplete = () => {
-      console.log('[Reset] All stores cleared successfully')
+      log.debug('Reset', 'All stores cleared successfully')
       database.close()
       redirectToHome()
     }
     tx.onerror = () => {
-      console.error('[Reset] Failed to clear stores, redirecting anyway')
+      log.error('Reset', 'Failed to clear stores, redirecting anyway')
       database.close()
       redirectToHome()
     }
   }
   request.onerror = () => {
-    console.error('[Reset] Failed to open database for clearing, redirecting anyway')
+    log.error('Reset', 'Failed to open database for clearing, redirecting anyway')
     redirectToHome()
   }
 
   // Safety net: if none of the callbacks fire within 3 seconds, redirect anyway
   setTimeout(() => {
-    console.warn('[Reset] Timeout waiting for store clearing, redirecting')
+    log.warn('Reset', 'Timeout waiting for store clearing, redirecting')
     redirectToHome()
   }, 3000)
 
@@ -136,7 +137,7 @@ if (urlParams.has('server')) {
   if (serverParam === '') {
     // Empty ?server= resets to default (bsky.social)
     localStorage.removeItem('websky_login_debug_mode')
-    console.log('[Server] Resetting to default server (bsky.social)')
+    log.info('Server', 'Resetting to default server (bsky.social)')
     if (previousServer) {
       // Server is changing from non-standard back to default - need reset
       if (hasAutoLoginParams || confirm('Switching back to bsky.social. All caches will be reset. Continue?')) {
@@ -151,17 +152,17 @@ if (urlParams.has('server')) {
     }
   } else {
     // Non-empty ?server= sets a test server
-    console.log(`[Server] Server parameter: ${serverParam}`)
+    log.debug('Server', `Server parameter: ${serverParam}`)
 
     if (previousServer !== serverParam) {
       // Server is changing
       if (previousServer) {
         // Switching between servers - need reset
         if (hasAutoLoginParams || confirm(`Switching server to ${serverParam}. All caches will be reset. Continue?`)) {
-          console.log(`[Server] Non-standard server configured: ${serverParam}`)
+          log.debug('Server', `Non-standard server configured: ${serverParam}`)
           performFullReset({ [SERVER_STORAGE_KEY]: serverParam, ...buildAutoLoginPayload() })
         } else {
-          console.log('[Server] User cancelled server switch')
+          log.debug('Server', 'User cancelled server switch')
           window.history.replaceState({}, '', window.location.pathname)
         }
       } else {
@@ -171,17 +172,17 @@ if (urlParams.has('server')) {
           const port = serverParam.split(':')[1]
           const protocol = hostname === 'localhost' ? 'http' : 'https'
           const url = port ? `${protocol}://${hostname}:${port}` : `${protocol}://${hostname}`
-          console.log(`[Server] Non-standard server configured: ${serverParam}`)
-          console.log(`[Server] Service URL: ${url}`)
+          log.debug('Server', `Non-standard server configured: ${serverParam}`)
+          log.debug('Server', `Service URL: ${url}`)
           performFullReset({ [SERVER_STORAGE_KEY]: serverParam, ...buildAutoLoginPayload() })
         } else {
-          console.log('[Server] User cancelled server connection')
+          log.debug('Server', 'User cancelled server connection')
           window.history.replaceState({}, '', window.location.pathname)
         }
       }
     } else {
       // Same server as before, just strip the param
-      console.log(`[Server] Using non-standard server: ${serverParam}`)
+      log.info('Server', `Using non-standard server: ${serverParam}`)
       window.history.replaceState({}, '', window.location.pathname)
     }
   }
@@ -195,8 +196,8 @@ if (!urlParams.has('server')) {
     const port = storedServer.split(':')[1]
     const protocol = hostname === 'localhost' ? 'http' : 'https'
     const url = port ? `${protocol}://${hostname}:${port}` : `${protocol}://${hostname}`
-    console.log(`[Server] Using non-standard server: ${storedServer}`)
-    console.log(`[Server] Service URL: ${url}`)
+    log.info('Server', `Using non-standard server: ${storedServer}`)
+    log.debug('Server', `Service URL: ${url}`)
   }
 }
 
@@ -205,7 +206,7 @@ if (urlParams.get('clobber') === '1') {
   if (!confirm('Delete ALL site data (storage + database) and start fresh?')) {
     window.history.replaceState({}, '', '/')
   } else {
-    console.log('[Clobber] Wiping all site data')
+    log.info('Clobber', 'Wiping all site data')
     localStorage.clear()
     sessionStorage.clear()
     const redirect = () => { window.location.href = '/' }
@@ -216,7 +217,7 @@ if (urlParams.get('clobber') === '1') {
         for (const db of dbs) {
           const req = indexedDB.deleteDatabase(db.name!)
           req.onsuccess = req.onerror = req.onblocked = () => {
-            console.log(`[Clobber] Deleted database: ${db.name}`)
+            log.debug('Clobber', `Deleted database: ${db.name}`)
             if (--remaining === 0) redirect()
           }
         }
@@ -227,7 +228,7 @@ if (urlParams.get('clobber') === '1') {
       req.onsuccess = req.onerror = req.onblocked = () => redirect()
     }
     setTimeout(() => {
-      console.warn('[Clobber] Timeout, redirecting')
+      log.warn('Clobber', 'Timeout, redirecting')
       window.location.href = '/'
     }, 3000)
     throw new Error('Clobber in progress - halting React render')
@@ -236,16 +237,16 @@ if (urlParams.get('clobber') === '1') {
 
 // Handle ?reset=1 parameter
 if (urlParams.get('reset') === '1') {
-  console.log('[Reset] Reset flag detected in main.tsx')
+  log.info('Reset', 'Reset flag detected in main.tsx')
   if (hasAutoLoginParams || confirm('Reset ALL curation settings and cached data? This will also log you out.')) {
-    console.log('[Reset] Clearing all data')
+    log.debug('Reset', 'Clearing all data')
     const serverToPreserve = localStorage.getItem(SERVER_STORAGE_KEY)
     performFullReset({
       ...(serverToPreserve ? { [SERVER_STORAGE_KEY]: serverToPreserve } : {}),
       ...buildAutoLoginPayload(),
     })
   } else {
-    console.log('[Reset] User cancelled reset')
+    log.debug('Reset', 'User cancelled reset')
     window.history.replaceState({}, '', '/')
   }
 }
@@ -256,7 +257,7 @@ if (urlParams.get('reset') === '1') {
 const autoLoginPayload = buildAutoLoginPayload()
 if (Object.keys(autoLoginPayload).length > 0) {
   ;(window as any).__SKYLIMIT_AUTO_LOGIN__ = JSON.parse(autoLoginPayload[AUTO_LOGIN_STORAGE_KEY])
-  console.log('[AutoLogin] Auto-login params set')
+  log.info('AutoLogin', 'Auto-login params set')
 } else {
   // Check if params were preserved through a reset (stored in localStorage by performFullReset)
   const stored = localStorage.getItem(AUTO_LOGIN_STORAGE_KEY)
@@ -264,7 +265,7 @@ if (Object.keys(autoLoginPayload).length > 0) {
     localStorage.removeItem(AUTO_LOGIN_STORAGE_KEY)
     try {
       ;(window as any).__SKYLIMIT_AUTO_LOGIN__ = JSON.parse(stored)
-      console.log('[AutoLogin] Auto-login params restored from reset')
+      log.debug('AutoLogin', 'Auto-login params restored from reset')
     } catch { /* ignore */ }
   }
 }
@@ -282,6 +283,9 @@ window.addEventListener('pageshow', (event) => {
     window.location.reload()
   }
 })
+
+// Initialize logger level from stored settings
+log.refreshLevel()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

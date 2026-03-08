@@ -11,6 +11,8 @@ import { parseEditionFile, HEAD_EDITION_NUMBER, TAIL_EDITION_NUMBER } from '../c
 import type { Edition } from '../curation/skylimitEditions'
 import { getAllFollows, getTextSuggestions } from '../curation/skylimitCache'
 import type { FollowInfo, SuggestionsMap, TextSuggestions } from '../curation/types'
+import { useSession } from '../auth/SessionContext'
+import { getUserLists, getListMembers } from '../api/social'
 
 // --- Editor State Types ---
 
@@ -68,7 +70,7 @@ function makeEmptyCommon(): EditorEdition {
     id: makeId(),
     type: 'common',
     time: '',
-    name: 'Common sections/patterns',
+    name: 'Users+topics and Sections common to all editions',
     sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
     collapsed: false,
   }
@@ -155,7 +157,7 @@ function convertEdition(
         warnings.push(`Wildcard pattern "@${pat.userPattern}" shown as read-only`)
       }
       if (extraTexts) {
-        warnings.push(`Multiple text patterns for "@${pat.userPattern}" — only first is editable`)
+        warnings.push(`Multiple topics for "@${pat.userPattern}" — only first is editable`)
       }
 
       patterns.push({
@@ -187,7 +189,7 @@ function convertEdition(
     id: makeId(),
     type,
     time: parsed.time,
-    name: type === 'common' ? 'Common sections/patterns' : parsed.name,
+    name: type === 'common' ? 'Users+topics and Sections common to all editions' : parsed.name,
     sections,
     collapsed: false,
   }
@@ -479,7 +481,7 @@ function TextPatternAutocomplete({
           }, 150)
         }}
         onKeyDown={handleKeyDown}
-        placeholder="text pattern"
+        placeholder="topic(s)"
         className="w-full px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
       />
       {open && filtered.length > 0 && (
@@ -545,7 +547,7 @@ function PatternRow({
     <div className="flex flex-col gap-1 py-2">
       {/* Handle + text pattern + delete on one line */}
       <div className="flex items-center gap-2">
-        <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">@</span>
+        <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0 -mr-1.5">@</span>
         <div className="flex-[3] min-w-0">
           <HandleAutocomplete
             value={pattern.handle}
@@ -567,7 +569,7 @@ function PatternRow({
             type="text"
             value={pattern.textPattern}
             onChange={(e) => onUpdate({ ...pattern, textPattern: e.target.value })}
-            placeholder="text pattern"
+            placeholder="topic(s)"
             className="flex-[2] min-w-0 px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
           />
         )}
@@ -659,6 +661,117 @@ function SectionEditor({
     onUpdate({ ...section, patterns })
   }
 
+  // --- Bluesky List Import ---
+  const { agent } = useSession()
+  const [showListPicker, setShowListPicker] = useState(false)
+  const [lists, setLists] = useState<{ uri: string; name: string }[]>([])
+  const [loadingLists, setLoadingLists] = useState(false)
+  const [importingList, setImportingList] = useState(false)
+  const listPickerRef = useRef<HTMLDivElement>(null)
+
+  // Close list picker on click outside
+  useEffect(() => {
+    if (!showListPicker) return
+    const handleClick = (e: MouseEvent) => {
+      if (listPickerRef.current && !listPickerRef.current.contains(e.target as Node)) {
+        setShowListPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showListPicker])
+
+  const handleOpenListPicker = async () => {
+    if (showListPicker) {
+      setShowListPicker(false)
+      return
+    }
+    if (!agent) return
+    setShowListPicker(true)
+    setLoadingLists(true)
+    try {
+      const userLists = await getUserLists(agent)
+      setLists(userLists)
+    } catch (err) {
+      alert(`Failed to fetch lists: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      setShowListPicker(false)
+    } finally {
+      setLoadingLists(false)
+    }
+  }
+
+  const handleSelectList = async (listUri: string, listName: string) => {
+    if (!agent) return
+    setImportingList(true)
+    try {
+      const handles = await getListMembers(agent, listUri)
+      if (handles.length === 0) {
+        alert(`No members found in "${listName}".`)
+        setShowListPicker(false)
+        setImportingList(false)
+        return
+      }
+
+      // Check follow status against loaded follows
+      const followedHandles = new Set(follows.map(f => f.username))
+      const unfollowedCount = handles.filter(h => !followedHandles.has(h)).length
+      const total = handles.length
+
+      // Confirmation dialog if any unfollowed users or more than 10 total
+      if (unfollowedCount > 0 || total > 10) {
+        let message = `Import ${total} users from "${listName}"?`
+        if (unfollowedCount > 0) {
+          message += `\n\nThere are ${unfollowedCount} unfollowed users in the list. You will need to follow them for their posts to be included in editions.`
+        }
+        if (!window.confirm(message)) {
+          setShowListPicker(false)
+          setImportingList(false)
+          return
+        }
+      }
+
+      const newPatterns: EditorPattern[] = handles.map(handle => ({
+        id: makeId(),
+        handle,
+        textPattern: '',
+      }))
+      onUpdate({ ...section, patterns: [...section.patterns, ...newPatterns] })
+      setShowListPicker(false)
+    } catch (err) {
+      alert(`Failed to import list: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setImportingList(false)
+    }
+  }
+
+  const listPickerDropdown = showListPicker && (
+    <div
+      ref={listPickerRef}
+      className="absolute z-50 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-60 overflow-y-auto min-w-[200px]"
+    >
+      {loadingLists || importingList ? (
+        <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+          {importingList ? 'Importing...' : 'Loading lists...'}
+        </div>
+      ) : lists.length === 0 ? (
+        <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+          No lists found
+        </div>
+      ) : (
+        lists.map(list => (
+          <button
+            key={list.uri}
+            type="button"
+            onClick={() => handleSelectList(list.uri, list.name)}
+            className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200"
+          >
+            {list.name}
+          </button>
+        ))
+      )}
+    </div>
+  )
+
   if (isDefault) {
     return (
       <div className="space-y-1">
@@ -674,13 +787,23 @@ function SectionEditor({
             onMoveDown={idx < section.patterns.length - 1 ? () => movePattern(idx, 1) : undefined}
           />
         ))}
-        <button
-          type="button"
-          onClick={addPattern}
-          className="text-blue-600 dark:text-blue-400 text-sm hover:underline mt-1"
-        >
-          + Add Pattern
-        </button>
+        <div className="flex items-center gap-4 mt-1 ml-4 relative">
+          <button
+            type="button"
+            onClick={addPattern}
+            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
+          >
+            + Add Users+topics
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenListPicker}
+            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
+          >
+            Import Bluesky List
+          </button>
+          {listPickerDropdown}
+        </div>
       </div>
     )
   }
@@ -751,13 +874,23 @@ function SectionEditor({
               onMoveDown={idx < section.patterns.length - 1 ? () => movePattern(idx, 1) : undefined}
             />
           ))}
-          <button
-            type="button"
-            onClick={addPattern}
-            className="text-blue-600 dark:text-blue-400 text-sm hover:underline mt-1"
-          >
-            + Add Pattern
-          </button>
+          <div className="flex items-center gap-4 mt-1 relative">
+            <button
+              type="button"
+              onClick={addPattern}
+              className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
+            >
+              + Add Users+topics
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenListPicker}
+              className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
+            >
+              Import Bluesky List
+            </button>
+            {listPickerDropdown}
+          </div>
         </div>
       )}
     </div>
@@ -821,7 +954,7 @@ function EditionCard({
 
         {isCommon ? (
           <span className="font-semibold text-gray-700 dark:text-gray-300 flex-1">
-            Common sections/patterns
+            Users+topics and Sections common to all editions
           </span>
         ) : (
           <div className="flex items-center gap-2 flex-1" onClick={(e) => e.stopPropagation()}>
@@ -898,17 +1031,20 @@ function EditionCard({
 interface EditionLayoutEditorProps {
   layoutText: string
   onSave: (text: string) => Promise<void>
+  onTextChange?: (text: string) => void  // lightweight sync without validation
   feedback: { type: 'success' | 'error'; message: string } | null
+  unfollowedWarning?: string[] | null
   headerContent?: React.ReactNode
 }
 
-export default function EditionLayoutEditor({ layoutText, onSave, feedback, headerContent }: EditionLayoutEditorProps) {
+export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, feedback, unfollowedWarning, headerContent }: EditionLayoutEditorProps) {
   const [state, setState] = useState<EditorState>(() => parseLayoutToEditor(layoutText))
   const [follows, setFollows] = useState<FollowInfo[]>([])
   const [suggestTextPatterns, setSuggestTextPatterns] = useState(true)
   const [suggestionsByHandle, setSuggestionsByHandle] = useState<SuggestionsMap>(new Map())
   const [allExpanded, setAllExpanded] = useState(true)
   const initializedRef = useRef(false)
+  const internalChangeRef = useRef(false)  // track changes originating from this editor
 
   // Load follows for autocomplete
   useEffect(() => {
@@ -935,6 +1071,10 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true
+      return
+    }
+    if (internalChangeRef.current) {
+      internalChangeRef.current = false
       return
     }
     setState(parseLayoutToEditor(layoutText))
@@ -983,8 +1123,20 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
     await onSave(text)
   }
 
-  // Deduplicate warnings for display
+  // Sync editor state to parent whenever it changes (so switching editors preserves edits)
+  useEffect(() => {
+    if (!initializedRef.current) return
+    if (onTextChange) {
+      internalChangeRef.current = true
+      const text = generateLayoutText(state)
+      onTextChange(text)
+    }
+  }, [state]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deduplicate warnings for display; suppress "at least one user/topic" in visual editor
+  // since the user may still be building the layout — this is caught at save time instead
   const uniqueWarnings = [...new Set(state.warnings)]
+    .filter(w => !w.includes('at least one user/topic'))
 
   // Separate common and timed editions
   const commonEdition = state.editions.find(e => e.type === 'common')
@@ -992,103 +1144,219 @@ export default function EditionLayoutEditor({ layoutText, onSave, feedback, head
 
   const activeSuggestions = suggestTextPatterns ? suggestionsByHandle : undefined
 
+  // Detect empty layout: no timed editions means no editions will ever be assembled
+  const hasTimedEditions = state.editions.some(e => e.type === 'timed')
+  const [timesInput, setTimesInput] = useState('')
+  const [timesError, setTimesError] = useState('')
+
+  const handleInitializeFromTimes = () => {
+    setTimesError('')
+    const raw = timesInput.trim()
+    if (!raw) {
+      setTimesError('Please enter at least one edition time.')
+      return
+    }
+
+    const parts = raw.split(',').map(s => s.trim()).filter(Boolean)
+    const timeRegex = /^\d{2}:\d{2}$/
+    const validTimes: string[] = []
+
+    for (const part of parts) {
+      if (!timeRegex.test(part)) {
+        setTimesError(`Invalid time format: "${part}". Use hh:mm (e.g., 08:00).`)
+        return
+      }
+      const [hStr, mStr] = part.split(':')
+      const h = parseInt(hStr, 10)
+      const m = parseInt(mStr, 10)
+      if (h < 0 || h > 23 || m < 0 || m > 59) {
+        setTimesError(`Invalid time value: "${part}". Hours must be 00-23, minutes 00-59.`)
+        return
+      }
+      if (validTimes.includes(part)) {
+        setTimesError(`Duplicate time: "${part}".`)
+        return
+      }
+      validTimes.push(part)
+    }
+
+    // Sort chronologically
+    validTimes.sort((a, b) => a.localeCompare(b))
+
+    // Create new timed editions
+    const newTimedEditions: EditorEdition[] = validTimes.map(time => ({
+      id: makeId(),
+      type: 'timed' as const,
+      time,
+      name: '',
+      sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
+      collapsed: false,
+    }))
+
+    // If layoutText is blank, start fresh; otherwise preserve existing parsed state
+    let newState: EditorState
+    if (!layoutText.trim()) {
+      newState = {
+        editions: [makeEmptyCommon(), ...newTimedEditions],
+        warnings: [],
+      }
+    } else {
+      const existingCommon = state.editions.filter(e => e.type === 'common')
+      const existingTimed = state.editions.filter(e => e.type === 'timed')
+      const allTimed = [...existingTimed, ...newTimedEditions].sort((a, b) => a.time.localeCompare(b.time))
+      newState = { ...state, editions: [...existingCommon, ...allTimed] }
+    }
+
+    setState(newState)
+    setTimesInput('')
+  }
+
   return (
     <div className="space-y-4">
-      {/* Header row: external content + toggle + suggest checkbox */}
-      <div className="flex items-center justify-between">
-        <div>{headerContent}</div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={toggleAllSections}
-            className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
-          >
-            {allExpanded ? 'Close Sections' : 'Open Sections'}
-          </button>
-        <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={suggestTextPatterns}
-            onChange={(e) => setSuggestTextPatterns(e.target.checked)}
-            className="rounded"
-          />
-          Suggest text patterns
-        </label>
-        </div>
-      </div>
+      {/* Header content (Switch to Text Editor button) — always shown */}
+      <div>{headerContent}</div>
 
-      {/* Warnings */}
-      {uniqueWarnings.length > 0 && (
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200 p-3 rounded-lg text-sm">
-          <div className="font-medium mb-1">Notes:</div>
-          <ul className="list-disc list-inside space-y-0.5">
-            {uniqueWarnings.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Common patterns card */}
-      {commonEdition && (
-        <EditionCard
-          edition={commonEdition}
-          follows={follows}
-          suggestionsByHandle={activeSuggestions}
-          onUpdate={(updated) => updateEdition(state.editions.indexOf(commonEdition), updated)}
-        />
-      )}
-
-      {/* Timed edition cards */}
-      {timedEditions.map((edition) => {
-        const editionIdx = state.editions.indexOf(edition)
-        return (
-          <EditionCard
-            key={edition.id}
-            edition={edition}
-            follows={follows}
-            suggestionsByHandle={activeSuggestions}
-            onUpdate={(updated) => updateEdition(editionIdx, updated)}
-            onDelete={() => deleteEdition(editionIdx)}
-          />
-        )
-      })}
-
-      {/* Add edition button */}
-      <button
-        type="button"
-        onClick={addEdition}
-        className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
-      >
-        + Add Edition
-      </button>
-
-      {/* Read-only TAIL */}
-      {state.preservedTail && (
-        <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-          <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-sm font-medium text-gray-500 dark:text-gray-400">
-            TAIL (read-only)
+      {!hasTimedEditions ? (
+        /* Empty state: prompt for edition times */
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Enter one or more edition times (24-hr hh:mm format, comma-separated):
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={timesInput}
+              onChange={(e) => { setTimesInput(e.target.value); setTimesError('') }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleInitializeFromTimes() }}
+              placeholder="08:00, 18:00"
+              className="flex-1 px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 text-sm"
+            />
+            <button
+              type="button"
+              onClick={handleInitializeFromTimes}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+            >
+              Create Editions
+            </button>
           </div>
-          <pre className="px-4 py-3 text-sm font-mono text-gray-500 dark:text-gray-400 whitespace-pre-wrap">
-            {state.preservedTail}
-          </pre>
+          {timesError && (
+            <p className="text-sm text-red-600 dark:text-red-400">{timesError}</p>
+          )}
         </div>
-      )}
+      ) : (
+        /* Full editor UI */
+        <>
+          {/* Header row: toggle + suggest checkbox */}
+          <div className="flex items-center justify-end">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={toggleAllSections}
+                className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                {allExpanded ? 'Close Sections' : 'Open Sections'}
+              </button>
+              <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={suggestTextPatterns}
+                  onChange={(e) => setSuggestTextPatterns(e.target.checked)}
+                  className="rounded"
+                />
+                Suggest topics
+              </label>
+            </div>
+          </div>
 
-      {/* Save button + feedback */}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={handleSave}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-        >
-          Save Edition Layout
-        </button>
-        {feedback && (
-          <span className={`text-sm ${feedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-            {feedback.message}
-          </span>
-        )}
-      </div>
+          {/* Warnings */}
+          {uniqueWarnings.length > 0 && (
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200 p-3 rounded-lg text-sm">
+              <div className="font-medium mb-1">Notes:</div>
+              <ul className="list-disc list-inside space-y-0.5">
+                {uniqueWarnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Common patterns card */}
+          {commonEdition && (
+            <EditionCard
+              edition={commonEdition}
+              follows={follows}
+              suggestionsByHandle={activeSuggestions}
+              onUpdate={(updated) => updateEdition(state.editions.indexOf(commonEdition), updated)}
+            />
+          )}
+
+          {/* Timed edition cards */}
+          {timedEditions.map((edition) => {
+            const editionIdx = state.editions.indexOf(edition)
+            return (
+              <EditionCard
+                key={edition.id}
+                edition={edition}
+                follows={follows}
+                suggestionsByHandle={activeSuggestions}
+                onUpdate={(updated) => updateEdition(editionIdx, updated)}
+                onDelete={() => deleteEdition(editionIdx)}
+              />
+            )
+          })}
+
+          {/* Add edition button */}
+          <button
+            type="button"
+            onClick={addEdition}
+            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
+          >
+            + Add Edition
+          </button>
+
+          {/* Read-only TAIL */}
+          {state.preservedTail && (
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+              <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-sm font-medium text-gray-500 dark:text-gray-400">
+                TAIL (read-only)
+              </div>
+              <pre className="px-4 py-3 text-sm font-mono text-gray-500 dark:text-gray-400 whitespace-pre-wrap">
+                {state.preservedTail}
+              </pre>
+            </div>
+          )}
+
+          {/* Save button + feedback */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+            >
+              Save Edition Layout
+            </button>
+            {feedback && (
+              <span className={`text-sm ${feedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                {feedback.message}
+              </span>
+            )}
+          </div>
+          {unfollowedWarning && unfollowedWarning.length > 0 && (
+            <div className="mt-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200 p-3 rounded-lg text-sm">
+              <div className="font-medium mb-1">
+                {unfollowedWarning.length} unfollowed user{unfollowedWarning.length !== 1 ? 's' : ''} in layout — their posts won't appear in editions:
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                {unfollowedWarning.map(handle => (
+                  <a key={handle} href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noopener noreferrer"
+                     className="text-blue-600 dark:text-blue-400 hover:underline">
+                    @{handle}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }

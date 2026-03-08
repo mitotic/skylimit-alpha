@@ -126,6 +126,60 @@ export async function checkFollowStatus(
   })
 }
 
+/**
+ * Fetches the logged-in user's Bluesky lists.
+ * Returns list name and URI for each list.
+ */
+export async function getUserLists(
+  agent: BskyAgent
+): Promise<{ uri: string; name: string }[]> {
+  const did = agent.session?.did
+  if (!did) throw new Error('Not logged in')
 
+  const lists: { uri: string; name: string }[] = []
+  let cursor: string | undefined
 
+  do {
+    const response = await agent.app.bsky.graph.getLists({
+      actor: did,
+      limit: 100,
+      cursor,
+    })
+    for (const list of response.data.lists) {
+      lists.push({ uri: list.uri, name: list.name })
+    }
+    cursor = response.data.cursor
+  } while (cursor)
 
+  lists.sort((a, b) => a.name.localeCompare(b.name))
+  return lists
+}
+
+/**
+ * Fetches all member handles from a Bluesky list.
+ * Returns handles sorted alphabetically.
+ */
+export async function getListMembers(
+  agent: BskyAgent,
+  listUri: string
+): Promise<string[]> {
+  const handles: string[] = []
+  let cursor: string | undefined
+
+  do {
+    const response = await agent.app.bsky.graph.getList({
+      list: listUri,
+      limit: 100,
+      cursor,
+    })
+    for (const item of response.data.items) {
+      if (item.subject.handle) {
+        handles.push(item.subject.handle)
+      }
+    }
+    cursor = response.data.cursor
+  } while (cursor)
+
+  handles.sort((a, b) => a.localeCompare(b))
+  return handles
+}
