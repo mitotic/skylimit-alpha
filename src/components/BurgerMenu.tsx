@@ -12,7 +12,7 @@ export default function BurgerMenu() {
   const [isOpen, setIsOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
-  const { session, agent } = useSession()
+  const { session, agent, avatarUrl } = useSession()
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
@@ -72,7 +72,6 @@ export default function BurgerMenu() {
     { path: '/notifications', label: 'Notifications', icon: '🔔', badge: unreadCount > 0 ? unreadCount : undefined },
     { path: '/search', label: 'Search', icon: '🔍' },
     { path: '/saved', label: 'Saved', icon: '🏷️' },
-    { path: '/settings?tab=basic', label: 'Settings', icon: '⚙️' },
   ]
 
   const handleProfileClick = () => {
@@ -146,9 +145,26 @@ export default function BurgerMenu() {
                         : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
                     }`}
                   >
-                    <span className="text-xl">👤</span>
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="Profile" className="w-6 h-6 rounded-full object-cover" />
+                    ) : (
+                      <span className="text-xl">👤</span>
+                    )}
                     <span className="font-medium">Profile</span>
                   </button>
+
+                  <Link
+                    to="/settings?tab=basic"
+                    onClick={() => setIsOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-3 transition-colors ${
+                      isActive('/settings')
+                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    <span className="text-xl">⚙️</span>
+                    <span className="font-medium">Settings</span>
+                  </Link>
 
                   {debugMode && (
                     <button

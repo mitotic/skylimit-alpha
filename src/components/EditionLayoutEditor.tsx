@@ -70,7 +70,7 @@ function makeEmptyCommon(): EditorEdition {
     id: makeId(),
     type: 'common',
     time: '',
-    name: 'Users+topics and Sections common to all editions',
+    name: 'Users and sections common to all editions',
     sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
     collapsed: false,
   }
@@ -189,7 +189,7 @@ function convertEdition(
     id: makeId(),
     type,
     time: parsed.time,
-    name: type === 'common' ? 'Users+topics and Sections common to all editions' : parsed.name,
+    name: type === 'common' ? 'Users and sections common to all editions' : parsed.name,
     sections,
     collapsed: false,
   }
@@ -954,7 +954,7 @@ function EditionCard({
 
         {isCommon ? (
           <span className="font-semibold text-gray-700 dark:text-gray-300 flex-1">
-            Users+topics and Sections common to all editions
+            Users and sections common to all editions
           </span>
         ) : (
           <div className="flex items-center gap-2 flex-1" onClick={(e) => e.stopPropagation()}>
@@ -1013,10 +1013,11 @@ function EditionCard({
               onMoveDown={idx < edition.sections.length - 1 ? () => moveSection(idx, 1) : undefined}
             />
           ))}
+          <hr className="border-gray-200 dark:border-gray-700 mt-2" />
           <button
             type="button"
             onClick={addSection}
-            className="text-blue-600 dark:text-blue-400 text-sm hover:underline mt-2"
+            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
           >
             + Add Section
           </button>

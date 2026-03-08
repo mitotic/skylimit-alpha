@@ -12,7 +12,7 @@ import { clientInterval, clearClientInterval, clientTimeout } from '../utils/cli
 export default function Navigation() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { session, agent } = useSession()
+  const { session, agent, avatarUrl } = useSession()
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
@@ -202,7 +202,11 @@ export default function Navigation() {
                 : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
             }`}
           >
-            <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>👤</span>
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Profile" className={`w-6 h-6 rounded-full object-cover ${clickToBlueSky ? 'border-2 border-blue-500' : ''}`} />
+            ) : (
+              <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>👤</span>
+            )}
             <span className="hidden md:inline font-medium">Profile</span>
           </button>
 

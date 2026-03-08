@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom'
 import { BskyAgent } from '@atproto/api'
 import type { AtpSessionEvent, AtpSessionData } from '@atproto/api'
 import { createAgentWithSession, login as loginAPI, getServiceUrl } from '../api/atproto-client'
+import { getProfile } from '../api/profile'
 import { saveSession, loadSession, clearSession, updateSession } from './session-storage'
 import { detectSkyspeed, acknowledgeSkyspeed, configureClientClock, hasSkyspeedConfigChanged, saveSkyspeedConfig, clearSkyspeedConfig, resetClientClock } from '../utils/clientClock'
 import type { SkyspeedConfig } from '../utils/clientClock'
@@ -22,6 +23,7 @@ import log from '../utils/logger'
 interface SessionContextType {
   session: Session | null
   agent: BskyAgent | null
+  avatarUrl: string | null
   isLoading: boolean
   login: (identifier: string, password: string, rememberMe: boolean) => Promise<void>
   logout: () => void
@@ -33,6 +35,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [agent, setAgent] = useState<BskyAgent | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [showConfigChangedModal, setShowConfigChangedModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
   const navigate = useNavigate()
@@ -122,6 +125,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  // Fetch the user's avatar URL from their profile
+  const fetchAvatar = useCallback(async (agentInstance: BskyAgent, handle: string) => {
+    try {
+      const profile = await getProfile(agentInstance, handle)
+      setAvatarUrl(profile.avatar || null)
+    } catch (error) {
+      log.warn('Session', 'Failed to fetch avatar:', error)
+    }
+  }, [])
+
   // Attempt to restore session on mount (or auto-login if params are present)
   useEffect(() => {
     async function restoreSession() {
@@ -142,6 +155,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
             setSession(newSession)
             setAgent(newAgent)
+            fetchAvatar(newAgent, newSession.handle)
             log.info('AutoLogin', 'Auto-login complete')
           } catch (error) {
             log.error('AutoLogin', 'Auto-login failed:', error)
@@ -194,12 +208,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           log.debug('Session', `  Sync time: ${skyspeedConfig.skyspeedSyncTime}`)
           setSession(savedSession)
           setAgent(restoredAgent)
+          fetchAvatar(restoredAgent, savedSession.handle)
         } else {
           // Not a Skyspeed server
           resetClientClock()
           clearSkyspeedConfig()
           setSession(savedSession)
           setAgent(restoredAgent)
+          fetchAvatar(restoredAgent, savedSession.handle)
         }
 
         if (autoLogin) await applyAutoSettings(autoLogin)
@@ -222,11 +238,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     setSession(newSession)
     setAgent(newAgent)
-  }, [handlePersistSession])
+    fetchAvatar(newAgent, newSession.handle)
+  }, [handlePersistSession, fetchAvatar])
 
   const logout = useCallback(() => {
     setSession(null)
     setAgent(null)
+    setAvatarUrl(null)
     clearSession()
     navigate('/login')
   }, [navigate])
@@ -251,6 +269,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // Promote session — children will mount and fetch feed, triggering CONNECT
       setSession(pendingSessionRef.current)
       setAgent(pendingAgentRef.current)
+      fetchAvatar(pendingAgentRef.current, pendingSessionRef.current.handle)
       pendingSessionRef.current = null
       pendingAgentRef.current = null
       pendingSkyspeedConfigRef.current = null
@@ -258,7 +277,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <SessionContext.Provider value={{ session, agent, isLoading, login, logout }}>
+    <SessionContext.Provider value={{ session, agent, avatarUrl, isLoading, login, logout }}>
       {children}
       <ConfirmModal
         isOpen={showConfigChangedModal}
@@ -284,7 +303,7 @@ export function useSession() {
     // clean reload instead of crashing.
     window.location.reload()
     // Return a dummy value so React doesn't throw before reload kicks in
-    return { session: null, agent: null, isLoading: true, login: async () => {}, logout: () => {} } as SessionContextType
+    return { session: null, agent: null, avatarUrl: null, isLoading: true, login: async () => {}, logout: () => {} } as SessionContextType
   }
   return context
 }

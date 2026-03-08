@@ -1071,6 +1071,28 @@ export default function ThreadPage() {
         onPostThread={handlePostThread}
       />
 
+      {/* Floating compose button to reply to thread post */}
+      {thread && (
+        <button
+          onClick={() => {
+            if (isReadOnlyMode()) {
+              addToast('Disable Read-only mode in Settings to do this', 'error')
+              return
+            }
+            setReplyToUri(thread.post.uri)
+            setQuotePost(null)
+            setShowCompose(true)
+          }}
+          className="fixed bottom-20 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
+          aria-label="Reply to post"
+        >
+          <span className="text-2xl">&#x270F;&#xFE0F;</span>
+          {isReadOnlyMode() && (
+            <span className="absolute inset-0 flex items-center justify-center text-red-500 text-6xl font-thin pointer-events-none -mt-1">&times;</span>
+          )}
+        </button>
+      )}
+
       {/* Scroll to top arrow - shown when scrolled down */}
       {isScrolledDown && (
         <button

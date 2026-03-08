@@ -430,7 +430,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
     segmentTextareaRefs.current.forEach((ta) => {
       if (ta) {
         ta.style.height = 'auto'
-        ta.style.height = `${Math.max(ta.scrollHeight, 48)}px`
+        ta.style.height = `${Math.max(ta.scrollHeight, 120)}px`
       }
     })
   }, [isThreaded, segments, previewMode])
@@ -889,6 +889,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
       onClose={handleClose}
       title={replyTo ? 'Reply' : quotePost ? 'Quote Post' : 'Compose Post'}
       size={isThreaded ? 'xl' : 'lg'}
+      mobileFullHeight={isThreaded}
       titleExtra={!quotePost ? (
         <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer select-none">
           <input
@@ -902,7 +903,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
         </label>
       ) : undefined}
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className={isThreaded ? "flex flex-col gap-4 h-full" : "space-y-4"}>
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-red-700 dark:text-red-400 text-sm">
             {error}
@@ -945,6 +946,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
                 onPaste={handlePaste}
                 placeholder={replyTo ? 'Write your reply...' : quotePost ? 'Add your thoughts...' : 'What\'s happening?'}
                 className="w-full px-4 py-3 border-0 bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none resize-none"
+                style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
                 rows={6}
                 disabled={isPosting}
                 maxLength={MAX_POST_LENGTH + 100}
@@ -1062,7 +1064,7 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
 
         {/* === THREADED MODE — EDIT VIEW === */}
         {isThreaded && !previewMode && (
-          <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+          <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden flex-1">
             <div className="grid" style={{ gridTemplateColumns: '1fr 96px' }}>
               {segments.map((seg, segIdx) => {
                 const charsLeft = effectiveLimit - seg.text.length
@@ -1102,7 +1104,8 @@ export default function Compose({ isOpen, onClose, replyTo, quotePost, onPost, o
                           ? (replyTo ? 'Write your reply...' : 'What\'s happening?')
                           : 'Continue...'}
                         className="w-full pl-2 pr-8 py-1 border-0 bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none resize-none overflow-hidden"
-                        rows={2}
+                        style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
+                        rows={4}
                         disabled={isPosting}
                       />
                       {/* Segment number overlay */}

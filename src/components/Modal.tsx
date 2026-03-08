@@ -8,9 +8,10 @@ interface ModalProps {
   titleExtra?: React.ReactNode
   children: React.ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
+  mobileFullHeight?: boolean
 }
 
-export default function Modal({ isOpen, onClose, title, titleExtra, children, size = 'md' }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, titleExtra, children, size = 'md', mobileFullHeight = false }: ModalProps) {
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
@@ -50,14 +51,14 @@ export default function Modal({ isOpen, onClose, title, titleExtra, children, si
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50"
+      className={`fixed inset-0 z-50 flex ${mobileFullHeight ? 'items-stretch sm:items-center' : 'items-center'} justify-center p-0 sm:p-4 bg-black bg-opacity-50`}
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? 'modal-title' : undefined}
     >
       <div
-        className={`bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-y-auto`}
+        className={`bg-white dark:bg-gray-800 sm:rounded-lg shadow-xl w-full ${sizeClasses[size]} max-h-[95vh] sm:max-h-[90vh] ${mobileFullHeight ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {title && (
@@ -75,7 +76,7 @@ export default function Modal({ isOpen, onClose, title, titleExtra, children, si
             </button>
           </div>
         )}
-        <div className="p-4">{children}</div>
+        <div className={`p-4${mobileFullHeight ? ' flex-1 overflow-y-auto min-h-0' : ''}`}>{children}</div>
       </div>
     </div>,
     document.body
