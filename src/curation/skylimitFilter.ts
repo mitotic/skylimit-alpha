@@ -61,18 +61,18 @@ export function parsePriorityPatterns(patternsStr: string): TextPattern[] {
  * Check if a post matches priority patterns.
  * Reposts are never priority. Uses DEFAULT_PRIORITY_PATTERNS if none configured.
  */
-export function isPriorityPost(post: PostSummary, priorityPatterns: string): boolean {
-  if (post.repostUri) return false
+export function isPriorityPost(post: PostSummary, priorityPatterns: string): string | null {
+  if (post.repostUri) return null
 
   const patternsStr = priorityPatterns || DEFAULT_PRIORITY_PATTERNS
   const patterns = parsePriorityPatterns(patternsStr)
 
   for (const pattern of patterns) {
     if (matchTextPattern(post.postText || '', post.quotedText, post.tags, pattern)) {
-      return true
+      return pattern.pattern
     }
   }
-  return false
+  return null
 }
 
 /**
@@ -138,7 +138,7 @@ export async function curateSinglePost(
   const traceReturn = () => {
     log.trace('curated', summary.username, summary.postTimestamp, summary.postText || '',
       `status=${modStatus.curation_status}` +
-      (modStatus.edition_tag ? ` edition_tag=${modStatus.edition_tag} pattern="${modStatus.edition_pattern}"` : '') +
+      (modStatus.edition_tag ? ` edition_tag=${modStatus.edition_tag} pattern="${modStatus.matching_pattern}"` : '') +
       (dropReason ? ` drop="${dropReason}"` : ''))
   }
 
@@ -191,7 +191,7 @@ export async function curateSinglePost(
     if (editionMatch) {
       modStatus.curation_status = 'edition_post_drop'
       modStatus.edition_tag = editionMatch.editionTag
-      modStatus.edition_pattern = editionMatch.editionPattern
+      modStatus.matching_pattern = editionMatch.editionPattern
       modStatus.edition_status = 'hold'
       modStatus.curation_msg = `[Dropped edition hold [${editionMatch.editionTag}] ${editionMatch.editionPattern}]`
       log.verbose('Edition', `Hold: @${summary.username} post=${new Date(summary.postTimestamp).toLocaleString()} tag=${editionMatch.editionTag} pattern="${editionMatch.editionPattern}"`)
@@ -254,7 +254,8 @@ export async function curateSinglePost(
     }
 
     // Priority matching (periodic posts that weren't accepted fall through here)
-    const priority = !periodicAccepted && isPriorityPost(summary, follow?.[USER_PRIORITY_PATTERNS_KEY] || '')
+    const priorityMatch = isPriorityPost(summary, follow?.[USER_PRIORITY_PATTERNS_KEY] || '')
+    const priority = !periodicAccepted && priorityMatch !== null
 
     // Check repost display interval (before probability filtering)
     // This handles both forward (new posts) and backward (lookback) time navigation
@@ -291,6 +292,7 @@ export async function curateSinglePost(
       modStatus.curation_status = 'periodic_show'
     } else if (priority) {
       modStatus.curation_status = priorityDrop ? 'priority_drop' : 'priority_show'
+      modStatus.matching_pattern = priorityMatch
       if (priorityDrop) dropReason = 'random (priority)'
     } else {
       // Check if this is an unfollowed reply

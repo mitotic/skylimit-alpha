@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 
 export interface CurationPopupProps {
@@ -81,6 +81,22 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
     if (count < 10) return count.toFixed(1)
     return Math.round(count).toString()
   }
+
+  // Ref for backdrop to attach non-passive touchstart listener (React registers touch as passive)
+  const backdropRef = useRef<HTMLDivElement>(null)
+  const handleBackdropTouch = useCallback((e: TouchEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onClose?.()
+  }, [onClose])
+
+  useEffect(() => {
+    const el = backdropRef.current
+    if (el) {
+      el.addEventListener('touchstart', handleBackdropTouch, { passive: false })
+      return () => el.removeEventListener('touchstart', handleBackdropTouch)
+    }
+  }, [handleBackdropTouch])
 
   // Calculate fixed position styles if anchorRect is provided
   const getPositionStyle = (): React.CSSProperties => {
@@ -275,9 +291,9 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
     return createPortal(
       <>
         <div
+          ref={backdropRef}
           className="fixed inset-0 z-40"
           onClick={(e) => { e.stopPropagation(); onClose?.() }}
-          onTouchStart={(e) => { e.stopPropagation(); onClose?.() }}
           aria-hidden="true"
         />
         {popupContent}

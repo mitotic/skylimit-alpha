@@ -824,7 +824,7 @@ function SectionEditor({
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onUpdate({ ...section, name: e.target.value })}
           placeholder="Section Name"
-          className="px-2 py-0.5 border rounded text-sm font-semibold uppercase text-blue-600 dark:text-blue-400 bg-transparent dark:border-gray-600 text-center w-40"
+          className="px-2 py-0.5 border rounded text-sm font-semibold text-blue-600 dark:text-blue-400 bg-transparent dark:border-gray-600 text-center w-40"
         />
         <span className="flex-1 h-px bg-blue-400" />
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>

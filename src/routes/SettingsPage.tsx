@@ -1643,8 +1643,8 @@ You will be logged out and redirected to the login page.`}
                     setEditionFeedback(null)
                   }}
                   className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
-                  rows={12}
-                  placeholder={"# HEAD\n@*: #breaking\n@always.interesting.bsky.social\n\n## Department\n@coworker*\n\n# 08:00 Morning Edition\n@atprotocol.dev\n## Substacks\n@writer*: blog.substack.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net: vibe-coding\n\n# TAIL\n@*: longform*"}
+                  rows={28}
+                  placeholder={"# HEAD\n\n@*: #BreakingNews\n@quietposter.bsky.social\n\n## Workplace - common section for all editions\n@coworker1\n@coworker2\n\n# 08:00 Morning Edition\n@always.interesting.bsky.social\n@sometimes.interesting: topic, second topic\n\n## Substacks in the morning\n@author1.com: blogname1.substack.com\n@author2.bsky.social: blogname2.substack.com\n\n# 12:00 Noon Edition\n\n## Humor\n@xkcd.com\n\n# 18:00 Evening Edition\n\n## Coding\n@simonwillison.net\n\n# TAIL\n\n## Another common catchall section\n@author1.com"}
                 />
                 <p className="text-sm text-gray-500 mt-1">
                   Configure edition layout patterns. Lines starting with @ define user patterns

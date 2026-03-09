@@ -1,7 +1,7 @@
-import { useEffect, useRef, useCallback, RefObject } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 
 interface UseSwipeNavigationParams {
-  containerRef: RefObject<HTMLElement | null>
+  container: HTMLElement | null  // direct element (re-runs effect when element appears)
   onSwipeLeft: () => void   // swipe left → navigate forward (next/newer)
   onSwipeRight: () => void  // swipe right → navigate back (prev/older)
   enabled?: boolean
@@ -15,7 +15,7 @@ interface UseSwipeNavigationParams {
  * interfering with normal scrolling).
  */
 export function useSwipeNavigation({
-  containerRef,
+  container,
   onSwipeLeft,
   onSwipeRight,
   enabled = true,
@@ -56,7 +56,6 @@ export function useSwipeNavigation({
   }, [threshold])
 
   useEffect(() => {
-    const container = containerRef.current
     if (!enabled || !container) return
 
     container.addEventListener('touchstart', handleTouchStart, { passive: true })
@@ -66,5 +65,5 @@ export function useSwipeNavigation({
       container.removeEventListener('touchstart', handleTouchStart)
       container.removeEventListener('touchend', handleTouchEnd)
     }
-  }, [enabled, containerRef, handleTouchStart, handleTouchEnd])
+  }, [enabled, container, handleTouchStart, handleTouchEnd])
 }

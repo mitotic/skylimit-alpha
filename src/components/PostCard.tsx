@@ -85,6 +85,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const popupRef = useRef<HTMLDivElement>(null)
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
+  const popupClosedAtRef = useRef<number>(0)
 
   // Format the counter display based on postNumber value
   // - null: show "#" only (pending, number not yet assigned)
@@ -174,6 +175,13 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       setShowCounterDisplay(false)
     }
   }, [showCounter, post.post.uri, postedAt, isReposted, repostedBy, curation])
+
+  // Track when popup closes to prevent ghost clicks on Android
+  useEffect(() => {
+    if (!showPopup) {
+      popupClosedAtRef.current = Date.now()
+    }
+  }, [showPopup])
 
   // Close popup when clicking/touching outside
   useEffect(() => {
@@ -304,6 +312,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const isDirectReply = parentUri === rootUri
 
   const handlePostClick = (e: React.MouseEvent) => {
+    // Ignore ghost clicks from popup dismiss on Android (tap-through prevention)
+    if (Date.now() - popupClosedAtRef.current < 400) return
     if (e.target === e.currentTarget || (e.target as HTMLElement).closest('button') === null) {
       if (actualPost.uri) {
         // Track click engagement
@@ -355,7 +365,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       } : undefined}
     >
       {repostedBy && !isPeriodicEdition(curation) && (
-        <div className={`px-4 pt-4 pb-2 text-sm text-gray-500 dark:text-gray-400 flex items-center justify-between relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}>
+        <div className={`px-4 pt-4 pb-2 text-[0.9375rem] text-gray-500 dark:text-gray-400 flex items-center justify-between relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}>
           <span
             onClick={handleReposterClick}
             className="hover:underline cursor-pointer"
@@ -390,7 +400,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 >
                   {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                 </button>
-                <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
+                <span className="w-3 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
               </span>
               {showPopup && curation && (
                 <CurationPopup
@@ -467,7 +477,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               >
                 {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
               </button>
-              <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
+              <span className="w-3 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
             </div>
 
             {showPopup && curation && (
@@ -602,7 +612,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   >
                     {formatCounterDisplay(isStatusDrop(curation?.curation_status) ? 0 : postNumber)}
                   </button>
-                  <span className="w-4 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
+                  <span className="w-3 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
                 </span>
                 {showPopup && curation && (
                   <CurationPopup

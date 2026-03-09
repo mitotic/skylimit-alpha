@@ -405,7 +405,7 @@ export async function rematchHeldPosts(): Promise<{ total: number; rematched: nu
       summary.curation_msg = '[Edition hold released]'
       summary.edition_status = 'orphaned'
       summary.edition_tag = undefined
-      summary.edition_pattern = undefined
+      summary.matching_pattern = undefined
     }
     if (heldPosts.length > 0) {
       await savePostSummariesForce(heldPosts)
@@ -423,7 +423,7 @@ export async function rematchHeldPosts(): Promise<{ total: number; rematched: nu
     const match = matchPost(summary, parsedEditions, timezone)
     if (match) {
       summary.edition_tag = match.editionTag
-      summary.edition_pattern = match.editionPattern
+      summary.matching_pattern = match.editionPattern
       // Restore orphaned posts back to hold status
       if (summary.edition_status === 'orphaned') {
         summary.edition_status = 'hold'
@@ -435,7 +435,7 @@ export async function rematchHeldPosts(): Promise<{ total: number; rematched: nu
     } else if (summary.edition_status === 'hold') {
       // Held post with no match: assign fallback tag
       summary.edition_tag = 'a.0.00'
-      summary.edition_pattern = ''
+      summary.matching_pattern = ''
       changed.push(summary)
       fallback++
     }

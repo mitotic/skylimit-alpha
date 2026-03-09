@@ -241,9 +241,11 @@ export default function EditionView({
   }, [])
 
   // Swipe left/right to navigate between editions on mobile
-  const containerRef = useRef<HTMLDivElement>(null)
+  // Use state (not ref) so the hook's effect re-runs when the element appears
+  // after conditional early returns (loading states render without this div).
+  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null)
   useSwipeNavigation({
-    containerRef,
+    container: containerEl,
     onSwipeLeft: goToNext,
     onSwipeRight: goToPrev,
     enabled: registryEntries.length > 1,
@@ -357,7 +359,7 @@ export default function EditionView({
   const nextUnviewed = hasNext && !registryEntries[currentIndex - 1]?.viewedAt
 
   return (
-    <div ref={containerRef} className="pb-8">
+    <div ref={setContainerEl} className="pb-8">
       {/* Edition masthead banner */}
       <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between px-4 py-3">
@@ -492,7 +494,7 @@ export default function EditionView({
             </span>
             <div className="flex-1 flex items-center gap-2">
               <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />
-              <span className="text-base font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+              <span className="text-base font-semibold text-blue-600 dark:text-blue-400 tracking-wide">
                 {section.name}
               </span>
               <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />

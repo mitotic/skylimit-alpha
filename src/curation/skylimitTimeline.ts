@@ -94,8 +94,8 @@ export async function curatePosts(
       if (curation.edition_tag) {
         summary.edition_tag = curation.edition_tag
       }
-      if (curation.edition_pattern) {
-        summary.edition_pattern = curation.edition_pattern
+      if (curation.matching_pattern) {
+        summary.matching_pattern = curation.matching_pattern
       }
       if (curation.edition_status) {
         summary.edition_status = curation.edition_status

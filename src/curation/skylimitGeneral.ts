@@ -182,6 +182,33 @@ export function extractQuotedText(embed: unknown): string | undefined {
 }
 
 /**
+ * Extract the handle of the quoted/embedded post's author from an embed object.
+ * Mirrors extractQuotedText but returns the author handle instead of text.
+ */
+export function extractQuotedAuthorHandle(embed: unknown): string | undefined {
+  if (!embed || typeof embed !== 'object') return undefined
+
+  const emb = embed as any
+  const embedType = emb.$type
+
+  if (embedType === 'app.bsky.embed.record#view' || embedType === 'app.bsky.embed.record') {
+    const quotedRecord = emb.record
+    if (!quotedRecord || quotedRecord.blocked || quotedRecord.notFound) return undefined
+    return quotedRecord.author?.handle
+  }
+
+  if (embedType === 'app.bsky.embed.recordWithMedia#view' || embedType === 'app.bsky.embed.recordWithMedia') {
+    const recordEmbed = emb.record
+    if (!recordEmbed) return undefined
+    const quotedRecord = recordEmbed.record
+    if (!quotedRecord || quotedRecord.blocked || quotedRecord.notFound) return undefined
+    return quotedRecord.author?.handle
+  }
+
+  return undefined
+}
+
+/**
  * Create post summary from FeedViewPost
  */
 export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceivedTime?: Date): PostSummary {
@@ -203,6 +230,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   let postEngagement: number
   let postText: string | undefined
   let quotedText: string | undefined
+  let quoted_username: string | undefined
 
   if (isReposted) {
     // This is a repost
@@ -234,6 +262,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     // Extract text from the original post (the one being reposted)
     postText = extractPostText(post.post.record)
     quotedText = extractQuotedText(post.post.embed)
+    quoted_username = extractQuotedAuthorHandle(post.post.embed)
   } else {
     // This is an original post
     username = post.post.author.handle
@@ -251,6 +280,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     // Extract text from this post
     postText = extractPostText(post.post.record)
     quotedText = extractQuotedText(post.post.embed)
+    quoted_username = extractQuotedAuthorHandle(post.post.embed)
   }
 
   // For reposts, use feedReceivedTime (when we received the feed = when reposted)
@@ -273,6 +303,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     postEngagement,
     postText,
     quotedText,
+    quoted_username,
   }
 }
 

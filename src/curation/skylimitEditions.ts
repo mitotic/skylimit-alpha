@@ -124,10 +124,11 @@ export function editorUserToProfileView(user: EditorUser): AppBskyActorDefs.Prof
 // --- Parser ---
 
 /**
- * Validate a section name: letters and numbers only
+ * Validate a section name: letters, numbers, spaces, and hyphens.
+ * Must start and end with a letter or number.
  */
 function isValidSectionName(name: string): boolean {
-  return /^[A-Za-z0-9]+$/.test(name)
+  return /^[A-Za-z0-9]([A-Za-z0-9 \-]*[A-Za-z0-9])?$/.test(name)
 }
 
 /**
@@ -329,7 +330,7 @@ export function parseEditionFile(text: string): ParsedEditions {
       const sectionName = line.substring(3).trim()
 
       if (!isValidSectionName(sectionName)) {
-        errors.push(`Invalid section name (letters and numbers only): "${sectionName}"`)
+        errors.push(`Invalid section name (letters, numbers, spaces, hyphens; must start/end with letter or number): "${sectionName}"`)
         continue
       }
 

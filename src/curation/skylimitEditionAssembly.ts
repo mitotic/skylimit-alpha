@@ -180,12 +180,12 @@ export async function tryCreateEdition(
 
     syntheticPosts.push(syntheticPost)
 
-    log.verbose('Edition', `Synthetic: insertTime=${new Date(insertTime).toLocaleTimeString()} editor=@${editorHandle} ("${editorUser.displayName}") original=@${summary.username} tag=${summary.edition_tag} pattern="${summary.edition_pattern || ''}"`)
+    log.verbose('Edition', `Synthetic: insertTime=${new Date(insertTime).toLocaleTimeString()} editor=@${editorHandle} ("${editorUser.displayName}") original=@${summary.username} tag=${summary.edition_tag} pattern="${summary.matching_pattern || ''}"`)
 
     // Mark the held post as published with its edition key
     summary.edition_status = `published:${editionKey}`
     log.trace('edited', summary.username, summary.postTimestamp, summary.postText || '',
-      `edition=${editionTime} key=${editionKey} pattern="${summary.edition_pattern}"`)
+      `edition=${editionTime} key=${editionKey} pattern="${summary.matching_pattern}"`)
   }
 
   // Save the updated summaries (with edition_status = "published:KEY").

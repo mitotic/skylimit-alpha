@@ -70,30 +70,69 @@ export function parseSearchExpression(input: string): ParsedSearchExpression {
 
 /**
  * Match a single post summary against a parsed search expression.
+ *
+ * Handle and name patterns match across all author roles (poster, reposter,
+ * original author of repost, quoted post author). Text search also includes
+ * all author handles and display names.
  */
 export function matchPostSummary(
   post: PostSummary,
   parsed: ParsedSearchExpression,
-  displayNameMap: Map<string, string>
+  displayNameMap: Map<string, string>,
+  usernameDisplayNameMap?: Map<string, string>
 ): boolean {
-  // Handle pattern matching
+  // Handle pattern matching — OR across all author handles
   if (parsed.handlePattern) {
-    if (!matchUserPattern(post.username, parsed.handlePattern)) {
+    const handleMatched =
+      matchUserPattern(post.username, parsed.handlePattern) ||
+      (!!post.orig_username && matchUserPattern(post.orig_username, parsed.handlePattern)) ||
+      (!!post.quoted_username && matchUserPattern(post.quoted_username, parsed.handlePattern))
+    if (!handleMatched) {
       return false
     }
   }
 
-  // Display name pattern matching
+  // Display name pattern matching — OR across all authors' display names
   if (parsed.namePattern) {
     const displayName = displayNameMap.get(post.accountDid) || ''
-    if (!displayName || !matchNamePattern(displayName, parsed.namePattern)) {
+    const origDisplayName = post.orig_username
+      ? (usernameDisplayNameMap?.get(post.orig_username) || '') : ''
+    const quotedDisplayName = post.quoted_username
+      ? (usernameDisplayNameMap?.get(post.quoted_username) || '') : ''
+
+    const nameMatched =
+      (!!displayName && matchNamePattern(displayName, parsed.namePattern)) ||
+      (!!origDisplayName && matchNamePattern(origDisplayName, parsed.namePattern)) ||
+      (!!quotedDisplayName && matchNamePattern(quotedDisplayName, parsed.namePattern))
+
+    if (!nameMatched) {
       return false
     }
   }
 
   // Text pattern matching with word boundaries
+  // Includes post text, quoted text, and all author handles/display names
   if (parsed.textPattern) {
-    const text = normalizeText((post.postText || '') + ' ' + (post.quotedText || ''))
+    let searchableText = (post.postText || '') + ' ' + (post.quotedText || '')
+
+    // Add all author handles and display names to searchable text
+    searchableText += ' ' + post.username
+    const primaryDisplayName = displayNameMap.get(post.accountDid)
+    if (primaryDisplayName) searchableText += ' ' + primaryDisplayName
+
+    if (post.orig_username) {
+      searchableText += ' ' + post.orig_username
+      const origDisplayName = usernameDisplayNameMap?.get(post.orig_username)
+      if (origDisplayName) searchableText += ' ' + origDisplayName
+    }
+
+    if (post.quoted_username) {
+      searchableText += ' ' + post.quoted_username
+      const quotedDisplayName = usernameDisplayNameMap?.get(post.quoted_username)
+      if (quotedDisplayName) searchableText += ' ' + quotedDisplayName
+    }
+
+    const text = normalizeText(searchableText)
     const pattern = normalizeText(parsed.textPattern)
 
     if (!pattern) return true
@@ -195,9 +234,12 @@ export async function searchLocalCache(
 
   // Build display name map (accountDid → displayName)
   const displayNameMap = new Map<string, string>()
+  // Build username → displayName map for searching orig/quoted author display names
+  const usernameDisplayNameMap = new Map<string, string>()
   for (const follow of allFollows) {
     if (follow.displayName) {
       displayNameMap.set(follow.accountDid, follow.displayName)
+      usernameDisplayNameMap.set(follow.username, follow.displayName)
     }
   }
 
@@ -209,7 +251,7 @@ export async function searchLocalCache(
       continue
     }
 
-    if (matchPostSummary(post, parsed, displayNameMap)) {
+    if (matchPostSummary(post, parsed, displayNameMap, usernameDisplayNameMap)) {
       matched.push(post)
     }
   }

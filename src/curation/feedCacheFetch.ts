@@ -106,7 +106,7 @@ export async function curateEntriesToSecondary(
       summary.curation_status = curationResult.curation_status
       summary.curation_msg = curationResult.curation_msg
       if (curationResult.edition_tag) summary.edition_tag = curationResult.edition_tag
-      if (curationResult.edition_pattern) summary.edition_pattern = curationResult.edition_pattern
+      if (curationResult.matching_pattern) summary.matching_pattern = curationResult.matching_pattern
       if (curationResult.edition_status) summary.edition_status = curationResult.edition_status
     }
     result.push({ entry, summary })
@@ -772,7 +772,7 @@ export async function fetchToSecondaryFeedCache(
         summary.curation_status = curationResult.curation_status
         summary.curation_msg = curationResult.curation_msg
         if (curationResult.edition_tag) summary.edition_tag = curationResult.edition_tag
-        if (curationResult.edition_pattern) summary.edition_pattern = curationResult.edition_pattern
+        if (curationResult.matching_pattern) summary.matching_pattern = curationResult.matching_pattern
         if (curationResult.edition_status) summary.edition_status = curationResult.edition_status
       }
 

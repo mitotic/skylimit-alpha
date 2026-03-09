@@ -42,7 +42,7 @@ interface ChartDataPoint {
 }
 
 function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint[], highlightUsername?: string | null, mode: ChartMode }) {
-  const margin = { top: 20, right: 2, bottom: 40, left: 28 }
+  const margin = { top: 20, right: 2, bottom: 40, left: 38 }
   const width = 640
   const height = 300
   const plotW = width - margin.left - margin.right
@@ -81,7 +81,7 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
   return (
     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
       <h3 className="text-lg font-semibold mb-2">Curation Rate Distribution</h3>
-      <svg viewBox={`-12 0 ${width + 12} ${height}`} width="100%" className="max-h-[250px]">
+      <svg viewBox={`-30 0 ${width + 30} ${height}`} width="100%" className="max-h-[250px]">
         {/* Grid lines */}
         {yTicks.map(v => (
           <line key={`grid-${v}`} x1={margin.left} x2={width - margin.right}
@@ -98,8 +98,8 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
             textAnchor="end" style={{ fontSize: 'var(--post-secondary-text-size)' }}
             className="fill-gray-600 dark:fill-gray-400">{v}</text>
         ))}
-        <text x={-8} y={margin.top + plotH / 2}
-          textAnchor="middle" style={{ fontSize: 'var(--post-secondary-text-size)' }} transform={`rotate(-90, -8, ${margin.top + plotH / 2})`}
+        <text x={-18} y={margin.top + plotH / 2}
+          textAnchor="middle" style={{ fontSize: 'var(--post-secondary-text-size)' }} transform={`rotate(-90, -18, ${margin.top + plotH / 2})`}
           className="fill-gray-600 dark:fill-gray-400">Posts / day</text>
 
         {/* X-axis */}
@@ -604,9 +604,11 @@ export default function SkylimitStatistics() {
   // Get sort indicator for column header
   const getSortIndicator = (field: SortField): JSX.Element => {
     if (sortField !== field) {
-      return <span className="text-gray-400 dark:text-gray-500 ml-1 inline-flex align-middle"><svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></span>
+      // Unsorted: stacked up/down chevron outlines to indicate sortable
+      return <span className="text-gray-400 dark:text-gray-500 ml-1 inline-flex flex-col align-middle leading-none"><svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-2" fill="none" viewBox="0 0 24 16" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 12l7-7 7 7" /></svg><svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-2" fill="none" viewBox="0 0 24 16" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 4l-7 7-7-7" /></svg></span>
     }
-    return <span className="text-green-600 dark:text-green-400 ml-1 inline-flex align-middle font-bold">{sortDirection === 'asc' ? <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg> : <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>}</span>
+    // Sorted: filled green triangle pointing up (asc) or down (desc)
+    return <span className="text-green-600 dark:text-green-400 ml-1 inline-flex align-middle">{sortDirection === 'asc' ? <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24"><polygon points="12,3 23,21 1,21" fill="currentColor" /></svg> : <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24"><polygon points="12,21 1,3 23,3" fill="currentColor" /></svg>}</span>
   }
 
   if (loading) {

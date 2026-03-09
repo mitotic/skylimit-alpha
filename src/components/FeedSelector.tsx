@@ -150,6 +150,17 @@ export default function FeedSelector() {
               </div>
             </button>
           ))}
+
+          <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1">
+            <a
+              href="https://bsky.app/feeds"
+              className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-3 text-sm text-blue-600 dark:text-blue-400"
+              onClick={() => setIsOpen(false)}
+              role="menuitem"
+            >
+              View on Bluesky ↗
+            </a>
+          </div>
         </div>,
         document.body
       )}

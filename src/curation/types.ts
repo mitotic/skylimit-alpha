@@ -245,9 +245,10 @@ export interface PostSummary {
   // Text fields for search capability
   postText?: string             // Main post text content
   quotedText?: string           // Text from quoted/embedded post (if any)
+  quoted_username?: string      // Handle of quoted/embedded post's author (if any)
   // Edition fields
   edition_tag?: string          // Edition pattern tag (e.g., "1.a.00b")
-  edition_pattern?: string      // Matched pattern string (e.g., "@user*: #tech") for debugging
+  matching_pattern?: string     // Matched pattern string (e.g., "@user*: #tech") for debugging
   edition_status?: string       // "hold" | "orphaned" | "synthetic" | "published:<editionKey>"
   // View tracking
   viewedAt?: number             // Client time timestamp (ms via clientNow()) when the post was first viewed in the viewport
@@ -280,7 +281,7 @@ export interface CurationResult {
   curation_msg?: string
   curation_id?: string
   edition_tag?: string
-  edition_pattern?: string
+  matching_pattern?: string
   edition_status?: string
 }
 
