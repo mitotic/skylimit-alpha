@@ -106,7 +106,7 @@ export default function ThreadPage() {
           .filter(r => 'post' in r)
         const userReplied = directReplies.some(r => r.post.author.did === session.did)
         if (userReplied) {
-          updatePostSummaryEngagement(decodedUri, ENGAGEMENT_REPLIED)
+          updatePostSummaryEngagement(decodedUri, ENGAGEMENT_REPLIED, session?.handle)
         }
       }
 

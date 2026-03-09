@@ -651,7 +651,8 @@ export async function updatePostSummaryViewedAt(
  */
 export async function updatePostSummaryEngagement(
   uniqueId: string,
-  level: number
+  level: number,
+  myUsername?: string
 ): Promise<void> {
   try {
     const database = await getDB()
@@ -664,6 +665,9 @@ export async function updatePostSummaryEngagement(
       request.onerror = () => reject(request.error)
     })
     if (!summary) return
+
+    // Don't track engagement on self posts — it skews comparisons
+    if (myUsername && summary.username === myUsername) return
 
     const current = summary.postEngagement || ENGAGEMENT_NONE
     if (hasEngagementLevel(current, level)) return  // Already set

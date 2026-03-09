@@ -14,6 +14,7 @@ interface UsePostInteractionsParams {
   addToast: (message: string, type: 'success' | 'error' | 'info') => void
   forceProbeRef: React.MutableRefObject<boolean>
   setForceProbeTrigger: React.Dispatch<React.SetStateAction<number>>
+  myUsername?: string
 }
 
 // Resolve the cache uniqueId for a post URI by finding it in the current feed
@@ -22,7 +23,7 @@ function resolveUniqueId(feed: AppBskyFeedDefs.FeedViewPost[], uri: string): str
   return post ? getPostUniqueId(post) : null
 }
 
-export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger }: UsePostInteractionsParams) {
+export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger, myUsername }: UsePostInteractionsParams) {
   const [showCompose, setShowCompose] = useState(false)
   const [replyToUri, setReplyToUri] = useState<string | null>(null)
   const [quotePost, setQuotePost] = useState<AppBskyFeedDefs.PostView | null>(null)
@@ -87,7 +88,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
         }))
         // Track engagement
         const uniqueId = resolveUniqueId(feed, uri)
-        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_LIKED)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_LIKED, myUsername)
       }
     } catch (error) {
       // Revert optimistic count update
@@ -137,7 +138,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
         await bookmarkPost(agent, uri, cid)
         // Track engagement
         const uniqueId = resolveUniqueId(feed, uri)
-        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_BOOKMARKED)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_BOOKMARKED, myUsername)
       }
     } catch (error) {
       // Revert optimistic update
@@ -216,7 +217,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
         }))
         // Track engagement
         const uniqueId = resolveUniqueId(feed, uri)
-        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_REPOSTED)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_REPOSTED, myUsername)
       }
     } catch (error) {
       // Revert optimistic count update
@@ -286,7 +287,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
       // Track reply engagement on the post being replied to
       if (replyTo) {
         const uniqueId = resolveUniqueId(feed, replyTo.uri)
-        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_REPLIED)
+        if (uniqueId) updatePostSummaryEngagement(uniqueId, ENGAGEMENT_REPLIED, myUsername)
       }
     }
     // Trigger probe to pick up the new post through paged updates

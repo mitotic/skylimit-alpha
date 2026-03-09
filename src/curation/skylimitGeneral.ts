@@ -211,7 +211,7 @@ export function extractQuotedAuthorHandle(embed: unknown): string | undefined {
 /**
  * Create post summary from FeedViewPost
  */
-export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceivedTime?: Date): PostSummary {
+export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceivedTime?: Date, myUsername?: string): PostSummary {
   const isReposted = isRepost(post)
 
   // Use single source of truth for unique ID generation
@@ -281,6 +281,11 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     postText = extractPostText(post.post.record)
     quotedText = extractQuotedText(post.post.embed)
     quoted_username = extractQuotedAuthorHandle(post.post.embed)
+  }
+
+  // Don't track engagement on self posts — it skews comparisons
+  if (myUsername && username === myUsername) {
+    postEngagement = ENGAGEMENT_NONE
   }
 
   // For reposts, use feedReceivedTime (when we received the feed = when reposted)

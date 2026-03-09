@@ -140,7 +140,7 @@ export default function HomePage() {
     quotePost, setQuotePost,
     handleLike, handleBookmark, handleRepost,
     handleQuotePost, handleReply, handlePost, handlePostThread, handleAmpChange,
-  } = usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger })
+  } = usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger, myUsername: session?.handle })
 
   const {
     isScrolledDown,

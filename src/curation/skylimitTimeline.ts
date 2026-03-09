@@ -84,7 +84,7 @@ export async function curatePosts(
       )
 
       // Create summary using postTimestamp from entry
-      summary = createPostSummary(post, postTimestamp)
+      summary = createPostSummary(post, postTimestamp, myUsername)
 
       // Store curation information in summary (this is the source of truth)
       summary.curation_status = curation.curation_status

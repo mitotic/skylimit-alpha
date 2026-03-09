@@ -102,7 +102,7 @@ export async function curateEntriesToSecondary(
         currentStats, currentProbs, secretKey, editionCount,
         repostIndex
       )
-      summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
+      summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp), myUsername)
       summary.curation_status = curationResult.curation_status
       summary.curation_msg = curationResult.curation_msg
       if (curationResult.edition_tag) summary.edition_tag = curationResult.edition_tag
@@ -768,7 +768,7 @@ export async function fetchToSecondaryFeedCache(
           repostIndex
         )
 
-        summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp))
+        summary = createPostSummary(entry.originalPost, new Date(entry.postTimestamp), myUsername)
         summary.curation_status = curationResult.curation_status
         summary.curation_msg = curationResult.curation_msg
         if (curationResult.edition_tag) summary.edition_tag = curationResult.edition_tag

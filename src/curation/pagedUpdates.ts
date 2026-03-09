@@ -172,7 +172,7 @@ export async function probeForNewPosts(
       )
 
       // Build summary and append to secondary cache for cross-post context
-      const summary = createPostSummary(post, new Date(postTimestamp))
+      const summary = createPostSummary(post, new Date(postTimestamp), myUsername)
       summary.curation_status = curation.curation_status
       summary.curation_msg = curation.curation_msg
       if (curation.edition_tag) summary.edition_tag = curation.edition_tag

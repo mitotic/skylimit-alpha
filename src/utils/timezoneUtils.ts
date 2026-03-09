@@ -25,14 +25,47 @@ export function getMidnightInTimezone(date: Date, timezone: string): Date {
   const month = +parts.find(p => p.type === 'month')!.value - 1
   const day = +parts.find(p => p.type === 'day')!.value
 
-  // Compute timezone offset at ~noon on that date (avoids DST edge at midnight)
-  const noonUTC = new Date(Date.UTC(year, month, day, 12, 0, 0))
-  const noonInTZ = new Date(noonUTC.toLocaleString('en-US', { timeZone: timezone }))
-  const noonAsUTC = new Date(noonUTC.toLocaleString('en-US', { timeZone: 'UTC' }))
-  const offsetMs = noonAsUTC.getTime() - noonInTZ.getTime()
+  // Two-pass offset calculation to handle DST transitions correctly.
+  // On DST spring-forward/fall-back days, the offset at midnight differs from
+  // the offset at other times of day. A single-pass approach using noon offset
+  // produces the wrong midnight (e.g., 11 PM previous day on spring-forward).
+  //
+  // Pass 1: Get offset at midnight UTC → approximate local midnight
+  // Pass 2: Get offset at the approximate midnight → correct local midnight
+  //
+  // This converges because midnight is always before any 2 AM DST transition,
+  // so the second pass always lands on the correct side of the boundary.
+  const midnightUTC = Date.UTC(year, month, day)
+  const offset1 = tzOffsetMs(midnightUTC, timezone)
+  const approxMidnight = midnightUTC + offset1
+  const offset2 = tzOffsetMs(approxMidnight, timezone)
 
-  // Midnight in target timezone = UTC midnight for that date + offset
-  return new Date(Date.UTC(year, month, day) + offsetMs)
+  return new Date(midnightUTC + offset2)
+}
+
+/**
+ * Compute UTC-to-timezone offset in milliseconds at a given UTC instant.
+ *
+ * Uses Intl.DateTimeFormat.formatToParts + Date.UTC to avoid DST bugs
+ * from new Date(string) parsing, which applies the browser's current
+ * DST offset rather than the offset at the original UTC instant.
+ */
+function tzOffsetMs(utcMs: number, timezone: string): number {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  })
+  const parts = fmt.formatToParts(new Date(utcMs))
+  const y = +parts.find(p => p.type === 'year')!.value
+  const m = +parts.find(p => p.type === 'month')!.value - 1
+  const d = +parts.find(p => p.type === 'day')!.value
+  const h = +parts.find(p => p.type === 'hour')!.value % 24
+  const min = +parts.find(p => p.type === 'minute')!.value
+  const sec = +parts.find(p => p.type === 'second')!.value
+  const localAsUTC = Date.UTC(y, m, d, h, min, sec)
+  return utcMs - localAsUTC
 }
 
 /**

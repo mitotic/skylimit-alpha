@@ -318,7 +318,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       if (actualPost.uri) {
         // Track click engagement
         const uniqueId = getPostUniqueId(post)
-        updatePostSummaryEngagement(uniqueId, ENGAGEMENT_CLICKED)
+        updatePostSummaryEngagement(uniqueId, ENGAGEMENT_CLICKED, myUsername)
 
         if (clickToBlueSky) {
           // Open in Bluesky client (same tab)

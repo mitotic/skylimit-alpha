@@ -131,7 +131,7 @@ export async function curateSinglePost(
   editionCount: number,
   secondaryRepostIndex?: SecondaryRepostIndex
 ): Promise<CurationResult> {
-  const summary = createPostSummary(post)
+  const summary = createPostSummary(post, undefined, myUsername)
   const modStatus: CurationResult = { curation_msg: '' }
   let dropReason = ''
 
