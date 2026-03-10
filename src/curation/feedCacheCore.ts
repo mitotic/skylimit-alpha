@@ -12,7 +12,7 @@ import { getIntervalString, getFeedViewPostTimestamp, isRepost, getPostUniqueId 
 import { FeedCacheEntry, FeedCacheEntryWithPost, CurationFeedViewPost, getIntervalHoursSync } from './types'
 import { getSettings } from './skylimitStore'
 import { clientNow, clientDate } from '../utils/clientClock'
-import { getMidnightInTimezone } from '../utils/timezoneUtils'
+import { getMidnightInTimezone, getNextMidnight, getPrevMidnight } from '../utils/timezoneUtils'
 import log from '../utils/logger'
 
 // Get database instance (reuse from skylimitCache)
@@ -406,6 +406,30 @@ export function getLocalMidnight(date: Date = clientDate(), timezone?: string): 
   const midnight = new Date(date)
   midnight.setHours(0, 0, 0, 0)
   return midnight
+}
+
+/**
+ * Get the next day's local midnight, DST-safe.
+ * When timezone is provided, uses proper calendar day advancement.
+ * Falls back to +24h when timezone is not provided.
+ */
+export function getNextLocalMidnight(midnight: Date, timezone?: string): Date {
+  if (timezone) {
+    return getNextMidnight(midnight, timezone)
+  }
+  return new Date(midnight.getTime() + 24 * 60 * 60 * 1000)
+}
+
+/**
+ * Get the previous day's local midnight, DST-safe.
+ * When timezone is provided, uses proper calendar day retreat.
+ * Falls back to -24h when timezone is not provided.
+ */
+export function getPrevLocalMidnight(midnight: Date, timezone?: string): Date {
+  if (timezone) {
+    return getPrevMidnight(midnight, timezone)
+  }
+  return new Date(midnight.getTime() - 24 * 60 * 60 * 1000)
 }
 
 /**

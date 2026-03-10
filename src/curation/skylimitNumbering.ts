@@ -8,7 +8,7 @@
  */
 
 import { getAllPostSummaries, getPostSummariesInRange, initDB } from './skylimitCache'
-import { getLocalMidnight } from './skylimitFeedCache'
+import { getLocalMidnight, getNextLocalMidnight } from './skylimitFeedCache'
 import { PostSummary, isStatusDrop, isStatusShow } from './types'
 import { getSettings } from './skylimitStore'
 import log from '../utils/logger'
@@ -157,7 +157,7 @@ export async function assignAllNumbers(): Promise<void> {
   let totalShown = 0
 
   while (currentDay <= finalDay) {
-    const nextDay = new Date(currentDay.getTime() + 24 * 60 * 60 * 1000)
+    const nextDay = getNextLocalMidnight(currentDay, timezone)
 
     const { postCount, shownCount } = await assignNumbersForDay(currentDay.getTime(), nextDay.getTime())
     totalPosts += postCount

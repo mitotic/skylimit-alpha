@@ -3,7 +3,8 @@ import { useParams, useSearchParams, useNavigate, useLocation, useNavigationType
 import { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { getPostThread, fetchParentChain, MAX_PARENT_CHAIN_DEPTH } from '../api/feed'
-import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
+import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost, deletePost } from '../api/posts'
+import { pinPost } from '../api/profile'
 import { getPostUrl } from '../curation/skylimitGeneral'
 import { updatePostSummaryEngagement } from '../curation/skylimitCache'
 import { ENGAGEMENT_REPLIED } from '../curation/types'
@@ -49,6 +50,8 @@ export default function ThreadPage() {
   const chainLastUriRef = useRef<string | null>(null)
   const chainFetchCountRef = useRef(0)
   const chainAnchorDidRef = useRef<string | null>(null)
+  const threadRef = useRef<AppBskyFeedDefs.ThreadViewPost | null>(null)
+  threadRef.current = thread
   const [engagementModal, setEngagementModal] = useState<{
     isOpen: boolean
     type: 'likes' | 'reposts'
@@ -268,16 +271,19 @@ export default function ThreadPage() {
     }
   }, [agent, fetchChainPage])
 
-  // Initial chain fetch when thread loads
+  // Initial chain fetch when thread loads (depends on anchor URI, not full thread object,
+  // to avoid re-fetching on optimistic like/repost/bookmark updates)
+  const threadAnchorUri = thread?.post.uri
   useEffect(() => {
-    if (!agent || !thread) {
+    const currentThread = threadRef.current
+    if (!agent || !currentThread) {
       setSelfReplyChain([])
       setChainMayHaveMore(false)
       return
     }
 
-    const anchorDid = thread.post.author.did
-    const directReplies = (thread.replies || [])
+    const anchorDid = currentThread.post.author.did
+    const directReplies = (currentThread.replies || [])
       .filter(r => 'post' in r) as AppBskyFeedDefs.ThreadViewPost[]
     const opReplies = directReplies
       .filter(r => r.post.author.did === anchorDid)
@@ -322,7 +328,7 @@ export default function ThreadPage() {
 
     doFetch()
     return () => { cancelled = true }
-  }, [agent, thread, fetchChainPage])
+  }, [agent, threadAnchorUri, fetchChainPage])
 
   // Step 4: Restore scroll position after thread loads OR scroll to highlighted post
   useEffect(() => {
@@ -473,53 +479,62 @@ export default function ThreadPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const handleLike = async (uri: string, cid: string) => {
-    if (!agent || !thread) return
-    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+  // Helper: determine where a post lives and get its viewer state.
+  // Returns 'anchor' | 'chain' | 'reply' so each handler updates only the correct state.
+  const classifyPost = (uri: string): { location: 'anchor' | 'chain' | 'reply', viewer: AppBskyFeedDefs.ViewerState | undefined } => {
+    if (!thread) return { location: 'reply', viewer: undefined }
+    if (thread.post.uri === uri) return { location: 'anchor', viewer: thread.post.viewer }
+    const chainPost = selfReplyChain.find(p => p.uri === uri)
+    if (chainPost) return { location: 'chain', viewer: chainPost.viewer }
+    const reply = ((thread.replies || []) as AppBskyFeedDefs.ThreadViewPost[])
+      .find(r => 'post' in r && r.post.uri === uri)
+    return { location: 'reply', viewer: reply?.post.viewer }
+  }
 
-    // Capture original state BEFORE any updates
-    const originalLikeUri = thread.post.viewer?.like
-    const isLiked = !!originalLikeUri
-
-    // Optimistic update - only update count, not the like URI
+  // Helpers to update a single post in thread state or chain state
+  const updateAnchorPost = (updater: (post: AppBskyFeedDefs.PostView) => AppBskyFeedDefs.PostView) => {
+    setThread(prev => prev ? { ...prev, post: updater(prev.post) } : null)
+  }
+  const updateReplyPost = (uri: string, updater: (post: AppBskyFeedDefs.PostView) => AppBskyFeedDefs.PostView) => {
     setThread(prev => {
       if (!prev) return null
       return {
         ...prev,
-        post: {
-          ...prev.post,
-          likeCount: (prev.post.likeCount || 0) + (isLiked ? -1 : 1),
-        },
+        replies: (prev.replies || []).map((r: any) =>
+          'post' in r && r.post.uri === uri ? { ...r, post: updater(r.post) } : r
+        ),
       }
     })
+  }
+  const updateChainPost = (uri: string, updater: (post: AppBskyFeedDefs.PostView) => AppBskyFeedDefs.PostView) => {
+    setSelfReplyChain(prev => prev.map(p => p.uri === uri ? updater(p) : p))
+  }
+
+  // Dispatch an update to the correct state based on post location
+  const updatePost = (uri: string, location: 'anchor' | 'chain' | 'reply', updater: (post: AppBskyFeedDefs.PostView) => AppBskyFeedDefs.PostView) => {
+    if (location === 'anchor') updateAnchorPost(updater)
+    else if (location === 'chain') updateChainPost(uri, updater)
+    else updateReplyPost(uri, updater)
+  }
+
+  const handleLike = async (uri: string, cid: string) => {
+    if (!agent || !thread) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    const { location, viewer } = classifyPost(uri)
+    const originalLikeUri = viewer?.like
+    const isLiked = !!originalLikeUri
+
+    // Optimistic update - only update count, not the like URI
+    updatePost(uri, location, p => ({ ...p, likeCount: (p.likeCount || 0) + (isLiked ? -1 : 1) }))
 
     try {
       if (isLiked && originalLikeUri) {
         await unlikePost(agent, originalLikeUri)
-        // Update state to reflect unliked
-        setThread(prev => {
-          if (!prev) return null
-          return {
-            ...prev,
-            post: {
-              ...prev.post,
-              viewer: { ...prev.post.viewer, like: undefined },
-            },
-          }
-        })
+        updatePost(uri, location, p => ({ ...p, viewer: { ...p.viewer, like: undefined } }))
       } else {
         const likeResponse = await likePost(agent, uri, cid)
-        // Update state with real like URI so unlike works
-        setThread(prev => {
-          if (!prev) return null
-          return {
-            ...prev,
-            post: {
-              ...prev.post,
-              viewer: { ...prev.post.viewer, like: likeResponse.uri },
-            },
-          }
-        })
+        updatePost(uri, location, p => ({ ...p, viewer: { ...p.viewer, like: likeResponse.uri } }))
       }
     } catch (error) {
       loadThread()
@@ -531,43 +546,11 @@ export default function ThreadPage() {
     if (!agent || !thread) return
     if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
-    // Check if it's the anchor post or a reply
-    const isAnchorPost = thread.post.uri === uri
-    const wasBookmarked = isAnchorPost
-      ? !!thread.post.viewer?.bookmarked
-      : !!((thread.replies || []) as AppBskyFeedDefs.ThreadViewPost[])
-          .find(r => 'post' in r && r.post.uri === uri)
-          ?.post.viewer?.bookmarked
+    const { location, viewer } = classifyPost(uri)
+    const wasBookmarked = !!viewer?.bookmarked
 
     // Optimistic update
-    setThread(prev => {
-      if (!prev) return null
-      if (isAnchorPost) {
-        return {
-          ...prev,
-          post: {
-            ...prev.post,
-            viewer: { ...prev.post.viewer, bookmarked: !wasBookmarked },
-          },
-        }
-      }
-      // Update reply
-      return {
-        ...prev,
-        replies: (prev.replies || []).map((r: any) => {
-          if ('post' in r && r.post.uri === uri) {
-            return {
-              ...r,
-              post: {
-                ...r.post,
-                viewer: { ...r.post.viewer, bookmarked: !wasBookmarked },
-              },
-            }
-          }
-          return r
-        }),
-      }
-    })
+    updatePost(uri, location, p => ({ ...p, viewer: { ...p.viewer, bookmarked: !wasBookmarked } }))
 
     try {
       if (wasBookmarked) {
@@ -577,33 +560,7 @@ export default function ThreadPage() {
       }
     } catch (error) {
       // Revert
-      setThread(prev => {
-        if (!prev) return null
-        if (isAnchorPost) {
-          return {
-            ...prev,
-            post: {
-              ...prev.post,
-              viewer: { ...prev.post.viewer, bookmarked: wasBookmarked },
-            },
-          }
-        }
-        return {
-          ...prev,
-          replies: (prev.replies || []).map((r: any) => {
-            if ('post' in r && r.post.uri === uri) {
-              return {
-                ...r,
-                post: {
-                  ...r.post,
-                  viewer: { ...r.post.viewer, bookmarked: wasBookmarked },
-                },
-              }
-            }
-            return r
-          }),
-        }
-      })
+      updatePost(uri, location, p => ({ ...p, viewer: { ...p.viewer, bookmarked: wasBookmarked } }))
       addToast(error instanceof Error ? error.message : 'Failed to update bookmark', 'error')
     }
   }
@@ -612,49 +569,20 @@ export default function ThreadPage() {
     if (!agent || !thread) return
     if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
 
-    // Capture original state BEFORE any updates
-    const originalRepostUri = thread.post.viewer?.repost
+    const { location, viewer } = classifyPost(uri)
+    const originalRepostUri = viewer?.repost
     const isReposted = !!originalRepostUri
 
     // Optimistic update - only update count, not the repost URI
-    setThread(prev => {
-      if (!prev) return null
-      return {
-        ...prev,
-        post: {
-          ...prev.post,
-          repostCount: (prev.post.repostCount || 0) + (isReposted ? -1 : 1),
-        },
-      }
-    })
+    updatePost(uri, location, p => ({ ...p, repostCount: (p.repostCount || 0) + (isReposted ? -1 : 1) }))
 
     try {
       if (isReposted && originalRepostUri) {
         await removeRepost(agent, originalRepostUri)
-        // Update state to reflect unreposted
-        setThread(prev => {
-          if (!prev) return null
-          return {
-            ...prev,
-            post: {
-              ...prev.post,
-              viewer: { ...prev.post.viewer, repost: undefined },
-            },
-          }
-        })
+        updatePost(uri, location, p => ({ ...p, viewer: { ...p.viewer, repost: undefined } }))
       } else {
         const repostResponse = await repost(agent, uri, cid)
-        // Update state with real repost URI so unrepost works
-        setThread(prev => {
-          if (!prev) return null
-          return {
-            ...prev,
-            post: {
-              ...prev.post,
-              viewer: { ...prev.post.viewer, repost: repostResponse.uri },
-            },
-          }
-        })
+        updatePost(uri, location, p => ({ ...p, viewer: { ...p.viewer, repost: repostResponse.uri } }))
       }
     } catch (error) {
       loadThread()
@@ -708,6 +636,37 @@ export default function ThreadPage() {
       addToast('Reply posted!', 'success')
     }
     await loadThread()
+  }
+
+  const handleDeletePost = async (uri: string) => {
+    if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    try {
+      await deletePost(agent, uri)
+      // If deleting the anchor post, navigate back
+      if (thread && uri === thread.post.uri) {
+        addToast('Post deleted', 'success')
+        navigate(-1)
+      } else {
+        addToast('Post deleted', 'success')
+        await loadThread()
+      }
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to delete post', 'error')
+    }
+  }
+
+  const handlePinPost = async (uri: string, cid: string) => {
+    if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    try {
+      await pinPost(agent, uri, cid)
+      addToast('Post pinned to your profile', 'success')
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to pin post', 'error')
+    }
   }
 
   const handlePostThread = async (
@@ -879,6 +838,8 @@ export default function ThreadPage() {
             onQuotePost={handleQuotePost}
             onLike={handleLike}
             onBookmark={handleBookmark}
+            onDeletePost={handleDeletePost}
+            onPinPost={handlePinPost}
             showRootPost={false}
             engagementStats={engagementStatsElement}
             stackedLayout={true}
@@ -905,6 +866,14 @@ export default function ThreadPage() {
                         isLoading={isLoadingChain}
                         mayHaveMore={chainMayHaveMore}
                         onLoadMore={handleLoadMoreChain}
+                        onLike={handleLike}
+                        onRepost={handleRepost}
+                        onQuotePost={handleQuotePost}
+                        onReply={handleReply}
+                        onBookmark={handleBookmark}
+                        onDeletePost={handleDeletePost}
+                        onPinPost={handlePinPost}
+                        isOwnPost={replyThread.post.author?.did === session?.did}
                       />
                     </div>
                   )
@@ -937,6 +906,8 @@ export default function ThreadPage() {
                         onQuotePost={handleQuotePost}
                         onLike={handleLike}
                         onBookmark={handleBookmark}
+                        onDeletePost={handleDeletePost}
+                        onPinPost={handlePinPost}
                         showRootPost={false}
                         highlighted={isReplyHighlighted}
                       />

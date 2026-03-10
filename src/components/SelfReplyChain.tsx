@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
-import { formatDistance } from 'date-fns'
-import { clientDate } from '../utils/clientClock'
 import Avatar from './Avatar'
 import RichText from './RichText'
 import PostMedia from './PostMedia'
+import PostActions from './PostActions'
 import Spinner from './Spinner'
 
 const CHAIN_PAGE_SIZE = 10
@@ -16,6 +15,14 @@ interface SelfReplyChainProps {
   isLoading: boolean
   mayHaveMore?: boolean                  // true if more posts might be fetchable from the server
   onLoadMore?: () => void                // callback to fetch more chain posts from the server
+  onLike?: (uri: string, cid: string) => void
+  onRepost?: (uri: string, cid: string) => void
+  onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
+  onReply?: (uri: string) => void
+  onBookmark?: (uri: string, cid: string) => void
+  onDeletePost?: (uri: string) => void
+  onPinPost?: (uri: string, cid: string) => void
+  isOwnPost?: boolean
 }
 
 // Compact post without avatar/username — used for all posts in the chain
@@ -23,17 +30,28 @@ function CompactChainPost({
   post,
   onClick,
   showLine = true,
+  isOwnPost,
+  onLike,
+  onRepost,
+  onQuotePost,
+  onReply,
+  onBookmark,
+  onDeletePost,
+  onPinPost,
 }: {
   post: AppBskyFeedDefs.PostView
   onClick: () => void
   showLine?: boolean
+  isOwnPost?: boolean
+  onLike?: (uri: string, cid: string) => void
+  onRepost?: (uri: string, cid: string) => void
+  onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
+  onReply?: (uri: string) => void
+  onBookmark?: (uri: string, cid: string) => void
+  onDeletePost?: (uri: string) => void
+  onPinPost?: (uri: string, cid: string) => void
 }) {
   const record = post.record as any
-
-  const createdAt = record?.createdAt
-    ? new Date(record.createdAt)
-    : clientDate()
-  const timeAgo = formatDistance(createdAt, clientDate(), { addSuffix: true })
 
   return (
     <div
@@ -62,45 +80,18 @@ function CompactChainPost({
             </div>
           )}
 
-          {/* Stats row: reply, repost, like, bookmark, share + timestamp */}
-          <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-            <span className="flex items-center gap-1">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              {(post.replyCount || 0) > 0 && <span>{post.replyCount}</span>}
-            </span>
-            <span className="flex items-center gap-1">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M17 1l4 4-4 4" />
-                <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-                <path d="M7 23l-4-4 4-4" />
-                <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-              </svg>
-              {(post.repostCount || 0) > 0 && <span>{post.repostCount}</span>}
-            </span>
-            <span className="flex items-center gap-1">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-              </svg>
-              {(post.likeCount || 0) > 0 && <span>{post.likeCount}</span>}
-            </span>
-            <span className="flex items-center gap-1">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-              </svg>
-            </span>
-            <span className="flex items-center gap-1">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="18" cy="5" r="3" />
-                <circle cx="6" cy="12" r="3" />
-                <circle cx="18" cy="19" r="3" />
-                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-              </svg>
-            </span>
-            <span>· {timeAgo}</span>
-          </div>
+          <PostActions
+            post={post}
+            author={post.author}
+            isOwnPost={isOwnPost}
+            onReply={onReply}
+            onRepost={onRepost}
+            onQuotePost={onQuotePost}
+            onLike={onLike}
+            onBookmark={onBookmark}
+            onDeletePost={onDeletePost}
+            onPinPost={onPinPost}
+          />
         </div>
       </div>
     </div>
@@ -127,7 +118,7 @@ function MinusCircleIcon() {
   )
 }
 
-export default function SelfReplyChain({ firstPost, chainPosts, isLoading, mayHaveMore, onLoadMore }: SelfReplyChainProps) {
+export default function SelfReplyChain({ firstPost, chainPosts, isLoading, mayHaveMore, onLoadMore, onLike, onRepost, onQuotePost, onReply, onBookmark, onDeletePost, onPinPost, isOwnPost }: SelfReplyChainProps) {
   const navigate = useNavigate()
   const [displayCount, setDisplayCount] = useState(0) // 0 = collapsed (only first post shown)
 
@@ -217,6 +208,14 @@ export default function SelfReplyChain({ firstPost, chainPosts, isLoading, mayHa
           post={post}
           onClick={() => handlePostClick(post.uri)}
           showLine={true}
+          onLike={onLike}
+          onRepost={onRepost}
+          onQuotePost={onQuotePost}
+          onReply={onReply}
+          onBookmark={onBookmark}
+          onDeletePost={onDeletePost}
+          onPinPost={onPinPost}
+          isOwnPost={isOwnPost}
         />
       ))}
 

@@ -2,32 +2,42 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import RepostMenu from './RepostMenu'
+import PostOptionsMenu from './PostOptionsMenu'
 import { getPostUrl } from '../curation/skylimitGeneral'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 
 interface PostActionsProps {
   post: AppBskyFeedDefs.PostView
   author?: { handle: string }
+  isOwnPost?: boolean
   onReply?: (uri: string) => void
   onRepost?: (uri: string, cid: string) => void
   onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
   onLike?: (uri: string, cid: string) => void
   onBookmark?: (uri: string, cid: string) => void
+  onDeletePost?: (uri: string) => void
+  onPinPost?: (uri: string, cid: string) => void
 }
 
 export default function PostActions({
   post,
   author,
+  isOwnPost = false,
   onReply,
   onRepost,
   onQuotePost,
   onLike,
   onBookmark,
+  onDeletePost,
+  onPinPost,
 }: PostActionsProps) {
   const navigate = useNavigate()
   const [showRepostMenu, setShowRepostMenu] = useState(false)
   const [showCopied, setShowCopied] = useState(false)
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false)
+  const [showTextCopied, setShowTextCopied] = useState(false)
   const repostButtonRef = useRef<HTMLButtonElement>(null)
+  const optionsButtonRef = useRef<HTMLButtonElement>(null)
 
 
   const replyCount = post.replyCount ?? 0
@@ -88,11 +98,33 @@ export default function PostActions({
     }
   }
 
+  const handleCopyText = () => {
+    const text = (post.record as any)?.text
+    if (text) {
+      navigator.clipboard.writeText(text).then(() => {
+        setShowTextCopied(true)
+      })
+    }
+  }
+
+  const handleOptionsClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (optionsButtonRef.current) {
+      setShowOptionsMenu(true)
+    }
+  }
+
   useEffect(() => {
     if (!showCopied) return
     const timer = setTimeout(() => setShowCopied(false), 2000)
     return () => clearTimeout(timer)
   }, [showCopied])
+
+  useEffect(() => {
+    if (!showTextCopied) return
+    const timer = setTimeout(() => setShowTextCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [showTextCopied])
 
   return (
     <div className="flex items-center gap-6 mt-2">
@@ -131,6 +163,7 @@ export default function PostActions({
             onRepost={handleSimpleRepost}
             onQuotePost={handleQuotePost}
             onClose={() => setShowRepostMenu(false)}
+            isReposted={isReposted}
             position={{
               x: repostButtonRef.current.getBoundingClientRect().left,
               y: repostButtonRef.current.getBoundingClientRect().bottom + 8,
@@ -186,6 +219,39 @@ export default function PostActions({
           <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 dark:bg-gray-700 rounded shadow whitespace-nowrap">
             Link copied!
           </div>
+        )}
+      </div>
+
+      <div className="relative">
+        <button
+          ref={optionsButtonRef}
+          className="flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+          onClick={handleOptionsClick}
+          aria-label="More options"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="5" cy="12" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="19" cy="12" r="2" />
+          </svg>
+        </button>
+        {showTextCopied && (
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 dark:bg-gray-700 rounded shadow whitespace-nowrap">
+            Text copied!
+          </div>
+        )}
+        {showOptionsMenu && optionsButtonRef.current && (
+          <PostOptionsMenu
+            isOwnPost={isOwnPost}
+            onCopyText={handleCopyText}
+            onPinPost={onPinPost ? () => onPinPost(post.uri, post.cid) : undefined}
+            onDeletePost={onDeletePost ? () => onDeletePost(post.uri) : undefined}
+            onClose={() => setShowOptionsMenu(false)}
+            position={{
+              x: optionsButtonRef.current.getBoundingClientRect().left,
+              y: optionsButtonRef.current.getBoundingClientRect().bottom + 8,
+            }}
+          />
         )}
       </div>
     </div>

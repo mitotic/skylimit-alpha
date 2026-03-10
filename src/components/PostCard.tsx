@@ -29,6 +29,8 @@ interface PostCardProps {
   onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
   onLike?: (uri: string, cid: string) => void
   onBookmark?: (uri: string, cid: string) => void
+  onDeletePost?: (uri: string) => void
+  onPinPost?: (uri: string, cid: string) => void
   /**
    * If true, show the daily post counter (only on home page)
    */
@@ -55,7 +57,7 @@ interface PostCardProps {
   stackedLayout?: boolean
 }
 
-export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false }: PostCardProps) {
+export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, onDeletePost, onPinPost, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false }: PostCardProps) {
   const navigate = useNavigate()
   const { session } = useSession()
   const { theme } = useTheme()
@@ -674,11 +676,14 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           <PostActions
             post={actualPost}
             author={actualPost.author}
+            isOwnPost={actualPost.author?.did === session?.did}
             onReply={onReply}
             onRepost={onRepost}
             onQuotePost={onQuotePost}
             onLike={onLike}
             onBookmark={onBookmark}
+            onDeletePost={onDeletePost}
+            onPinPost={onPinPost}
           />
         </div>
       </div>

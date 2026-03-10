@@ -26,7 +26,7 @@ import type { TextSuggestions } from './types'
 import { nextInterval as nextIntervalGeneral, oldestInterval as oldestIntervalGeneral, getIntervalString } from './skylimitGeneral'
 import { getSettings } from './skylimitStore'
 import { isInitialLookbackCompleted } from './skylimitFeedCache'
-import { getLocalMidnight } from './feedCacheCore'
+import { getLocalMidnight, getPrevLocalMidnight } from './feedCacheCore'
 import { isPriorityPost } from './skylimitFilter'
 // countTotalPosts is defined in this file
 import { hmacHex } from '../utils/hmac'
@@ -152,7 +152,8 @@ export async function computePostStats(
   }
 
   // Build unviewed posts map for today (since midnight of current calendar day)
-  const todayMidnight = getLocalMidnight(clientDate(), settings.timezone).getTime()
+  const todayMidnightDate = getLocalMidnight(clientDate(), settings.timezone)
+  const todayMidnight = todayMidnightDate.getTime()
   const unviewedMap = new Map<string, number>()
   for (const summary of allSummaries) {
     if (!summary.viewedAt && isStatusShow(summary.curation_status) && summary.postTimestamp > todayMidnight) {
@@ -162,7 +163,7 @@ export async function computePostStats(
   setUnviewedPostsTodayMap(unviewedMap, todayMidnight)
 
   // Build unviewed posts map for yesterday (only if cache covers yesterday)
-  const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
+  const yesterdayMidnight = getPrevLocalMidnight(todayMidnightDate, settings.timezone).getTime()
   const oldestPostTimestamp = Math.min(...allSummaries.map(s => s.postTimestamp))
   const ONE_HOUR = 60 * 60 * 1000
   if (oldestPostTimestamp <= yesterdayMidnight + ONE_HOUR) {

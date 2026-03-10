@@ -432,6 +432,51 @@ export async function unbookmarkPost(
 /**
  * Creates a quote post (post with embedded record and optional images) with rate limit handling
  */
+/**
+ * Deletes a post by its AT URI with rate limit handling.
+ * Parses the URI to extract repo, collection, and rkey for deleteRecord.
+ */
+export async function deletePost(
+  agent: BskyAgent,
+  uri: string,
+  options?: PostOptions
+): Promise<void> {
+  // Parse AT URI: at://did:plc:xxx/app.bsky.feed.post/rkey
+  const parts = uri.replace('at://', '').split('/')
+  if (parts.length < 3) throw new Error('Invalid AT URI for delete')
+  const repo = parts[0]
+  const collection = parts[1]
+  const rkey = parts[2]
+
+  return retryWithBackoff(
+    async () => {
+      await agent.com.atproto.repo.deleteRecord({ repo, collection, rkey })
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options?.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to delete post: ${error.message}`)
+    }
+    throw new Error('Failed to delete post: Unknown error')
+  })
+}
+
 export async function createQuotePost(
   agent: BskyAgent,
   params: CreateQuotePostParams,

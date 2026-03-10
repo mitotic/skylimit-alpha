@@ -38,6 +38,8 @@ interface EditionViewProps {
   onQuotePost?: (post: AppBskyFeedDefs.PostView) => void
   onLike?: (uri: string, cid: string) => void
   onBookmark?: (uri: string, cid: string) => void
+  onDeletePost?: (uri: string) => void
+  onPinPost?: (uri: string, cid: string) => void
   onEditionViewed?: () => void
   targetEditionKey?: string | null
   onTargetConsumed?: () => void
@@ -58,6 +60,8 @@ export default function EditionView({
   onQuotePost,
   onLike,
   onBookmark,
+  onDeletePost,
+  onPinPost,
   onEditionViewed,
   targetEditionKey,
   onTargetConsumed,
@@ -476,6 +480,8 @@ export default function EditionView({
               onQuotePost={onQuotePost}
               onLike={onLike}
               onBookmark={onBookmark}
+              onDeletePost={onDeletePost}
+              onPinPost={onPinPost}
             />
           </div>
         )

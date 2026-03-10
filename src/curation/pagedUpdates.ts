@@ -9,7 +9,7 @@ import { BskyAgent, AppBskyFeedDefs } from '@atproto/api'
 import { curateSinglePost } from './skylimitFilter'
 import { getFilter, getAllFollows } from './skylimitCache'
 import { getSettings } from './skylimitStore'
-import { getCachedPostUniqueIds, getLocalMidnight } from './skylimitFeedCache'
+import { getCachedPostUniqueIds, getLocalMidnight, getNextLocalMidnight } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
 import { FollowInfo, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost, SecondaryRepostIndex, addToRepostIndex } from './types'
@@ -140,7 +140,7 @@ export async function probeForNewPosts(
     // "Today" = the day of newestDisplayedTimestamp, not actual current time
     const displayedDate = new Date(newestDisplayedTimestamp)
     const displayedDayMidnight = getLocalMidnight(displayedDate, settings?.timezone)
-    const nextDayMidnightMs = displayedDayMidnight.getTime() + 24 * 60 * 60 * 1000
+    const nextDayMidnightMs = getNextLocalMidnight(displayedDayMidnight, settings?.timezone).getTime()
 
     // In-memory secondary cache for cross-post curation context (discarded after probe)
     const secondaryEntries: SecondaryEntry[] = []

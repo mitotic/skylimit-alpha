@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
 import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
-import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
+import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost, deletePost } from '../api/posts'
+import { pinPost } from '../api/profile'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 import { updatePostSummaryEngagement } from '../curation/skylimitCache'
 import { getPostUniqueId } from '../curation/skylimitGeneral'
@@ -345,6 +346,31 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
     // PostCard.refreshAfterAmpChange already updates the popup's local state.
   }, [])
 
+  const handleDeletePost = useCallback(async (uri: string) => {
+    if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    try {
+      await deletePost(agent, uri)
+      setFeed(prev => prev.filter(p => p.post.uri !== uri))
+      addToast('Post deleted', 'success')
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to delete post', 'error')
+    }
+  }, [agent, setFeed, addToast])
+
+  const handlePinPost = useCallback(async (uri: string, cid: string) => {
+    if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    try {
+      await pinPost(agent, uri, cid)
+      addToast('Post pinned to your profile', 'success')
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to pin post', 'error')
+    }
+  }, [agent, addToast])
+
   return {
     showCompose,
     setShowCompose,
@@ -360,5 +386,7 @@ export function usePostInteractions({ agent, feed, setFeed, addToast, forceProbe
     handlePost,
     handlePostThread,
     handleAmpChange,
+    handleDeletePost,
+    handlePinPost,
   }
 }

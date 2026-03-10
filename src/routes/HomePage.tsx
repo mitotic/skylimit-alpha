@@ -140,6 +140,7 @@ export default function HomePage() {
     quotePost, setQuotePost,
     handleLike, handleBookmark, handleRepost,
     handleQuotePost, handleReply, handlePost, handlePostThread, handleAmpChange,
+    handleDeletePost, handlePinPost,
   } = usePostInteractions({ agent, feed, setFeed, addToast, forceProbeRef, setForceProbeTrigger, myUsername: session?.handle })
 
   const {
@@ -1232,6 +1233,8 @@ export default function HomePage() {
                   onQuotePost={handleQuotePost}
                   onLike={handleLike}
                   onBookmark={handleBookmark}
+                  onDeletePost={handleDeletePost}
+                  onPinPost={handlePinPost}
                   showCounter={true}
                   onAmpChange={handleAmpChange}
                 />
@@ -1323,6 +1326,8 @@ export default function HomePage() {
           onQuotePost={handleQuotePost}
           onLike={handleLike}
           onBookmark={handleBookmark}
+          onDeletePost={handleDeletePost}
+          onPinPost={handlePinPost}
           onEditionViewed={() => setHasNewEdition(isNewestEditionUnviewed())}
           targetEditionKey={targetEditionKeyRef.current}
           onTargetConsumed={() => { targetEditionKeyRef.current = null }}

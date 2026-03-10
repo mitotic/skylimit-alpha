@@ -6,9 +6,10 @@ interface RepostMenuProps {
   onQuotePost: () => void
   onClose: () => void
   position: { x: number; y: number }
+  isReposted?: boolean
 }
 
-export default function RepostMenu({ onRepost, onQuotePost, onClose, position }: RepostMenuProps) {
+export default function RepostMenu({ onRepost, onQuotePost, onClose, position, isReposted }: RepostMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -56,7 +57,7 @@ export default function RepostMenu({ onRepost, onQuotePost, onClose, position }:
         }}
         role="menuitem"
       >
-        Repost
+        {isReposted ? 'Undo repost' : 'Repost'}
       </button>
       <button
         className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"

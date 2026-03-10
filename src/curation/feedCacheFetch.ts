@@ -26,6 +26,7 @@ import {
   getOldestCachedPostTimestamp,
   savePrevPageCursor,
   getLocalMidnight,
+  getNextLocalMidnight,
   updateFeedCacheNewestPostTimestamp,
   getLastFetchMetadata,
   DEFAULT_PAGE_LENGTH,
@@ -938,8 +939,9 @@ export async function transferSecondaryToPrimary(
   const settings = await getSettings()
   const timezone = settings.timezone
   const oldestEntryTimestamp = sorted[0].entry.postTimestamp
-  let currentDayStart = getLocalMidnight(new Date(oldestEntryTimestamp), timezone).getTime()
-  let currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
+  let currentDayMidnight = getLocalMidnight(new Date(oldestEntryTimestamp), timezone)
+  let currentDayStart = currentDayMidnight.getTime()
+  let currentDayEnd = getNextLocalMidnight(currentDayMidnight, timezone).getTime()
   let postNumber = 0
   let curationNumber = 0
   if (!skipNumbering) {
@@ -1164,8 +1166,9 @@ export async function transferSecondaryToPrimary(
     } else {
       // Check if day boundary crossed — update numbering context
       if (entry.postTimestamp >= currentDayEnd) {
-        currentDayStart = getLocalMidnight(new Date(entry.postTimestamp), timezone).getTime()
-        currentDayEnd = currentDayStart + 24 * 60 * 60 * 1000
+        currentDayMidnight = getLocalMidnight(new Date(entry.postTimestamp), timezone)
+        currentDayStart = currentDayMidnight.getTime()
+        currentDayEnd = getNextLocalMidnight(currentDayMidnight, timezone).getTime()
         const dayNumbers = await getMaxNumbersForDay(currentDayStart, currentDayEnd)
         postNumber = dayNumbers.maxPostNumber
         curationNumber = dayNumbers.maxCurationNumber

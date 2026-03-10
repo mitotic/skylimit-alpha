@@ -11,7 +11,7 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, SecondaryEntry, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, getNextLocalMidnight, getPrevLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { numberUnnumberedPostsForDay, assignNumbersForDay, assignAllNumbers } from '../curation/skylimitNumbering'
 import { clientNow, clientDate, clientTimeout, clearClientTimeout, clientInterval, clearClientInterval } from '../utils/clientClock'
@@ -459,8 +459,9 @@ export function useFeedPipeline({
         const newestId = getPostUniqueId(newestFetched)
         const newestSummary = await getPostSummary(newestId)
         if (newestSummary?.postNumber != null && newestSummary.postNumber > 0) {
-          const fetchDayStart = getLocalMidnight(new Date(afterTimestamp), settings?.timezone).getTime()
-          const fetchDayEnd = fetchDayStart + 24 * 60 * 60 * 1000
+          const fetchDayMidnight = getLocalMidnight(new Date(afterTimestamp), settings?.timezone)
+          const fetchDayStart = fetchDayMidnight.getTime()
+          const fetchDayEnd = getNextLocalMidnight(fetchDayMidnight, settings?.timezone).getTime()
           const preNumbered = await numberUnnumberedPostsForDay(fetchDayStart, fetchDayEnd, 'Prefetch')
           if (preNumbered > 0) {
             log.debug('Prefetch', `Numbered ${preNumbered} unnumbered posts (previous page had unnumbered)`)
@@ -605,8 +606,9 @@ export function useFeedPipeline({
             const nextId = getPostUniqueId(filtered[i + 1])
             const nextTs = accumulatedTimestamps.get(nextId) ?? accumulatedTimestamps.get(filtered[i + 1].post.uri)
             if (nextTs) {
-              const dayStart = getLocalMidnight(new Date(nextTs), settings?.timezone).getTime()
-              const dayEnd = dayStart + 24 * 60 * 60 * 1000
+              const dayMidnight = getLocalMidnight(new Date(nextTs), settings?.timezone)
+              const dayStart = dayMidnight.getTime()
+              const dayEnd = getNextLocalMidnight(dayMidnight, settings?.timezone).getTime()
               log.debug('Prefetch', `Mid-day numbering trigger at post #${nextNum}`)
               await numberUnnumberedPostsForDay(dayStart, dayEnd, 'Prefetch')
               filtered = await lookupCurationAndFilter(filtered, clientDate(), accumulatedTimestamps, true)
@@ -635,8 +637,9 @@ export function useFeedPipeline({
           if (newerDayPost) {
             const nTs = accumulatedTimestamps.get(getPostUniqueId(newerDayPost)) ?? accumulatedTimestamps.get(newerDayPost.post.uri)
             if (nTs && (newerDayPost as CurationFeedViewPost).curation?.postNumber == null) {
-              const newerDayStart = getLocalMidnight(new Date(nTs), settings?.timezone).getTime()
-              const newerDayEnd = newerDayStart + 24 * 60 * 60 * 1000
+              const newerDayMidnight = getLocalMidnight(new Date(nTs), settings?.timezone)
+              const newerDayStart = newerDayMidnight.getTime()
+              const newerDayEnd = getNextLocalMidnight(newerDayMidnight, settings?.timezone).getTime()
               log.debug('Prefetch', `Midnight trigger: numbering newer day ${firstDate}`)
               await assignNumbersForDay(newerDayStart, newerDayEnd)
             }
@@ -1007,9 +1010,10 @@ export function useFeedPipeline({
 
             if (entriesToSave.length > 0) {
               const idleReturnSettings = await getSettings()
-              const todayMidnight = getLocalMidnight(clientDate(), idleReturnSettings?.timezone).getTime()
-              const todayEnd = todayMidnight + 24 * 60 * 60 * 1000
-              const yesterdayMidnight = todayMidnight - 24 * 60 * 60 * 1000
+              const todayMidnightDate = getLocalMidnight(clientDate(), idleReturnSettings?.timezone)
+              const todayMidnight = todayMidnightDate.getTime()
+              const todayEnd = getNextLocalMidnight(todayMidnightDate, idleReturnSettings?.timezone).getTime()
+              const yesterdayMidnight = getPrevLocalMidnight(todayMidnightDate, idleReturnSettings?.timezone).getTime()
               const numberedYesterday = await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, 'Idle Return (yesterday)')
               const numberedToday = await numberUnnumberedPostsForDay(todayMidnight, todayEnd, 'Idle Return')
 

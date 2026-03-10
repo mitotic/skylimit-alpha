@@ -69,6 +69,28 @@ function tzOffsetMs(utcMs: number, timezone: string): number {
 }
 
 /**
+ * Get midnight for the next calendar day in a specific timezone.
+ * DST-safe: computes actual midnight rather than adding 24 hours,
+ * which would be wrong on spring-forward (23h) or fall-back (25h) days.
+ */
+export function getNextMidnight(midnight: Date, timezone: string): Date {
+  // Add 25 hours to guarantee we land in the next calendar day,
+  // even on fall-back days where the day is 25 hours long
+  const nextDayApprox = new Date(midnight.getTime() + 25 * 60 * 60 * 1000)
+  return getMidnightInTimezone(nextDayApprox, timezone)
+}
+
+/**
+ * Get midnight for the previous calendar day in a specific timezone.
+ * DST-safe: computes actual midnight rather than subtracting 24 hours.
+ */
+export function getPrevMidnight(midnight: Date, timezone: string): Date {
+  // Subtract 1 hour to land in the previous calendar day
+  const prevDayApprox = new Date(midnight.getTime() - 1 * 60 * 60 * 1000)
+  return getMidnightInTimezone(prevDayApprox, timezone)
+}
+
+/**
  * Get the browser's current timezone identifier (e.g., "America/New_York")
  */
 export function getBrowserTimezone(): string {

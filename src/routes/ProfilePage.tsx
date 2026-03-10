@@ -5,7 +5,8 @@ import { useSession } from '../auth/SessionContext'
 import { getProfile } from '../api/profile'
 import { getAuthorFeed, getActorLikes } from '../api/feed'
 import { follow, unfollow } from '../api/social'
-import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost } from '../api/posts'
+import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost, deletePost } from '../api/posts'
+import { pinPost } from '../api/profile'
 import { getPostUniqueId, getProfileUrl } from '../curation/skylimitGeneral'
 import Avatar from '../components/Avatar'
 import Button from '../components/Button'
@@ -392,6 +393,31 @@ export default function ProfilePage() {
     loadFeed(undefined, activeTab)
   }
 
+  const handleDeletePost = async (uri: string) => {
+    if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    try {
+      await deletePost(agent, uri)
+      setFeed(prev => prev.filter(p => p.post.uri !== uri))
+      addToast('Post deleted', 'success')
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to delete post', 'error')
+    }
+  }
+
+  const handlePinPost = async (uri: string, cid: string) => {
+    if (!agent) return
+    if (isReadOnlyMode()) { addToast('Disable Read-only mode in Settings to do this', 'error'); return }
+
+    try {
+      await pinPost(agent, uri, cid)
+      addToast('Post pinned to your profile', 'success')
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : 'Failed to pin post', 'error')
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -513,6 +539,8 @@ export default function ProfilePage() {
                 onQuotePost={handleQuotePost}
                 onLike={handleLike}
                 onBookmark={handleBookmark}
+                onDeletePost={handleDeletePost}
+                onPinPost={handlePinPost}
                 showRootPost={false}
               />
             ))}

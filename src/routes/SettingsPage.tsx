@@ -662,15 +662,6 @@ export default function SettingsPage() {
         <Button
           type="button"
           variant="secondary"
-          onClick={() => setShowClearRecentModal(true)}
-          disabled={isClearingRecent}
-          className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-        >
-          Refetch recent posts
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
           onClick={() => setShowClearSettingsModal(true)}
           disabled={isClearingSettings}
           className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
@@ -687,28 +678,6 @@ export default function SettingsPage() {
           Reset ALL
         </Button>
       </div>
-
-      {/* Refetch Recent Posts Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showClearRecentModal}
-        onClose={() => setShowClearRecentModal(false)}
-        onConfirm={handleClearRecent}
-        title="Refetch Recent Posts"
-        message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
-• Feed cache and pagination state (cleared entirely)
-• Post summaries newer than yesterday's midnight (removed)
-• Edition registry entries created within the lookback period (removed)
-
-Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
-
-Your Skylimit settings, follow list, and login session will be preserved.
-
-You will be redirected to the home page with a fresh lookback.`}
-        confirmText={isClearingRecent ? 'Refetching...' : 'Refetch Recent Posts'}
-        cancelText="Cancel"
-        isDangerous={false}
-        isLoading={isClearingRecent}
-      />
 
       {/* Reset Settings Confirmation Modal */}
       <ConfirmModal
@@ -1436,11 +1405,20 @@ This cannot be undone.`}
           <Button
             type="button"
             variant="secondary"
+            onClick={() => setShowClearRecentModal(true)}
+            disabled={isClearingRecent}
+            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+          >
+            Refetch recent posts
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
             onClick={() => setShowResetFeedModal(true)}
             disabled={isResettingFeed}
             className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
           >
-            Reset post display
+            Refresh post display
           </Button>
           <Button
             type="button"
@@ -1453,12 +1431,34 @@ This cannot be undone.`}
           </Button>
         </div>
 
-        {/* Reset Post Display Confirmation Modal */}
+        {/* Refetch Recent Posts Confirmation Modal */}
+        <ConfirmModal
+          isOpen={showClearRecentModal}
+          onClose={() => setShowClearRecentModal(false)}
+          onConfirm={handleClearRecent}
+          title="Refetch Recent Posts"
+          message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
+• Feed cache and pagination state (cleared entirely)
+• Post summaries newer than yesterday's midnight (removed)
+• Edition registry entries created within the lookback period (removed)
+
+Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
+
+Your Skylimit settings, follow list, and login session will be preserved.
+
+You will be redirected to the home page with a fresh lookback.`}
+          confirmText={isClearingRecent ? 'Refetching...' : 'Refetch Recent Posts'}
+          cancelText="Cancel"
+          isDangerous={false}
+          isLoading={isClearingRecent}
+        />
+
+        {/* Refresh Post Display Confirmation Modal */}
         <ConfirmModal
           isOpen={showResetFeedModal}
           onClose={() => setShowResetFeedModal(false)}
           onConfirm={handleResetFeed}
-          title="Reset Post Display"
+          title="Refresh Post Display"
           message={`This will clear the feed and reload posts using existing curation data:
 • Feed posts and pagination state
 • Session storage state
@@ -1468,7 +1468,7 @@ Curation summaries will be preserved, so posts will be curated on-the-fly withou
 Your Skylimit settings, follow list, and login session will be preserved.
 
 You will be redirected to the home page with a refreshed feed.`}
-          confirmText={isResettingFeed ? 'Resetting...' : 'Reset Post Display'}
+          confirmText={isResettingFeed ? 'Resetting...' : 'Refresh Post Display'}
           cancelText="Cancel"
           isDangerous={false}
           isLoading={isResettingFeed}
@@ -1578,7 +1578,7 @@ You will be logged out and redirected to the login page.`}
       setEditionWarning(unfollowed.length > 0 ? unfollowed : null)
     }
 
-    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo} To re-assemble editions using recent posts, "Refetch recent posts" using the button in Settings/General.` })
+    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo} To re-assemble editions using recent posts, "Refetch recent posts" using the button in Settings/Curation.` })
   }
 
   const renderEditionsTab = () => {
