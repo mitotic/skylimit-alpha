@@ -1592,12 +1592,16 @@ export function useFeedPipeline({
         return
       }
 
-      // Navigation should never trigger server fetches — only redisplay from saved state.
-      // Initial load and session changes are handled by their own effects.
       try {
         const savedStateJson = sessionStorage.getItem(getFeedStateKey('curated'))
         if (!savedStateJson) {
-          log.info('Navigation', 'No saved feed state and no feed in React state, skipping')
+          // No saved state and feed not yet loaded: this is genuine initial load
+          if (!initialPrefetchDone) {
+            log.info('Navigation', 'No saved feed state, triggering initial loadFeed')
+            return loadFeed()
+          }
+          // Feed was already loaded (e.g., refetch just ran but debounced save hasn't fired)
+          log.info('Navigation', 'No saved feed state but feed already loaded, skipping')
           return
         }
 
@@ -1621,7 +1625,7 @@ export function useFeedPipeline({
     }
 
     shouldRedisplay()
-  }, [redisplayFeed, locationPathname, session, activeTab])
+  }, [loadFeed, redisplayFeed, locationPathname, session, activeTab])
 
   // Probe for new posts effect
   useEffect(() => {
