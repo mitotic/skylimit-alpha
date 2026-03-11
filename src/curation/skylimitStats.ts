@@ -402,11 +402,12 @@ export async function computePostStats(
 
   // Track oldest/newest timestamps across all summaries
   const timestampRange: TimestampRange = { oldest: null, newest: null }
+  const editionPostCounts: Record<string, number> = {}
 
   // Process all intervals into summaryCache and postStats
   for (const [, summaries] of summariesByInterval.entries()) {
     if (summaries && summaries.length > 0) {
-      computeIntervalStats(currentFollows, summaries, summaryCache, postStats, timestampRange)
+      computeIntervalStats(currentFollows, summaries, summaryCache, postStats, timestampRange, editionPostCounts)
     }
   }
 
@@ -465,7 +466,8 @@ export async function computePostStats(
     intervalDiagnostics,
     intervalsPerDay,
     followeeDayCount,
-    minFolloweeDayCount
+    minFolloweeDayCount,
+    editionPostCounts
   )
 
   // Save computed filter and text pattern suggestions
@@ -492,11 +494,17 @@ function computeIntervalStats(
   summaries: PostSummary[],
   summaryCache: Record<string, any>,
   postStats: Record<string, PostStats>,
-  timestampRange: TimestampRange
+  timestampRange: TimestampRange,
+  editionPostCounts: Record<string, number>
 ): void {
   for (const summary of summaries) {
     // Skip all edition posts from probability statistics
-    if (summary.curation_status?.startsWith('edition_')) continue
+    if (summary.curation_status?.startsWith('edition_')) {
+      if (summary.curation_status.startsWith('edition_post_')) {
+        editionPostCounts[summary.username] = (editionPostCounts[summary.username] || 0) + 1
+      }
+      continue
+    }
 
     summaryCache[summary.uniqueId] = {
       username: summary.username,
@@ -663,7 +671,8 @@ function computeUserProbabilities(
   intervalDiagnostics: IntervalDiagnostics,
   intervalsPerDay: number,
   followeeDayCount: Record<string, number>,
-  minFolloweeDayCount: number
+  minFolloweeDayCount: number,
+  editionPostCounts: Record<string, number>
 ): [GlobalStats, UserFilter] {
   // Use complete intervals for dayTotal if available, fallback to all processed intervals
   const dayTotal = intervalDiagnostics.completeIntervalsDays > 0
@@ -694,6 +703,7 @@ function computeUserProbabilities(
     userEntry.followed_reply_daily = accum.followed_reply_total / denominator
     userEntry.unfollowed_reply_daily = accum.unfollowed_reply_total / denominator
     userEntry.repost_daily = accum.repost_total / denominator
+    userEntry.edited_daily = (editionPostCounts[username] || 0) / denominator
     userEntry.engaged_daily = accum.engaged_total / denominator
 
     userEntry.total_daily = countTotalPostsForUser(userEntry)

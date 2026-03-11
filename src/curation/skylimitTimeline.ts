@@ -68,6 +68,7 @@ export async function curatePosts(
       curation = {
         curation_status: existingSummary.curation_status,
         curation_msg: existingSummary.curation_msg,
+        matching_pattern: existingSummary.matching_pattern,
       }
       summary = existingSummary
     } else {

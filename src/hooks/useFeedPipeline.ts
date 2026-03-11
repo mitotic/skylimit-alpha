@@ -1069,21 +1069,21 @@ export function useFeedPipeline({
     try {
       const savedStateJson = sessionStorage.getItem(getFeedStateKey('curated'))
       if (!savedStateJson) {
-        log.debug('Redisplay', 'No saved feed state, falling back to loadFeed')
-        return loadFeed()
+        log.debug('Redisplay', 'No saved feed state, nothing to redisplay')
+        return
       }
 
       const savedState: SavedFeedState = JSON.parse(savedStateJson)
 
       if (savedState.sessionDid !== session.did) {
-        log.debug('Redisplay', 'Saved state is for different user, falling back to loadFeed')
+        log.debug('Redisplay', 'Saved state is for different user, skipping')
         sessionStorage.removeItem(getFeedStateKey('curated'))
-        return loadFeed()
+        return
       }
 
       if (!savedState.displayedFeed || savedState.displayedFeed.length === 0) {
-        log.debug('Redisplay', 'Saved state has no posts, falling back to loadFeed')
-        return loadFeed()
+        log.debug('Redisplay', 'Saved state has no posts, nothing to redisplay')
+        return
       }
 
       const settings = await getSettings()
@@ -1260,9 +1260,8 @@ export function useFeedPipeline({
 
     } catch (error) {
       log.error('Feed', 'Failed to redisplay feed:', error)
-      return loadFeed()
     }
-  }, [agent, session, dbInitialized, loadFeed])
+  }, [agent, session, dbInitialized])
 
   const refreshDisplayedFeed = useCallback(async (options?: RefreshDisplayedFeedOptions): Promise<RefreshDisplayedFeedResult | null> => {
     if (!agent || !session || !dbInitialized || isLoadingMore || activeTab !== 'curated') {
@@ -1585,50 +1584,44 @@ export function useFeedPipeline({
         return
       }
 
+      // If feed is already in React state, no need to do anything — it's already rendered.
+      // This handles the case where e.g. clearRecentAndReloadHomePage just loaded the feed
+      // but the debounced sessionStorage save hasn't fired yet.
+      if (feed.length > 0 && initialPrefetchDone) {
+        log.info('Navigation', 'Feed already loaded in React state, skipping redisplay')
+        return
+      }
+
+      // Navigation should never trigger server fetches — only redisplay from saved state.
+      // Initial load and session changes are handled by their own effects.
       try {
         const savedStateJson = sessionStorage.getItem(getFeedStateKey('curated'))
         if (!savedStateJson) {
-          log.info('Navigation', 'No saved feed state, calling loadFeed')
-          return loadFeed()
+          log.info('Navigation', 'No saved feed state and no feed in React state, skipping')
+          return
         }
 
         const savedState: SavedFeedState = JSON.parse(savedStateJson)
 
         if (savedState.sessionDid !== session?.did) {
-          log.info('Navigation', 'Saved state is for different user, calling loadFeed')
-          sessionStorage.removeItem(getFeedStateKey('curated'))
-          return loadFeed()
+          log.info('Navigation', 'Saved state is for different user, skipping (session change will handle)')
+          return
         }
 
-        const settings = await getSettings()
-        const idleInterval = settings?.feedRedisplayIdleInterval || 5 * 60 * 1000
-
-        const timeSinceSave = clientNow() - savedState.savedAt
-        const isWithinIdleInterval = timeSinceSave < idleInterval
-
-        if (isWithinIdleInterval && savedState.displayedFeed && savedState.displayedFeed.length > 0) {
-          log.info('Navigation', 'Within idle interval, redisplaying feed:', {
-            timeSinceSave: Math.round(timeSinceSave / 1000) + 's',
-            idleInterval: Math.round(idleInterval / 1000) + 's'
-          })
+        if (savedState.displayedFeed && savedState.displayedFeed.length > 0) {
+          log.info('Navigation', 'Redisplaying feed from saved state')
           return redisplayFeed()
         } else {
-          log.info('Navigation', 'Outside idle interval or no saved feed, calling loadFeed:', {
-            timeSinceSave: Math.round(timeSinceSave / 1000) + 's',
-            idleInterval: Math.round(idleInterval / 1000) + 's',
-            hasFeed: !!savedState.displayedFeed && savedState.displayedFeed.length > 0
-          })
-          sessionStorage.removeItem(getScrollStateKey('curated'))
-          return loadFeed()
+          log.info('Navigation', 'Saved state has no posts, skipping')
+          return
         }
       } catch (error) {
         log.error('Feed', 'Failed to check feed state:', error)
-        return loadFeed()
       }
     }
 
     shouldRedisplay()
-  }, [loadFeed, redisplayFeed, locationPathname, session, activeTab])
+  }, [redisplayFeed, locationPathname, session, activeTab])
 
   // Probe for new posts effect
   useEffect(() => {

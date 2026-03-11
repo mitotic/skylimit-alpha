@@ -26,6 +26,12 @@ export function useViewTracking({ feed, setFeed }: UseViewTrackingParams): void 
   const scrollStopDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const visiblePostElementsRef = useRef<Map<string, HTMLElement>>(new Map())
 
+  // Keep a ref to the latest setFeed so stale callbacks (startDwellTimer) always
+  // call the current setter. This is critical for EditionView whose setFeedAdapter
+  // changes on re-renders, unlike HomePage's stable useState setter.
+  const setFeedRef = useRef(setFeed)
+  setFeedRef.current = setFeed
+
   // Start a dwell timer for a post that is visible and stationary.
   // After VIEW_DWELL_TIME_MS of continuous visibility without scrolling, mark the post as viewed.
   const startDwellTimer = useCallback((postId: string, el: HTMLElement) => {
@@ -55,7 +61,7 @@ export function useViewTracking({ feed, setFeed }: UseViewTrackingParams): void 
           viewedUpdateScheduledRef.current = false
           const updates = new Map(pendingViewedUpdatesRef.current)
           pendingViewedUpdatesRef.current.clear()
-          setFeed(prev => prev.map(p => {
+          setFeedRef.current(prev => prev.map(p => {
             const id = getPostUniqueId(p)
             const vt = updates.get(id)
             if (vt && 'curation' in p) {
@@ -164,6 +170,15 @@ export function useViewTracking({ feed, setFeed }: UseViewTrackingParams): void 
     const observer = viewTrackingObserverRef.current
     if (!observer) return
     const rafId = requestAnimationFrame(() => {
+      // Prune IDs not in current feed (handles edition switching where feed is replaced).
+      // For HomePage's growing feed, viewed posts remain so their IDs are retained.
+      const currentFeedIds = new Set(feed.map(getPostUniqueId))
+      for (const id of viewedPostIdsRef.current) {
+        if (!currentFeedIds.has(id)) {
+          viewedPostIdsRef.current.delete(id)
+        }
+      }
+
       // Build set of posts that already have viewedAt from hydration (e.g., after navigation back)
       // These should not be re-observed since their viewedAt is already set
       const alreadyViewedFromFeed = new Set<string>()

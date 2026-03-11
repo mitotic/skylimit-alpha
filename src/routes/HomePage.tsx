@@ -15,7 +15,7 @@ import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } fro
 import { getBrowserTimezone, timezonesAreDifferent } from '../utils/timezoneUtils'
 import { fetchToSecondaryFeedCache, transferSecondaryToPrimary, getCachedFeedAfterPosts } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
-import { CurationFeedViewPost } from '../curation/types'
+import { CurationFeedViewPost, isStatusShow } from '../curation/types'
 import { countUnviewedOlderThan, countUnviewedYesterdayOlderThan, getUnviewedPostsInfo, getUnviewedPostsYesterdayInfo, onUnviewedChange } from '../curation/skylimitUnviewedTracker'
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
@@ -322,15 +322,41 @@ export default function HomePage() {
         log.debug('New Posts', `SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
           `${transferResult.displayableCount} displayable`)
 
-        setNewPostsCount(0)
+        // Count remaining displayable posts beyond what was transferred
+        // The fetch (cursor-paginated) finds more posts than the probe (single 100-post batch),
+        // so we use the fetch result to accurately set button state for remaining posts.
+        const totalDisplayable = fetchResult.entries.filter(
+          e => isStatusShow(e.summary.curation_status)
+        ).length
+        const remaining = totalDisplayable - (transferResult.displayableCount || 0)
+        log.debug('New Posts', `SINGLE PAGE: ${totalDisplayable} total displayable in fetch, ` +
+          `${transferResult.displayableCount} transferred, ${remaining} remaining`)
+
+        setNewPostsCount(remaining > 0 ? remaining : 0)
         setShowNewPostsButton(false)
-        setNextPageReady(false)
         setPostsNeededForPage(null)
-        setPartialPageCount(0)
-        setMultiPageCount(0)
-        setIdleTimerTriggered(false)
         setFeedTopTrimmed(null)
-        lastDisplayTimeRef.current = clientNow()
+
+        if (remaining > 0) {
+          // More posts available — immediately enable buttons without waiting for probe
+          setNextPageReady(true)
+          setPartialPageCount(remaining)
+          if (remaining >= pageLength) {
+            setMultiPageCount(remaining)
+            setIdleTimerTriggered(true)
+          } else {
+            setMultiPageCount(0)
+            setIdleTimerTriggered(true)
+          }
+          // Don't set lastDisplayTimeRef — avoid cooldown blocking immediate re-load
+          log.debug('New Posts', `SINGLE PAGE: ${remaining} posts remaining — buttons updated immediately`)
+        } else {
+          setNextPageReady(false)
+          setPartialPageCount(0)
+          setMultiPageCount(0)
+          setIdleTimerTriggered(false)
+          lastDisplayTimeRef.current = clientNow()
+        }
 
         if (fetchResult.newestTimestamp) {
           const result = await refreshDisplayedFeed({

@@ -182,6 +182,7 @@ export interface UserEntry {
   followed_reply_daily: number // Replies to followees
   unfollowed_reply_daily: number // Replies to non-followees
   repost_daily: number         // Daily repost count for this user
+  edited_daily: number         // Edition-matched posts per day (diagnostics only)
   engaged_daily: number
   total_daily: number
   shown_daily: number           // Actual shown posts per day (from curation status tracking)
@@ -297,6 +298,7 @@ export interface UserAccumulator {
   original_total: number       // Original posts (not replies)
   followed_reply_total: number // Replies to followees
   unfollowed_reply_total: number // Replies to non-followees
+  edited_total: number            // Posts with edition_post_ status (diagnostics only)
   engaged_total: number
   shown_total: number            // Total shown posts accumulated
   weight: number
@@ -357,6 +359,7 @@ export interface CurationMetadata {
   curation_status?: CurationStatus
   curation_msg?: string
   curation_id?: string
+  matching_pattern?: string     // Matched priority/edition pattern string (for debug popup)
   edition_status?: string
   edition_summary_id?: string  // Original post summary uniqueId (for view tracking in EditionView)
   // Number fields to avoid IndexedDB lookups in PostCard

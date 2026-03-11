@@ -450,6 +450,7 @@ export default function SkylimitStatistics() {
     repostsPerDay: number
     followedRepliesPerDay: number
     unfollowedRepliesPerDay: number
+    editedPerDay: number
     regularProb: number
     priorityProb: number
     ampFactor: number | null
@@ -460,11 +461,12 @@ export default function SkylimitStatistics() {
     const repostsPerDay = userEntry.repost_daily
     const followedRepliesPerDay = userEntry.followed_reply_daily
     const unfollowedRepliesPerDay = userEntry.unfollowed_reply_daily
+    const editedPerDay = userEntry.edited_daily
     const regularProb = userEntry.regular_prob * 100
     const priorityProb = userEntry.priority_prob * 100
     const ampFactor = followInfo?.amp_factor ?? userEntry.amp_factor ?? null
 
-    return { postingCount, originalsPerDay, priorityPerDay, repostsPerDay, followedRepliesPerDay, unfollowedRepliesPerDay, regularProb, priorityProb, ampFactor }
+    return { postingCount, originalsPerDay, priorityPerDay, repostsPerDay, followedRepliesPerDay, unfollowedRepliesPerDay, editedPerDay, regularProb, priorityProb, ampFactor }
   }
 
   const handleAmpUp = async (username: string) => {
@@ -902,6 +904,7 @@ export default function SkylimitStatistics() {
                           repostsPerDay={curationStats.repostsPerDay}
                           followedRepliesPerDay={curationStats.followedRepliesPerDay}
                           unfollowedRepliesPerDay={curationStats.unfollowedRepliesPerDay}
+                          editedPerDay={curationStats.editedPerDay}
                           regularProb={curationStats.regularProb / 100}
                           priorityProb={curationStats.priorityProb / 100}
                           skylimitNumber={stats?.skylimit_number}

@@ -1,5 +1,6 @@
 import { forwardRef, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { DEFAULT_PRIORITY_PATTERNS } from '../curation/types'
 
 export interface CurationPopupProps {
   // Display
@@ -18,6 +19,7 @@ export interface CurationPopupProps {
   repostsPerDay?: number               // Reposts/day (Debug Info)
   followedRepliesPerDay?: number       // Replies to followees/day (Debug Info)
   unfollowedRepliesPerDay?: number     // Replies to non-followees/day (Debug Info)
+  editedPerDay?: number                // Edition-matched posts/day (Debug Info)
   allowedPerDay?: number               // Allowed posts per day (skylimit_number × amp_factor)
   regularProb?: number                 // Both (0-1 scale)
   priorityProb?: number                // Both (0-1 scale)
@@ -37,12 +39,17 @@ export interface CurationPopupProps {
   // Debug info
   debugMode: boolean
   curationStatus?: string              // PostCard only (post-level)
+  matchingPattern?: string             // Matched priority/edition pattern string
   followedAt?: string
   priorityPatterns?: string
   timezone?: string
   // Actions
   onNavigateToSettings?: () => void    // Optional - show "Curation Settings" link if provided
   onClose?: () => void                 // Called when backdrop is tapped (mobile dismiss)
+
+  // Edition mode
+  editionMode?: boolean                // When true, show edition-specific popup layout
+  postTimestamp?: number               // Post creation timestamp (for hh:mm display in edition mode header)
 }
 
 const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
@@ -52,12 +59,13 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   anchorRect,
   postProperties,
   postingPerDay,
-  allowedPerDay,
+  // allowedPerDay not destructured — no longer displayed directly
   originalsPerDay,
   priorityPerDay,
   repostsPerDay,
   followedRepliesPerDay,
   unfollowedRepliesPerDay,
+  editedPerDay,
   regularProb,
   priorityProb,
   curationMsg,
@@ -70,11 +78,14 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   ampLoading,
   debugMode,
   curationStatus,
+  matchingPattern,
   followedAt,
   priorityPatterns,
   timezone,
   onNavigateToSettings,
   onClose,
+  editionMode,
+  postTimestamp,
 }, ref) => {
   // Format count: show 1 decimal if < 10, otherwise round to integer
   const formatCount = (count: number): string => {
@@ -163,12 +174,21 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       {/* Header */}
       <div className="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 leading-snug">
         <div className="flex items-center justify-between">
-          <div className="font-semibold text-sm">
-            {displayName || handle}
-          </div>
-          {postProperties?.rawPostNumber != null && (
+          {editionMode && postTimestamp ? (
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              {String(new Date(postTimestamp).getHours()).padStart(2, '0')}:{String(new Date(postTimestamp).getMinutes()).padStart(2, '0')}
+            </div>
+          ) : (
+            <div className="font-semibold text-sm">
+              {displayName || handle}
+            </div>
+          )}
+          {!editionMode && postProperties?.rawPostNumber != null && (
             <div className="text-sm text-gray-500 dark:text-gray-400">Raw #{postProperties.rawPostNumber}</div>
           )}
+        </div>
+        <div className="font-semibold text-sm">
+          {editionMode ? (displayName || handle) : null}
         </div>
         <div className="text-sm text-gray-500 dark:text-gray-400">
           @{handle}
@@ -176,58 +196,78 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       </div>
 
       {/* Curation statistics */}
-      <div className={`px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 ${isDropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
-        <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
-          {/* Posting rate and shown rate */}
-          {postingPerDay !== undefined && (
-            <div>Posting {formatCount(postingPerDay)}/day{allowedPerDay !== undefined ? `, allow ${formatCount(allowedPerDay)}/day` : ''}</div>
-          )}
-
-          {/* Probabilities */}
-          {regularProb !== undefined && (
-            <div>Regular show probability: {(regularProb * 100).toFixed(1)}%</div>
-          )}
-          {priorityProb !== undefined && (
-            <div>{priorityPerDay === 0 ? 'No priority posts' : `Priority show probability: ${(priorityProb * 100).toFixed(1)}%`}</div>
-          )}
-
-          {/* Fallback message */}
-          {!regularProb && !priorityProb && curationMsg && (
-            <div className="whitespace-pre-line">{curationMsg}</div>
-          )}
+      {editionMode ? (
+        <div className="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
+          <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
+            {editedPerDay !== undefined && (
+              <div>Posting: {formatCount(editedPerDay)}/day edited</div>
+            )}
+            {matchingPattern && (
+              <div>Matching pattern: {matchingPattern}</div>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className={`px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 ${isDropped ? 'bg-gray-50 dark:bg-gray-900' : ''}`}>
+          <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
+            {/* Posting rate */}
+            {postingPerDay !== undefined && (() => {
+              const hasPriority = (priorityPatterns !== undefined && priorityPatterns !== '' && priorityPatterns !== DEFAULT_PRIORITY_PATTERNS) || (priorityPerDay !== undefined && priorityPerDay > 0)
+              const regularPerDay = hasPriority && priorityPerDay !== undefined ? postingPerDay - priorityPerDay : postingPerDay
+              return (
+                <div>Posting: {formatCount(regularPerDay)}/day regular{hasPriority && priorityPerDay !== undefined ? `, ${formatCount(priorityPerDay)}/day priority` : ''}</div>
+              )
+            })()}
 
-      {/* Amp buttons */}
-      {showAmpButtons && (
+            {/* Show probability */}
+            {regularProb !== undefined && (() => {
+              const hasPriority = (priorityPatterns !== undefined && priorityPatterns !== '' && priorityPatterns !== DEFAULT_PRIORITY_PATTERNS) || (priorityPerDay !== undefined && priorityPerDay > 0)
+              const regularPct = (regularProb * 100).toFixed(1)
+              const regularIs100 = regularProb >= 1.0
+              return (
+                <div>Show probability: <span className={regularIs100 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{regularPct}%</span> regular{hasPriority && priorityProb !== undefined ? <>, <span className={priorityProb >= 1.0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{(priorityProb * 100).toFixed(1)}%</span> priority</> : ''}</div>
+              )
+            })()}
+
+            {/* Fallback message */}
+            {!regularProb && !priorityProb && curationMsg && (
+              <div className="whitespace-pre-line">{curationMsg}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Amp buttons (hidden in edition mode) */}
+      {showAmpButtons && !editionMode && (
         <div className="px-3 py-1.5 leading-snug">
           {skylimitNumber !== undefined && ampFactor !== undefined && (() => {
             const postsPerDay = skylimitNumber * ampFactor;
+            const isWeekly = postsPerDay < 0.5;
+            const displayValue = isWeekly ? (postsPerDay * 7).toFixed(1) : postsPerDay.toFixed(1);
+            const defaultValue = isWeekly ? (skylimitNumber * 7).toFixed(1) : skylimitNumber.toFixed(1);
             return (
-              <div className="text-sm font-semibold">
-                Guaranteed posts shown: {postsPerDay < 0.5
-                  ? `${(postsPerDay * 7).toFixed(1)}/week`
-                  : `${postsPerDay.toFixed(1)}/day`}
+              <div className="text-sm">
+                Guaranteed show: {displayValue}/{isWeekly ? 'week' : 'day'} (default: {defaultValue})
               </div>
             );
           })()}
           <div className="text-sm font-semibold mb-1">
-            Amplification Factor: {ampFactor !== undefined ? (ampFactor < 1 ? ampFactor.toFixed(2) : ampFactor.toFixed(1)) : '1.0'}
+            Amp factor: {ampFactor !== undefined ? (ampFactor < 1 ? ampFactor.toFixed(2) : ampFactor.toFixed(1)) : '1.0'} (default: 1.0)
           </div>
           <div className="flex gap-2">
             <button
               onClick={onAmpDown}
               disabled={ampLoading}
-              className="flex-1 px-3 py-1.5 text-sm bg-red-700 hover:bg-red-800 text-white rounded disabled:opacity-50"
+              className="flex-1 px-3 py-1.5 text-sm bg-red-400 hover:bg-red-500 text-white rounded disabled:opacity-50"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg> Amp Down
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 inline-block align-middle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg> Amp Down
             </button>
             <button
               onClick={onAmpUp}
               disabled={ampLoading}
-              className="flex-1 px-3 py-1.5 text-sm bg-green-700 hover:bg-green-800 text-white rounded disabled:opacity-50"
+              className="flex-1 px-3 py-1.5 text-sm bg-green-400 hover:bg-green-500 text-white rounded disabled:opacity-50"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg> Amp Up
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 inline-block align-middle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg> Amp Up
             </button>
           </div>
           <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -236,8 +276,17 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
         </div>
       )}
 
-      {/* Curation Settings link - only show when curationStatus is available (PostCard context) */}
-      {onNavigateToSettings && curationStatus !== undefined && (
+      {/* Settings link */}
+      {onNavigateToSettings && (editionMode ? (
+        <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700">
+          <button
+            onClick={onNavigateToSettings}
+            className="w-full text-sm text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            Remove pattern from edition
+          </button>
+        </div>
+      ) : curationStatus !== undefined && (
         <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700">
           <button
             onClick={onNavigateToSettings}
@@ -246,24 +295,46 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             Curation Settings
           </button>
         </div>
-      )}
+      ))}
 
       {/* Debug Info section - only shown when debugMode is enabled */}
-      {debugMode && (
+      {debugMode && editionMode ? (
+        <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+          <div className="text-sm font-semibold">Debug Info</div>
+          <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
+            {postProperties !== undefined && postProperties !== null && (
+              <div>Viewed at: {postProperties.viewedAt
+                ? `${new Date(postProperties.viewedAt).toLocaleDateString()}, ${String(new Date(postProperties.viewedAt).getHours()).padStart(2, '0')}:${String(new Date(postProperties.viewedAt).getMinutes()).padStart(2, '0')}`
+                : '—'}</div>
+            )}
+            {followedAt && (
+              <div>Followed at: {new Date(followedAt).toLocaleString()}</div>
+            )}
+            {timezone && (
+              <div>Timezone: {timezone}</div>
+            )}
+          </div>
+        </div>
+      ) : debugMode && (
         <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
           <div className="text-sm font-semibold">Debug Info</div>
           <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
             {curationStatus !== undefined && (
               <div>Curation status: {curationStatus || 'none'}</div>
             )}
-            {(originalsPerDay !== undefined || repostsPerDay !== undefined) && (
-              <div>Originals {(originalsPerDay ?? 0).toFixed(1)}/day, Reposts {(repostsPerDay ?? 0).toFixed(1)}/day</div>
+            {matchingPattern && (
+              <div>Matching pattern: {matchingPattern}</div>
             )}
-            {priorityPerDay !== undefined && (
-              <div>Priority {priorityPerDay.toFixed(1)}/day</div>
+            {(originalsPerDay !== undefined || repostsPerDay !== undefined) && (
+              <div>Posting: {(originalsPerDay ?? 0).toFixed(1)}/day originals, {(repostsPerDay ?? 0).toFixed(1)}/day reposts, {(editedPerDay ?? 0).toFixed(1)}/day edited</div>
             )}
             {(followedRepliesPerDay !== undefined || unfollowedRepliesPerDay !== undefined) && (
-              <div>Replies (followed: {(followedRepliesPerDay ?? 0).toFixed(1)}/day, unfollowed: {(unfollowedRepliesPerDay ?? 0).toFixed(1)}/day)</div>
+              <div>Replies: {(followedRepliesPerDay ?? 0).toFixed(1)}/day followed, {(unfollowedRepliesPerDay ?? 0).toFixed(1)}/day unfollowed</div>
+            )}
+            {postProperties !== undefined && postProperties !== null && (
+              <div>Viewed at: {postProperties.viewedAt
+                ? `${new Date(postProperties.viewedAt).toLocaleDateString()}, ${String(new Date(postProperties.viewedAt).getHours()).padStart(2, '0')}:${String(new Date(postProperties.viewedAt).getMinutes()).padStart(2, '0')}`
+                : '—'}</div>
             )}
             {followedAt && (
               <div>Followed at: {new Date(followedAt).toLocaleString()}</div>
@@ -273,11 +344,6 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             )}
             {timezone && (
               <div>Timezone: {timezone}</div>
-            )}
-            {postProperties !== undefined && postProperties !== null && (
-              <div>Viewed at: {postProperties.viewedAt
-                ? `${new Date(postProperties.viewedAt).toLocaleDateString()}, ${String(new Date(postProperties.viewedAt).getHours()).padStart(2, '0')}:${String(new Date(postProperties.viewedAt).getMinutes()).padStart(2, '0')}`
-                : '—'}</div>
             )}
           </div>
         </div>

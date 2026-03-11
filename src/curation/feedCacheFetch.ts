@@ -1124,7 +1124,7 @@ export async function transferSecondaryToPrimary(
           curation_msg: syntheticPost.curation?.curation_msg,
           edition_status: 'synthetic',
           postNumber: null,
-          curationNumber: null,
+          curationNumber: settings.showEditionsInFeed ? null : (syntheticPost.curation?.curationNumber ?? null),
         }
 
         syntheticEntries.push({

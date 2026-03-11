@@ -48,10 +48,6 @@ interface EditionViewProps {
 const EDITION_INDEX_KEY = 'websky_edition_current_index'
 const EDITION_SCROLL_KEY = 'websky_home_editions_scroll_state'
 
-/** Get the summary ID for an edition post (for view tracking against IndexedDB) */
-function getSummaryId(post: AppBskyFeedDefs.FeedViewPost): string {
-  return (post as CurationFeedViewPost).curation?.edition_summary_id || getPostUniqueId(post)
-}
 
 export default function EditionView({
   agent,
@@ -79,8 +75,11 @@ export default function EditionView({
   const [showEditionList, setShowEditionList] = useState(false)
   const titleRef = useRef<HTMLButtonElement>(null)
 
-  // View tracking: map from summary uniqueId → viewedAt timestamp
-  const [viewedAtMap, setViewedAtMap] = useState<Map<string, number>>(new Map())
+  // View tracking: map from postId → { viewedAt, editionKey } (shared across editions)
+  type ViewedAtEntry = { viewedAt: number; editionKey: string }
+  const [viewedAtMap, setViewedAtMap] = useState<Map<string, ViewedAtEntry>>(new Map())
+  const currentEditionKeyRef = useRef('')
+  currentEditionKeyRef.current = registryEntries[currentIndex]?.editionKey || ''
 
   // Load edition registry on mount (lightweight, no post loading)
   useEffect(() => {
@@ -149,14 +148,23 @@ export default function EditionView({
 
         // Hydrate viewedAt from IndexedDB for this edition's posts
         if (content) {
-          const summaryIds = content.sections.flatMap(s => s.posts.map(getSummaryId))
+          const summaryIds = content.sections.flatMap(s => s.posts.map(getPostUniqueId))
           if (summaryIds.length > 0) {
             const summaries = await getPostSummariesByIds(summaryIds)
             const hydrated = new Map<string, number>()
             for (const [id, summary] of summaries) {
               if (summary.viewedAt) hydrated.set(id, summary.viewedAt)
             }
-            if (!cancelled && hydrated.size > 0) setViewedAtMap(hydrated)
+            if (!cancelled && hydrated.size > 0) {
+              const ek = entry.editionKey
+              setViewedAtMap(prev => {
+                const next = new Map(prev)
+                for (const [id, ts] of hydrated) {
+                  if (!next.has(id)) next.set(id, { viewedAt: ts, editionKey: ek })
+                }
+                return next.size !== prev.size ? next : prev
+              })
+            }
           }
         }
 
@@ -195,6 +203,23 @@ export default function EditionView({
     return () => { cancelled = true }
   }, [registryEntries, currentIndex, agent])
 
+  // Prune viewedAtMap entries for editions that have been culled from the registry
+  useEffect(() => {
+    if (registryEntries.length === 0) return
+    const validKeys = new Set(registryEntries.map(e => e.editionKey))
+    setViewedAtMap(prev => {
+      let changed = false
+      const next = new Map(prev)
+      for (const [postId, entry] of next) {
+        if (!validKeys.has(entry.editionKey)) {
+          next.delete(postId)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [registryEntries])
+
   // Persist current index
   useEffect(() => {
     sessionStorage.setItem(EDITION_INDEX_KEY, String(currentIndex))
@@ -223,19 +248,16 @@ export default function EditionView({
 
   const goToPrev = useCallback(() => {
     sessionStorage.removeItem(EDITION_SCROLL_KEY)
-    setViewedAtMap(new Map())
     setCurrentIndex(i => Math.min(i + 1, registryEntries.length - 1))
   }, [registryEntries.length])
 
   const goToNext = useCallback(() => {
     sessionStorage.removeItem(EDITION_SCROLL_KEY)
-    setViewedAtMap(new Map())
     setCurrentIndex(i => Math.max(i - 1, 0))
   }, [])
 
   const goToEdition = useCallback((index: number) => {
     sessionStorage.removeItem(EDITION_SCROLL_KEY)
-    setViewedAtMap(new Map())
     setCurrentIndex(index)
     setShowEditionList(false)
   }, [])
@@ -261,8 +283,8 @@ export default function EditionView({
   const currentFeed = useMemo(() => {
     if (!edition) return []
     return edition.sections.flatMap(s => s.posts.map(post => {
-      const summaryId = getSummaryId(post)
-      const viewedAt = viewedAtMap.get(summaryId)
+      const summaryId = getPostUniqueId(post)
+      const viewedAt = viewedAtMap.get(summaryId)?.viewedAt
       if (viewedAt && 'curation' in post) {
         const cp = post as CurationFeedViewPost
         if (!cp.curation?.viewedAt) {
@@ -286,9 +308,9 @@ export default function EditionView({
       for (const p of updated) {
         const cp = p as CurationFeedViewPost
         if (cp.curation?.viewedAt) {
-          const id = cp.curation.edition_summary_id || getPostUniqueId(p)
+          const id = getPostUniqueId(p)
           if (!prev.has(id)) {
-            next.set(id, cp.curation.viewedAt)
+            next.set(id, { viewedAt: cp.curation.viewedAt, editionKey: currentEditionKeyRef.current })
             changed = true
           }
         }
@@ -301,8 +323,8 @@ export default function EditionView({
 
   // Helper to get a post with viewedAt injected
   const getPostWithViewed = useCallback((post: AppBskyFeedDefs.FeedViewPost): AppBskyFeedDefs.FeedViewPost => {
-    const summaryId = getSummaryId(post)
-    const viewedAt = viewedAtMap.get(summaryId)
+    const summaryId = getPostUniqueId(post)
+    const viewedAt = viewedAtMap.get(summaryId)?.viewedAt
     if (viewedAt) {
       const cp = post as CurationFeedViewPost
       if (!cp.curation?.viewedAt) {
@@ -472,9 +494,10 @@ export default function EditionView({
       {defaultSection && defaultSection.posts.map(post => {
         const viewedPost = getPostWithViewed(post)
         return (
-          <div key={getPostUniqueId(post)} data-post-uri={post.post.uri} data-post-id={getSummaryId(post)}>
+          <div key={getPostUniqueId(post)} data-post-uri={post.post.uri} data-post-id={getPostUniqueId(post)}>
             <PostCard
               post={viewedPost}
+              showCounter={true}
               onReply={onReply}
               onRepost={onRepost}
               onQuotePost={onQuotePost}
@@ -506,7 +529,7 @@ export default function EditionView({
               <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />
             </div>
             <span className="text-xs text-gray-400 dark:text-gray-500">
-              viewed {section.posts.filter(p => viewedAtMap.has(getSummaryId(p))).length}/{section.posts.length}
+              viewed {section.posts.filter(p => viewedAtMap.has(getPostUniqueId(p))).length}/{section.posts.length}
             </span>
           </div>
 
@@ -514,9 +537,10 @@ export default function EditionView({
           {sectionsExpanded && section.posts.map(post => {
             const viewedPost = getPostWithViewed(post)
             return (
-              <div key={getPostUniqueId(post)} data-post-uri={post.post.uri} data-post-id={getSummaryId(post)}>
+              <div key={getPostUniqueId(post)} data-post-uri={post.post.uri} data-post-id={getPostUniqueId(post)}>
                 <PostCard
                   post={viewedPost}
+                  showCounter={true}
                   onReply={onReply}
                   onRepost={onRepost}
                   onQuotePost={onQuotePost}

@@ -27,7 +27,7 @@ export const FEED_CACHE_RETENTION_HOURS = 48
 export const FEED_CACHE_RETENTION_MS = FEED_CACHE_RETENTION_HOURS * 60 * 60 * 1000
 
 // Safety limits for fetch iterations and default page size
-export const MAX_FETCH_ITERATIONS = 80
+export const MAX_FETCH_ITERATIONS = 128
 export const DEFAULT_PAGE_LENGTH = 25
 
 // Cursor staleness threshold - cursors older than this are discarded

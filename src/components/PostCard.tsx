@@ -261,9 +261,11 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
 
   // Get the username to use for amp operations (reposter for reposts, author for originals)
-  const ampUsername = isReposted && repostedBy?.handle ? repostedBy.handle : author.handle
+  // For periodic editions, use original author (not the synthetic editor)
+  const isEditionPost = isPeriodicEdition(curation)
+  const ampUsername = isEditionPost ? author.handle : (isReposted && repostedBy?.handle ? repostedBy.handle : author.handle)
   // Get the display info for the popup (reposter for reposts, author for originals)
-  const popupAuthor = isReposted && repostedBy ? repostedBy : author
+  const popupAuthor = isEditionPost ? author : (isReposted && repostedBy ? repostedBy : author)
 
   const refreshAfterAmpChange = async () => {
     // Refresh followInfo and userEntry to reflect updated amp_factor and probabilities
@@ -419,6 +421,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   repostsPerDay={userEntry?.repost_daily}
                   followedRepliesPerDay={userEntry?.followed_reply_daily}
                   unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
+                  editedPerDay={userEntry?.edited_daily}
                   regularProb={userEntry?.regular_prob}
                   priorityProb={userEntry?.priority_prob}
                   curationMsg={curation.curation_msg}
@@ -431,6 +434,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   ampLoading={loading}
                   debugMode={debugMode}
                   curationStatus={curation.curation_status}
+                  matchingPattern={curation.matching_pattern}
                   followedAt={followInfo?.followed_at}
                   priorityPatterns={followInfo?.priorityPatterns || userEntry?.priorityPatterns}
                   timezone={followInfo?.timezone}
@@ -446,6 +450,52 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         </div>
       )}
       
+      {/* Counter for periodic edition posts (repost header hidden, counter shown at top right) */}
+      {isEditionPost && showCounterDisplay && curation && (
+        <div className="px-4 pt-2 flex justify-end items-center gap-1 relative">
+          {showTime && (
+            <span className="text-gray-500 dark:text-gray-400">
+              {getTimeInTimezone(postedAt, settingsTimezone)}{settingsTimezone && timezonesAreDifferent(settingsTimezone, getBrowserTimezone()) ? ` ${getTimezoneAbbreviation(settingsTimezone)}` : ''}
+            </span>
+          )}
+          <button
+            ref={repostCounterButtonRef}
+            onClick={handleCounterClick}
+            className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer"
+            title="Click for edition curation info"
+          >
+            {formatCounterDisplay(postNumber)}
+          </button>
+          <span className="w-3 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
+          {showPopup && (
+            <CurationPopup
+              ref={popupRef}
+              displayName={popupAuthor.displayName || ''}
+              handle={popupAuthor.handle}
+              popupPosition={popupPosition}
+              anchorRect={popupAnchorRect || undefined}
+              editionMode={true}
+              postTimestamp={postedAt.getTime()}
+              postProperties={{ rawPostNumber: null, viewedAt: curation?.viewedAt }}
+              editedPerDay={userEntry?.edited_daily}
+              matchingPattern={curation.matching_pattern}
+              showAmpButtons={false}
+              onAmpUp={() => {}}
+              onAmpDown={() => {}}
+              ampLoading={false}
+              debugMode={debugMode}
+              followedAt={followInfo?.followed_at}
+              timezone={followInfo?.timezone}
+              onNavigateToSettings={() => {
+                setShowPopup(false)
+                navigate('/settings?tab=editions')
+              }}
+              onClose={() => setShowPopup(false)}
+            />
+          )}
+        </div>
+      )}
+
       {/* Show root post if this is a reply (but not in thread views where context is already shown, and not for dropped posts) */}
       {isReply && rootUri && showRootPost && !isStatusDrop(curation?.curation_status) && (
         <RootPost rootUri={rootUri} isDirectReply={isDirectReply} />
@@ -497,6 +547,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 repostsPerDay={userEntry?.repost_daily}
                 followedRepliesPerDay={userEntry?.followed_reply_daily}
                 unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
+                editedPerDay={userEntry?.edited_daily}
                 regularProb={userEntry?.regular_prob}
                 priorityProb={userEntry?.priority_prob}
                 curationMsg={curation.curation_msg}
@@ -509,6 +560,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 ampLoading={loading}
                 debugMode={debugMode}
                 curationStatus={curation.curation_status}
+                matchingPattern={curation.matching_pattern}
                 followedAt={followInfo?.followed_at}
                 priorityPatterns={followInfo?.priorityPatterns || userEntry?.priorityPatterns}
                 timezone={followInfo?.timezone}
@@ -631,6 +683,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     repostsPerDay={userEntry?.repost_daily}
                     followedRepliesPerDay={userEntry?.followed_reply_daily}
                     unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
+                    editedPerDay={userEntry?.edited_daily}
                     regularProb={userEntry?.regular_prob}
                     priorityProb={userEntry?.priority_prob}
                     curationMsg={curation.curation_msg}
@@ -643,6 +696,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     ampLoading={loading}
                     debugMode={debugMode}
                     curationStatus={curation.curation_status}
+                    matchingPattern={curation.matching_pattern}
                     followedAt={followInfo?.followed_at}
                     priorityPatterns={followInfo?.priorityPatterns || userEntry?.priorityPatterns}
                     timezone={followInfo?.timezone}

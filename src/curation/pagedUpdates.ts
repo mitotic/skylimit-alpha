@@ -29,7 +29,7 @@ export const PAGED_UPDATES_DEFAULTS = {
  */
 export interface ProbeResult {
   hasFullPage: boolean        // True if PageSize or more displayable posts available
-  hasMultiplePages: boolean   // True if 2+ pages (filteredPostCount >= 2 * pageSize)
+  hasMultiplePages: boolean   // True if more than 1 page available (filteredPostCount > pageSize)
   pageCount: number           // Number of full pages available (Math.floor(filteredPostCount / pageSize))
   rawPostCount: number        // Total posts fetched from server
   filteredPostCount: number   // Posts that would be displayed (not dropped)
@@ -100,13 +100,34 @@ export async function probeForNewPosts(
   }
 
   try {
-    // Fetch posts from server (no cursor = newest posts)
-    const { feed } = await getHomeFeed(agent, { limit: pageRaw })
-    result.rawPostCount = feed.length
+    // Get cached post IDs early — needed for adaptive fetch decision
+    const cachedPostIds = await getCachedPostUniqueIds()
 
-    if (feed.length === 0) {
+    // Fetch posts from server (no cursor = newest posts)
+    const { feed: initialFeed, cursor } = await getHomeFeed(agent, { limit: pageRaw })
+    let feed = [...initialFeed]
+
+    if (initialFeed.length === 0) {
       return result
     }
+
+    // Adaptive fetch: if many posts in the initial batch are already cached,
+    // the probe is undersampling new posts. Fetch a second batch for better accuracy.
+    if (initialFeed.length >= pageRaw && cursor) {
+      let cachedInSample = 0
+      for (const post of initialFeed) {
+        if (cachedPostIds.has(getPostUniqueId(post))) {
+          cachedInSample++
+        }
+      }
+      if (cachedInSample > initialFeed.length / 2) {
+        log.verbose('Probe', `High cache-hit rate (${cachedInSample}/${initialFeed.length}), fetching additional batch`)
+        const { feed: moreFeed } = await getHomeFeed(agent, { limit: pageRaw, cursor })
+        feed = [...feed, ...moreFeed]
+      }
+    }
+
+    result.rawPostCount = feed.length
 
     // Track raw post timestamps before any filtering
     for (const post of feed) {
@@ -132,9 +153,6 @@ export async function probeForNewPosts(
     const editionTimeStrs = await getEditionTimeStrs()
     const editionCount = editionTimeStrs.length
     const secretKey = settings?.secretKey || 'default'
-
-    // Get all cached post IDs to skip already-displayed posts
-    const cachedPostIds = await getCachedPostUniqueIds()
 
     // Calculate "next day" midnight boundary based on newest displayed post
     // "Today" = the day of newestDisplayedTimestamp, not actual current time

@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo, type ReactNode } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
-import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
+import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT, VIEWS_PER_DAY_DEFAULT } from '../curation/skylimitStore'
 import { parseEditionFile, invalidateEditionsCache } from '../curation/skylimitEditions'
 import { rematchHeldPosts } from '../curation/skylimitEditionMatcher'
 import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
@@ -777,7 +777,7 @@ This cannot be undone.`}
                 min="10"
                 max="9999"
                 value={settings.viewsPerDay}
-                onChange={(e) => updateSetting('viewsPerDay', parseInt(e.target.value) || 300)}
+                onChange={(e) => updateSetting('viewsPerDay', parseInt(e.target.value) || VIEWS_PER_DAY_DEFAULT)}
                 className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
               />
               <p className="text-sm text-gray-500 mt-1">

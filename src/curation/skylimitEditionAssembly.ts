@@ -175,6 +175,8 @@ export async function tryCreateEdition(
         curation_status: 'edition_publish_show',
         curation_msg: `Edition ${editionTime}: ${editorUser.displayName}`,
         edition_status: 'synthetic',
+        curationNumber: i + 1,  // 1 = oldest repost (lowest synthetic timestamp)
+        matching_pattern: summary.matching_pattern || '',
       },
     }
 
@@ -463,6 +465,8 @@ export async function getEditionContent(registryEntry: EditionRegistryEntry, age
             curation_status: 'edition_publish_show',
             edition_status: 'synthetic',
             edition_summary_id: summary.uniqueId,
+            curationNumber: syntheticPost.curation?.curationNumber,
+            matching_pattern: syntheticPost.curation?.matching_pattern,
           },
         }
         posts.push(editionPost)
@@ -474,6 +478,8 @@ export async function getEditionContent(registryEntry: EditionRegistryEntry, age
             edition_status: 'synthetic',
             edition_summary_id: summary.uniqueId,
           }
+        } else {
+          syntheticPost.curation.edition_summary_id = summary.uniqueId
         }
         posts.push(syntheticPost)
       }
