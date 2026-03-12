@@ -320,7 +320,7 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
  */
 export function extractPriorityPatternsFromProfile(profile: AppBskyActorDefs.ProfileViewDetailed): string {
   const description = profile.description || ''
-  const match = description.match(/Skylimit:\s*([^\n]+)/i)
+  const match = description.match(/\bskylimit(?:\.[a-z]+)?:\s*([^\n]+)/i)
   if (!match) return ''
 
   let rest = match[1].trim()

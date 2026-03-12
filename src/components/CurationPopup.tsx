@@ -174,21 +174,16 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       {/* Header */}
       <div className="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 leading-snug">
         <div className="flex items-center justify-between">
+          <div className="font-semibold text-sm">
+            {displayName || handle}
+          </div>
           {editionMode && postTimestamp ? (
             <div className="text-sm text-gray-500 dark:text-gray-400">
               {String(new Date(postTimestamp).getHours()).padStart(2, '0')}:{String(new Date(postTimestamp).getMinutes()).padStart(2, '0')}
             </div>
-          ) : (
-            <div className="font-semibold text-sm">
-              {displayName || handle}
-            </div>
-          )}
-          {!editionMode && postProperties?.rawPostNumber != null && (
+          ) : postProperties?.rawPostNumber != null ? (
             <div className="text-sm text-gray-500 dark:text-gray-400">Raw #{postProperties.rawPostNumber}</div>
-          )}
-        </div>
-        <div className="font-semibold text-sm">
-          {editionMode ? (displayName || handle) : null}
+          ) : null}
         </div>
         <div className="text-sm text-gray-500 dark:text-gray-400">
           @{handle}
@@ -200,7 +195,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
         <div className="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
           <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
             {editedPerDay !== undefined && (
-              <div>Posting: {formatCount(editedPerDay)}/day edited</div>
+              <div>Posts/day: {formatCount(editedPerDay)} edited</div>
             )}
             {matchingPattern && (
               <div>Matching pattern: {matchingPattern}</div>
@@ -215,7 +210,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
               const hasPriority = (priorityPatterns !== undefined && priorityPatterns !== '' && priorityPatterns !== DEFAULT_PRIORITY_PATTERNS) || (priorityPerDay !== undefined && priorityPerDay > 0)
               const regularPerDay = hasPriority && priorityPerDay !== undefined ? postingPerDay - priorityPerDay : postingPerDay
               return (
-                <div>Posting: {formatCount(regularPerDay)}/day regular{hasPriority && priorityPerDay !== undefined ? `, ${formatCount(priorityPerDay)}/day priority` : ''}</div>
+                <div>Posts/day: {formatCount(regularPerDay)} regular{hasPriority && priorityPerDay !== undefined ? `, ${formatCount(priorityPerDay)} priority` : ''}</div>
               )
             })()}
 
@@ -286,13 +281,13 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             Remove pattern from edition
           </button>
         </div>
-      ) : curationStatus !== undefined && (
+      ) : (
         <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700">
           <button
             onClick={onNavigateToSettings}
             className="w-full text-sm text-blue-600 dark:text-blue-400 hover:underline"
           >
-            Curation Settings
+            Edition Settings
           </button>
         </div>
       ))}
@@ -308,7 +303,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
                 : '—'}</div>
             )}
             {followedAt && (
-              <div>Followed at: {new Date(followedAt).toLocaleString()}</div>
+              <div>Followed at: {new Date(followedAt).toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
             )}
             {timezone && (
               <div>Timezone: {timezone}</div>
@@ -326,10 +321,10 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
               <div>Matching pattern: {matchingPattern}</div>
             )}
             {(originalsPerDay !== undefined || repostsPerDay !== undefined) && (
-              <div>Posting: {(originalsPerDay ?? 0).toFixed(1)}/day originals, {(repostsPerDay ?? 0).toFixed(1)}/day reposts, {(editedPerDay ?? 0).toFixed(1)}/day edited</div>
+              <div>Posts/day: {(originalsPerDay ?? 0).toFixed(1)} originals, {(repostsPerDay ?? 0).toFixed(1)} reposts, {(editedPerDay ?? 0).toFixed(1)} edited</div>
             )}
             {(followedRepliesPerDay !== undefined || unfollowedRepliesPerDay !== undefined) && (
-              <div>Replies: {(followedRepliesPerDay ?? 0).toFixed(1)}/day followed, {(unfollowedRepliesPerDay ?? 0).toFixed(1)}/day unfollowed</div>
+              <div>Replies/day: {(followedRepliesPerDay ?? 0).toFixed(1)} followed, {(unfollowedRepliesPerDay ?? 0).toFixed(1)} unfollowed</div>
             )}
             {postProperties !== undefined && postProperties !== null && (
               <div>Viewed at: {postProperties.viewedAt
@@ -337,7 +332,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
                 : '—'}</div>
             )}
             {followedAt && (
-              <div>Followed at: {new Date(followedAt).toLocaleString()}</div>
+              <div>Followed at: {new Date(followedAt).toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
             )}
             {priorityPatterns && (
               <div>Priority patterns: {priorityPatterns}</div>

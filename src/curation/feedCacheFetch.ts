@@ -1219,6 +1219,29 @@ export async function transferSecondaryToPrimary(
   // Batch save summaries (numbers assigned inline unless skipNumbering)
   await savePostSummariesForce(summariesToSave)
 
+  // Ensure all synthetic edition entries are persisted even if skipped by page cutoff.
+  // In page mode, the loop breaks after enough displayable posts, but synthetic edition
+  // posts inserted at a gap deeper in the array may not have been processed yet.
+  if (transferMode === 'page') {
+    const savedIds = new Set(summariesToSave.map(s => s.uniqueId))
+    const unsavedSynthetics = sorted.filter(item =>
+      item.summary.edition_status === 'synthetic' && !savedIds.has(item.summary.uniqueId)
+    )
+    if (unsavedSynthetics.length > 0) {
+      await savePostSummariesForce(unsavedSynthetics.map(s => s.summary))
+      await savePostsToPrimaryCache(unsavedSynthetics.map(({ entry }) => ({
+        uniqueId: entry.uniqueId,
+        post: entry.post,
+        timestamp: entry.timestamp,
+        postTimestamp: entry.postTimestamp,
+        interval: entry.interval,
+        cachedAt: entry.cachedAt,
+        reposterDid: entry.reposterDid,
+      })))
+      log.debug(topic, ` Saved ${unsavedSynthetics.length} synthetic edition entries skipped by page cutoff`)
+    }
+  }
+
   // Update primary cache metadata
   await updateFeedCacheNewestPostTimestamp()
 

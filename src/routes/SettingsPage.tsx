@@ -7,7 +7,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT, VIEWS_PER_DAY_DEFAULT } from '../curation/skylimitStore'
-import { parseEditionFile, invalidateEditionsCache } from '../curation/skylimitEditions'
+import { parseEditionFile, invalidateEditionsCache, saveEditionLayout } from '../curation/skylimitEditions'
 import { rematchHeldPosts } from '../curation/skylimitEditionMatcher'
 import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
@@ -15,7 +15,7 @@ import { getBrowserTimezone } from '../utils/timezoneUtils'
 import Button from '../components/Button'
 import log from '../utils/logger'
 import SkylimitStatistics from '../components/SkylimitStatistics'
-import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout, getAllFollows } from '../curation/skylimitCache'
+import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout, getAllFollows, getStorageUsage, formatBytes, type StorageUsage } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
 import EditionLayoutEditor from '../components/EditionLayoutEditor'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
@@ -140,6 +140,7 @@ export default function SettingsPage() {
   const [loadingCacheGaps, setLoadingCacheGaps] = useState(false)
   const [feedCacheRanges, setFeedCacheRanges] = useState<CacheTimeRange[]>([])
   const [summariesCacheRanges, setSummariesCacheRanges] = useState<SummaryCacheTimeRange[]>([])
+  const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null)
   const [showResetFeedModal, setShowResetFeedModal] = useState(false)
   const [isResettingFeed, setIsResettingFeed] = useState(false)
   const [showResetDataModal, setShowResetDataModal] = useState(false)
@@ -304,10 +305,12 @@ export default function SettingsPage() {
 
     setLoadingCacheGaps(true)
     try {
-      const [feedTimestamps, summaryTimestamps] = await Promise.all([
+      const [feedTimestamps, summaryTimestamps, usage] = await Promise.all([
         getFeedCacheTimestamps(),
         getPostSummaryTimestamps(),
+        getStorageUsage(),
       ])
+      setStorageUsage(usage)
 
       setFeedCacheRanges(computeTimeRanges(feedTimestamps))
 
@@ -1327,11 +1330,46 @@ This cannot be undone.`}
               disabled={loadingCacheGaps}
               className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full"
             >
-              {loadingCacheGaps ? 'Loading...' : showCacheGaps ? 'Hide Cache Gaps' : 'Show Cache Gaps'}
+              {loadingCacheGaps ? 'Loading...' : showCacheGaps ? 'Hide cache info' : 'Show cache info'}
             </Button>
 
             {showCacheGaps && (
               <div className="mt-4 space-y-4">
+                {/* Storage Usage */}
+                {storageUsage && (
+                  <div>
+                    <h4 className="font-medium mb-2">Storage Usage</h4>
+                    <div className="text-sm space-y-1 ml-4">
+                      <div>
+                        <span className="font-medium">IndexedDB:</span>{' '}
+                        {storageUsage.indexedDBBytes != null
+                          ? formatBytes(storageUsage.indexedDBBytes)
+                          : 'unavailable'}
+                        {storageUsage.indexedDBQuota != null && (
+                          <span className="text-gray-500 dark:text-gray-400">
+                            {' '}(of {Math.round(storageUsage.indexedDBQuota / (1024 * 1024 * 1024))} GB quota)
+                          </span>
+                        )}
+                      </div>
+                      {Object.keys(storageUsage.storeRecordCounts).length > 0 && (
+                        <div className="ml-4 text-xs text-gray-600 dark:text-gray-400">
+                          {Object.entries(storageUsage.storeRecordCounts).map(([store, count]) => (
+                            <div key={store}>{store}: {count.toLocaleString()} {count === 1 ? 'record' : 'records'}</div>
+                          ))}
+                        </div>
+                      )}
+                      <div>
+                        <span className="font-medium">localStorage:</span>{' '}
+                        {formatBytes(storageUsage.localStorageBytes)}
+                      </div>
+                      <div>
+                        <span className="font-medium">sessionStorage:</span>{' '}
+                        {formatBytes(storageUsage.sessionStorageBytes)}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Feed Cache Ranges */}
                 <div>
                   <h4 className="font-medium mb-2">
@@ -1533,32 +1571,26 @@ You will be logged out and redirected to the login page.`}
       }
       return
     }
-    const result = parseEditionFile(trimmed)
-    if (result.errors.length > 0) {
-      setEditionFeedback({ type: 'error', message: result.errors.join('\n') })
+    const saveResult = await saveEditionLayout(trimmed)
+    if (!saveResult.success) {
+      setEditionFeedback({ type: 'error', message: saveResult.errors.join('\n') })
       return
     }
-    const editionCount = result.editions.filter(e => e.editionNumber > 0 && e.editionNumber < 25).length
-    const patternCount = result.editions.reduce(
-      (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
-    )
-    await updateSettings({ ...settings, editionLayout: trimmed })
     updateSetting('editionLayout', trimmed)
-    invalidateEditionsCache()
-    const rematchResult = await rematchHeldPosts()
     setOriginalSettings({ ...settings, editionLayout: trimmed })
     const parts: string[] = []
-    if (editionCount > 0) parts.push(`${editionCount} edition${editionCount > 1 ? 's' : ''}`)
-    parts.push(`${patternCount} pattern${patternCount !== 1 ? 's' : ''}`)
+    if (saveResult.editionCount > 0) parts.push(`${saveResult.editionCount} edition${saveResult.editionCount > 1 ? 's' : ''}`)
+    parts.push(`${saveResult.patternCount} pattern${saveResult.patternCount !== 1 ? 's' : ''}`)
     let debugInfo = ''
-    if (settings.debugMode && (rematchResult.total > 0 || rematchResult.released > 0)) {
+    if (settings.debugMode && saveResult.rematchResult && (saveResult.rematchResult.total > 0 || saveResult.rematchResult.released > 0)) {
       const rematchParts: string[] = []
-      if (rematchResult.rematched > 0) rematchParts.push(`${rematchResult.rematched} re-matched`)
-      if (rematchResult.fallback > 0) rematchParts.push(`${rematchResult.fallback} assigned to default`)
-      if (rematchResult.released > 0) rematchParts.push(`${rematchResult.released} released`)
-      debugInfo = ` [${rematchResult.total} held post${rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
+      if (saveResult.rematchResult.rematched > 0) rematchParts.push(`${saveResult.rematchResult.rematched} re-matched`)
+      if (saveResult.rematchResult.fallback > 0) rematchParts.push(`${saveResult.rematchResult.fallback} assigned to default`)
+      if (saveResult.rematchResult.released > 0) rematchParts.push(`${saveResult.rematchResult.released} released`)
+      debugInfo = ` [${saveResult.rematchResult.total} held post${saveResult.rematchResult.total !== 1 ? 's' : ''}: ${rematchParts.join(', ')}]`
     }
     // Check for unfollowed handles in the layout
+    const result = parseEditionFile(trimmed)
     const literalHandles = new Set<string>()
     for (const edition of result.editions) {
       for (const section of edition.sections) {
@@ -1608,6 +1640,7 @@ You will be logged out and redirected to the login page.`}
                 onTextChange={(text) => updateSetting('editionLayout', text)}
                 feedback={editionFeedback}
                 unfollowedWarning={editionWarning}
+                editionFont={settings.editionFont || 'serif'}
                 headerContent={
                   <button
                     type="button"
@@ -1701,6 +1734,45 @@ You will be logged out and redirected to the login page.`}
           <p className="text-sm text-gray-500 ml-8 mt-1">
             This inserts edition posts as timed reposts in the feed
           </p>
+        </div>
+
+        <div>
+          <label className="flex items-center space-x-3">
+            <input
+              type="checkbox"
+              checked={settings.newspaperView || false}
+              onChange={async (e) => {
+                const newValue = e.target.checked
+                updateSetting('newspaperView', newValue)
+                await updateSettings({ ...settings, newspaperView: newValue })
+              }}
+              className="w-5 h-5"
+            />
+            <span>Use newspaper view for editions</span>
+          </label>
+        </div>
+
+        <div className="flex items-center space-x-3">
+          <span>Edition font:</span>
+          <div className="flex rounded border border-gray-300 dark:border-gray-600 overflow-hidden">
+            {(['serif', 'sans-serif'] as const).map(font => (
+              <button
+                key={font}
+                type="button"
+                onClick={async () => {
+                  updateSetting('editionFont', font)
+                  await updateSettings({ ...settings, editionFont: font })
+                }}
+                className={`px-3 py-1 text-sm transition-colors ${
+                  (settings.editionFont || 'serif') === font
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                }`}
+              >
+                {font === 'serif' ? 'Serif' : 'Sans-serif'}
+              </button>
+            ))}
+          </div>
         </div>
 
       </div>

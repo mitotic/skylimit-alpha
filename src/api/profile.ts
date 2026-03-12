@@ -206,3 +206,83 @@ export async function unpinPost(
     throw new Error('Failed to unpin post: Unknown error')
   })
 }
+
+/**
+ * Updates the user's profile (display name, description, avatar, banner).
+ * Only provided fields are updated; others are preserved from the current record.
+ */
+export async function updateProfile(
+  agent: BskyAgent,
+  updates: {
+    displayName?: string
+    description?: string
+    avatar?: Blob
+    banner?: Blob
+  },
+  options?: ProfileOptions
+): Promise<void> {
+  const did = agent.session?.did
+  if (!did) throw new Error('Not logged in')
+
+  return retryWithBackoff(
+    async () => {
+      // Upload blobs if provided
+      let avatarRef: unknown | undefined
+      let bannerRef: unknown | undefined
+
+      if (updates.avatar) {
+        const res = await agent.uploadBlob(updates.avatar)
+        avatarRef = res.data.blob
+      }
+      if (updates.banner) {
+        const res = await agent.uploadBlob(updates.banner)
+        bannerRef = res.data.blob
+      }
+
+      // Read current profile record
+      const { data } = await agent.com.atproto.repo.getRecord({
+        repo: did,
+        collection: 'app.bsky.actor.profile',
+        rkey: 'self',
+      })
+
+      const currentRecord = data.value as Record<string, unknown>
+
+      // Merge updates — only overwrite fields that were provided
+      const updatedRecord: Record<string, unknown> = { ...currentRecord }
+      if (updates.displayName !== undefined) updatedRecord.displayName = updates.displayName
+      if (updates.description !== undefined) updatedRecord.description = updates.description
+      if (avatarRef !== undefined) updatedRecord.avatar = avatarRef
+      if (bannerRef !== undefined) updatedRecord.banner = bannerRef
+
+      await agent.com.atproto.repo.putRecord({
+        repo: did,
+        collection: 'app.bsky.actor.profile',
+        rkey: 'self',
+        record: updatedRecord,
+      })
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options?.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to update profile: ${error.message}`)
+    }
+    throw new Error('Failed to update profile: Unknown error')
+  })
+}

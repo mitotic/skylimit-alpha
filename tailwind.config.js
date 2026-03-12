@@ -7,6 +7,9 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
+      fontFamily: {
+        'newspaper-sans': ['"Franklin Gothic Medium"', '"ITC Franklin Gothic"', '"Arial Narrow"', 'Helvetica', 'Arial', 'sans-serif'],
+      },
       colors: {
         primary: {
           50: '#f0f9ff',

@@ -1,9 +1,9 @@
 /**
  * Visual editor for simplified edition layouts.
  *
- * Supports: timed editions with sections and patterns, common (HEAD) patterns.
- * Read-only: TAIL content, wildcard patterns, extra text patterns.
- * Does not generate `# HEAD` line — common patterns appear before first timed edition.
+ * Newspaper-style display with mutually exclusive edit modes.
+ * Supports: HEAD (common), timed editions, TAIL — all fully editable.
+ * Read-only: wildcard patterns displayed inline.
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
@@ -34,7 +34,7 @@ interface EditorSection {
 
 interface EditorEdition {
   id: string
-  type: 'common' | 'timed'
+  type: 'common' | 'timed' | 'tail'
   time: string
   name: string
   sections: EditorSection[]
@@ -44,8 +44,9 @@ interface EditorEdition {
 interface EditorState {
   editions: EditorEdition[]
   warnings: string[]
-  preservedTail?: string
 }
+
+type EditorMode = 'view' | 'add-user' | 'add-section' | 'edit-users' | 'edit-sections' | 'edit-editions'
 
 // --- Time Options (30-minute intervals, 24-hour format) ---
 
@@ -70,19 +71,21 @@ function makeEmptyCommon(): EditorEdition {
     id: makeId(),
     type: 'common',
     time: '',
-    name: 'Users and sections common to all editions',
+    name: 'Head (common to all editions)',
     sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
     collapsed: false,
   }
 }
 
-/**
- * Extract raw TAIL lines from the original text
- */
-function extractTailText(text: string): string | undefined {
-  const tailMatch = text.match(/^#\s+TAIL\s*$/im)
-  if (!tailMatch || tailMatch.index === undefined) return undefined
-  return text.substring(tailMatch.index).trim()
+function makeEmptyTail(): EditorEdition {
+  return {
+    id: makeId(),
+    type: 'tail',
+    time: '',
+    name: 'Tail (common to all editions)',
+    sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
+    collapsed: false,
+  }
 }
 
 /**
@@ -93,12 +96,11 @@ export function parseLayoutToEditor(text: string): EditorState {
   const editions: EditorEdition[] = []
 
   if (!text.trim()) {
-    return { editions: [makeEmptyCommon()], warnings }
+    return { editions: [makeEmptyCommon(), makeEmptyTail()], warnings }
   }
 
   const parsed = parseEditionFile(text)
 
-  // We ignore parser errors for the visual editor — we convert what we can
   if (parsed.errors.length > 0) {
     warnings.push(...parsed.errors.map(e => `Parse: ${e}`))
   }
@@ -117,22 +119,23 @@ export function parseLayoutToEditor(text: string): EditorState {
     editions.push(convertEdition(ed, 'timed', warnings))
   }
 
-  // Process TAIL — preserve as raw text
-  const preservedTail = extractTailText(text)
-  if (preservedTail) {
-    warnings.push('TAIL section preserved as read-only')
-  }
+  // Process TAIL as editable edition
+  const tailParsed = parsed.editions.find(e => e.editionNumber === TAIL_EDITION_NUMBER)
+  const tail = convertEdition(tailParsed, 'tail', warnings)
+  editions.push(tail)
 
-  return { editions, warnings, preservedTail }
+  return { editions, warnings }
 }
 
 function convertEdition(
   parsed: Edition | undefined,
-  type: 'common' | 'timed',
+  type: 'common' | 'timed' | 'tail',
   warnings: string[]
 ): EditorEdition {
   if (!parsed) {
-    return type === 'common' ? makeEmptyCommon() : {
+    if (type === 'common') return makeEmptyCommon()
+    if (type === 'tail') return makeEmptyTail()
+    return {
       id: makeId(),
       type: 'timed',
       time: '',
@@ -185,11 +188,17 @@ function convertEdition(
     sections.unshift({ id: makeId(), name: '', patterns: [], collapsed: false })
   }
 
+  const labelMap = {
+    common: 'Head (common to all editions)',
+    tail: 'Tail (common to all editions)',
+    timed: parsed.name,
+  }
+
   return {
     id: makeId(),
     type,
     time: parsed.time,
-    name: type === 'common' ? 'Users and sections common to all editions' : parsed.name,
+    name: labelMap[type],
     sections,
     collapsed: false,
   }
@@ -209,6 +218,14 @@ export function generateLayoutText(state: EditorState): string {
         lines.push(...commonLines)
         lines.push('')
       }
+    } else if (edition.type === 'tail') {
+      // Output TAIL if it has content
+      const tailLines = generateEditionPatternLines(edition)
+      if (tailLines.length > 0) {
+        lines.push('# TAIL')
+        lines.push(...tailLines)
+        lines.push('')
+      }
     } else {
       // Timed edition
       const timeName = edition.name
@@ -218,11 +235,6 @@ export function generateLayoutText(state: EditorState): string {
       lines.push(...generateEditionPatternLines(edition))
       lines.push('')
     }
-  }
-
-  // Append preserved TAIL
-  if (state.preservedTail) {
-    lines.push(state.preservedTail)
   }
 
   return lines.join('\n').trim()
@@ -354,7 +366,7 @@ function HandleAutocomplete({
         }}
         onKeyDown={handleKeyDown}
         placeholder="handle.bsky.social"
-        className="w-full px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+        className="w-full pl-1 pr-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
       />
       {open && filtered.length > 0 && (
         <div
@@ -513,163 +525,955 @@ function TextPatternAutocomplete({
   )
 }
 
-// --- Pattern Row Component ---
+// --- Inline Pattern Form (for add-user and edit-users) ---
 
-function PatternRow({
-  pattern,
+function InlinePatternForm({
+  initial,
   follows,
   suggestions,
-  onUpdate,
-  onDelete,
-  onMoveUp,
-  onMoveDown,
+  onSave,
+  onCancel,
 }: {
-  pattern: EditorPattern
+  initial?: { handle: string; textPattern: string }
   follows: FollowInfo[]
   suggestions?: TextSuggestions
-  onUpdate: (updated: EditorPattern) => void
-  onDelete: () => void
-  onMoveUp?: () => void
-  onMoveDown?: () => void
+  onSave: (handle: string, textPattern: string) => void
+  onCancel: () => void
 }) {
-  if (pattern.readOnly) {
-    return (
-      <div className="flex flex-col gap-1 py-2 px-3 bg-gray-100 dark:bg-gray-800/80 rounded text-sm text-gray-500 dark:text-gray-400 italic">
-        <div className="flex items-center gap-2">
-          <span className="text-xs">🔒</span>
-          <span className="font-mono">{pattern.originalLine || `@${pattern.handle}`}</span>
-        </div>
-      </div>
-    )
-  }
+  const [handle, setHandle] = useState(initial?.handle || '')
+  const [textPattern, setTextPattern] = useState(initial?.textPattern || '')
 
   return (
-    <div className="flex flex-col gap-1 py-2">
-      {/* Handle + text pattern + delete on one line */}
-      <div className="flex items-center gap-2">
-        <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0 -mr-1.5">@</span>
-        <div className="flex-[3] min-w-0">
-          <HandleAutocomplete
-            value={pattern.handle}
-            follows={follows}
-            onChange={(handle) => onUpdate({ ...pattern, handle })}
+    <div className="flex items-center gap-2 py-1.5 px-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+      <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">@</span>
+      <div className="flex-[3] min-w-0">
+        <HandleAutocomplete
+          value={handle}
+          follows={follows}
+          onChange={setHandle}
+        />
+      </div>
+      <span className="text-gray-400 dark:text-gray-500 text-sm flex-shrink-0">:</span>
+      {suggestions ? (
+        <div className="flex-[2] min-w-0">
+          <TextPatternAutocomplete
+            value={textPattern}
+            onChange={setTextPattern}
+            suggestions={suggestions}
           />
         </div>
-        <span className="text-gray-400 dark:text-gray-500 text-sm flex-shrink-0">:</span>
-        {suggestions ? (
-          <div className="flex-[2] min-w-0">
-            <TextPatternAutocomplete
-              value={pattern.textPattern}
-              onChange={(textPattern) => onUpdate({ ...pattern, textPattern })}
-              suggestions={suggestions}
-            />
-          </div>
-        ) : (
-          <input
-            type="text"
-            value={pattern.textPattern}
-            onChange={(e) => onUpdate({ ...pattern, textPattern: e.target.value })}
-            placeholder="topic(s)"
-            className="flex-[2] min-w-0 px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
-          />
-        )}
-        {onMoveUp && (
-          <button
-            type="button"
-            onClick={onMoveUp}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm flex-shrink-0 px-0.5"
-            title="Move up"
-          >
-            ▲
-          </button>
-        )}
-        {onMoveDown && (
-          <button
-            type="button"
-            onClick={onMoveDown}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm flex-shrink-0 px-0.5"
-            title="Move down"
-          >
-            ▼
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onDelete}
-          className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 text-sm flex-shrink-0 px-1"
-          title="Remove pattern"
+      ) : (
+        <input
+          type="text"
+          value={textPattern}
+          onChange={(e) => setTextPattern(e.target.value)}
+          placeholder="topic(s)"
+          className="flex-[2] min-w-0 px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+        />
+      )}
+      <button
+        type="button"
+        onClick={() => { if (handle.trim()) onSave(handle.trim(), textPattern.trim()) }}
+        className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="px-2 py-1 text-gray-600 dark:text-gray-400 rounded text-xs hover:bg-gray-200 dark:hover:bg-gray-700"
+      >
+        Cancel
+      </button>
+    </div>
+  )
+}
+
+// --- Inline Section Form ---
+
+function InlineSectionForm({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial?: string
+  onSave: (name: string) => void
+  onCancel: () => void
+}) {
+  const [name, setName] = useState(initial || '')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  return (
+    <div className="flex items-center gap-2 py-1.5 px-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+      <span className="text-sm text-gray-600 dark:text-gray-400">Section:</span>
+      <input
+        ref={inputRef}
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && name.trim()) onSave(name.trim())
+          if (e.key === 'Escape') onCancel()
+        }}
+        placeholder="Section Name"
+        className="flex-1 px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+      />
+      <button
+        type="button"
+        onClick={() => { if (name.trim()) onSave(name.trim()) }}
+        className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="px-2 py-1 text-gray-600 dark:text-gray-400 rounded text-xs hover:bg-gray-200 dark:hover:bg-gray-700"
+      >
+        Cancel
+      </button>
+    </div>
+  )
+}
+
+// --- Inline Edition Form ---
+
+function InlineEditionForm({
+  initialTime,
+  initialName,
+  usedTimes,
+  onSave,
+  onCancel,
+}: {
+  initialTime?: string
+  initialName?: string
+  usedTimes?: Set<string>
+  onSave: (time: string, name: string) => void
+  onCancel: () => void
+}) {
+  const [time, setTime] = useState(initialTime || '')
+  const [name, setName] = useState(initialName || '')
+
+  return (
+    <div className="flex items-center gap-2 py-1.5 px-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+      <span className="text-sm text-gray-600 dark:text-gray-400">Time:</span>
+      <select
+        value={time}
+        onChange={(e) => setTime(e.target.value)}
+        className="px-2 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200"
+      >
+        <option value="">--:--</option>
+        {TIME_OPTIONS.map(t => {
+          const isUsed = usedTimes?.has(t) && t !== initialTime
+          return <option key={t} value={t} disabled={isUsed}>{t}{isUsed ? ' (in use)' : ''}</option>
+        })}
+      </select>
+      <span className="text-sm text-gray-600 dark:text-gray-400">Name:</span>
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && time) onSave(time, name.trim())
+          if (e.key === 'Escape') onCancel()
+        }}
+        placeholder="Edition Name"
+        className="flex-1 px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+      />
+      <button
+        type="button"
+        onClick={() => { if (time) onSave(time, name.trim()) }}
+        className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="px-2 py-1 text-gray-600 dark:text-gray-400 rounded text-xs hover:bg-gray-200 dark:hover:bg-gray-700"
+      >
+        Cancel
+      </button>
+    </div>
+  )
+}
+
+// --- Plus Button with optional menu ---
+
+function PlusButton({
+  onClick,
+  showMenu,
+  onAddUser,
+  onImportList,
+  menuRef,
+}: {
+  onClick: () => void
+  showMenu?: boolean
+  onAddUser?: () => void
+  onImportList?: () => void
+  menuRef?: React.Ref<HTMLDivElement>
+}) {
+  return (
+    <div className="relative flex items-center py-0.5 group">
+      <button
+        type="button"
+        onClick={onClick}
+        className="text-gray-300 dark:text-gray-600 hover:text-blue-500 dark:hover:text-blue-400 text-sm font-bold w-5 h-5 flex items-center justify-center rounded transition-colors"
+        title="Add here"
+      >
+        +
+      </button>
+      {showMenu && onAddUser && onImportList && (
+        <div
+          ref={menuRef}
+          className="absolute left-6 z-30 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg"
         >
-          ×
-        </button>
-      </div>
-      {/* Extra patterns (read-only) */}
-      {pattern.extraTextPatterns && pattern.extraTextPatterns.length > 0 && (
-        <div className="ml-6 text-xs text-gray-400 dark:text-gray-500 italic">
-          Also: {pattern.extraTextPatterns.join(', ')}
+          <button
+            type="button"
+            onClick={onAddUser}
+            className="block w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 whitespace-nowrap"
+          >
+            Add user + topic
+          </button>
+          <button
+            type="button"
+            onClick={onImportList}
+            className="block w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 whitespace-nowrap"
+          >
+            Import Bluesky list
+          </button>
         </div>
       )}
     </div>
   )
 }
 
-// --- Section Component ---
+// --- Newspaper Display Components ---
 
-function SectionEditor({
-  section,
-  isDefault,
+function NewspaperPatternLine({
+  pattern,
+  displayNameMap,
+  mode,
+  editingId,
   follows,
-  suggestionsByHandle,
-  onUpdate,
+  suggestions,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
   onDelete,
   onMoveUp,
   onMoveDown,
+  fontClass,
 }: {
-  section: EditorSection
-  isDefault: boolean
+  pattern: EditorPattern
+  displayNameMap: Map<string, string>
+  mode: EditorMode
+  editingId: string | null
   follows: FollowInfo[]
-  suggestionsByHandle?: SuggestionsMap
-  onUpdate: (updated: EditorSection) => void
-  onDelete?: () => void
+  suggestions?: TextSuggestions
+  onStartEdit: () => void
+  onSaveEdit: (handle: string, textPattern: string) => void
+  onCancelEdit: () => void
+  onDelete: () => void
   onMoveUp?: () => void
   onMoveDown?: () => void
+  fontClass: string
 }) {
-  const updatePattern = (idx: number, updated: EditorPattern) => {
-    const patterns = [...section.patterns]
-    patterns[idx] = updated
-    onUpdate({ ...section, patterns })
+  const isEditing = editingId === pattern.id
+
+  if (isEditing) {
+    return (
+      <InlinePatternForm
+        initial={{ handle: pattern.handle, textPattern: pattern.textPattern }}
+        follows={follows}
+        suggestions={suggestions}
+        onSave={onSaveEdit}
+        onCancel={onCancelEdit}
+      />
+    )
   }
 
-  const deletePattern = (idx: number) => {
-    const patterns = section.patterns.filter((_, i) => i !== idx)
-    onUpdate({ ...section, patterns })
+  const displayName = displayNameMap.get(pattern.handle)
+  const allTopics = [pattern.textPattern, ...(pattern.extraTextPatterns || [])].filter(Boolean)
+
+  return (
+    <div className="flex items-center group py-0.5">
+      <div className={`flex-1 ${fontClass} text-base text-gray-800 dark:text-gray-200`}>
+        {pattern.readOnly && (
+          <span className="text-xs mr-1 text-gray-400">🔒</span>
+        )}
+        {displayName ? (
+          <>
+            <span>{displayName}</span>
+            <span className="text-sm text-gray-400 dark:text-gray-500 italic ml-1">
+              (@{pattern.handle})
+            </span>
+          </>
+        ) : (
+          <span>@{pattern.handle}</span>
+        )}
+        {allTopics.length > 0 && (
+          <span className="text-gray-600 dark:text-gray-400">
+            : {allTopics.join(', ')}
+          </span>
+        )}
+      </div>
+
+      {mode === 'edit-users' && !pattern.readOnly && (
+        <div className="flex items-center gap-0.5 ml-2">
+          {onMoveUp && (
+            <button type="button" onClick={onMoveUp} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs px-1" title="Move up">▲</button>
+          )}
+          {onMoveDown && (
+            <button type="button" onClick={onMoveDown} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs px-1" title="Move down">▼</button>
+          )}
+          <button type="button" onClick={onStartEdit} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit">✏️</button>
+          <button type="button" onClick={onDelete} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete">🗑️</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NewspaperSection({
+  section,
+  edition: _edition,
+  isDefault,
+  displayNameMap,
+  mode,
+  editingId,
+  follows,
+  suggestionsByHandle,
+  insertPoint,
+  plusMenuPoint,
+  onSetInsertPoint,
+  onSetPlusMenuPoint,
+  onAddPattern,
+  onImportList,
+  onStartEditPattern,
+  onSaveEditPattern,
+  onCancelEdit,
+  onDeletePattern,
+  onMovePattern,
+  editingSectionId,
+  onStartEditSection,
+  onSaveEditSection,
+  onCancelEditSection,
+  onDeleteSection,
+  onMoveSection: _onMoveSection,
+  onMoveSectionUp,
+  onMoveSectionDown,
+  fontClass,
+}: {
+  section: EditorSection
+  edition: EditorEdition
+  isDefault: boolean
+  displayNameMap: Map<string, string>
+  mode: EditorMode
+  editingId: string | null
+  follows: FollowInfo[]
+  suggestionsByHandle?: SuggestionsMap
+  insertPoint: string | null  // afterPatternId or 'top' for insert at top
+  plusMenuPoint: string | null
+  onSetInsertPoint: (point: string | null) => void
+  onSetPlusMenuPoint: (point: string | null) => void
+  onAddPattern: (afterPatternId: string | null, handle: string, textPattern: string) => void
+  onImportList: (sectionId: string) => void
+  onStartEditPattern: (patternId: string) => void
+  onSaveEditPattern: (patternId: string, handle: string, textPattern: string) => void
+  onCancelEdit: () => void
+  onDeletePattern: (patternId: string) => void
+  onMovePattern: (patternId: string, direction: -1 | 1) => void
+  editingSectionId: string | null
+  onStartEditSection: () => void
+  onSaveEditSection: (name: string) => void
+  onCancelEditSection: () => void
+  onDeleteSection: () => void
+  onMoveSection?: () => void
+  onMoveSectionUp?: () => void
+  onMoveSectionDown?: () => void
+  fontClass: string
+}) {
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!plusMenuPoint) return
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onSetPlusMenuPoint(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [plusMenuPoint, onSetPlusMenuPoint])
+
+  const showPatterns = mode !== 'add-section' && mode !== 'edit-sections' && mode !== 'edit-editions'
+  const showSectionControls = mode === 'edit-sections'
+  const isEditingThisSection = editingSectionId === section.id
+
+  // Section heading
+  const sectionHeading = !isDefault && section.name && (
+    <div className="flex items-center mt-3 mb-1">
+      {isEditingThisSection ? (
+        <InlineSectionForm
+          initial={section.name}
+          onSave={onSaveEditSection}
+          onCancel={onCancelEditSection}
+        />
+      ) : (
+        <>
+          {mode !== 'view' && (
+            <span className="text-gray-400 dark:text-gray-500 text-xs mr-1.5 flex-shrink-0">
+              {showPatterns ? '▼' : '▶'}
+            </span>
+          )}
+          <h3 className={`${fontClass} text-base font-semibold text-gray-700 dark:text-gray-300 tracking-wide flex-1`}>
+            {section.name}
+          </h3>
+          {showSectionControls && (
+            <div className="flex items-center gap-0.5 ml-2">
+              {onMoveSectionUp && (
+                <button type="button" onClick={onMoveSectionUp} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs px-1" title="Move up">▲</button>
+              )}
+              {onMoveSectionDown && (
+                <button type="button" onClick={onMoveSectionDown} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs px-1" title="Move down">▼</button>
+              )}
+              <button type="button" onClick={onStartEditSection} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit">✏️</button>
+              <button type="button" onClick={onDeleteSection} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete">🗑️</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+
+  // For add-section mode, just show the heading (no patterns)
+  if (!showPatterns) {
+    return <>{sectionHeading}</>
   }
 
-  const movePattern = (idx: number, direction: -1 | 1) => {
-    const patterns = [...section.patterns]
-    const targetIdx = idx + direction
-    if (targetIdx < 0 || targetIdx >= patterns.length) return
-    ;[patterns[idx], patterns[targetIdx]] = [patterns[targetIdx], patterns[idx]]
-    onUpdate({ ...section, patterns })
+  const renderPlusButton = (afterPatternId: string | null) => {
+    if (mode !== 'add-user') return null
+    // Prefix with section ID to avoid collisions when multiple sections share the same pointKey (e.g., 'top')
+    const pointKey = `${section.id}:${afterPatternId || 'top'}`
+    const isActive = insertPoint === pointKey
+    const isMenuOpen = plusMenuPoint === pointKey
+
+    if (isActive) {
+      return (
+        <InlinePatternForm
+          follows={follows}
+          suggestions={undefined}
+          onSave={(handle, textPattern) => {
+            onAddPattern(afterPatternId, handle, textPattern)
+            onSetInsertPoint(null)
+          }}
+          onCancel={() => onSetInsertPoint(null)}
+        />
+      )
+    }
+
+    return (
+      <PlusButton
+        onClick={() => onSetPlusMenuPoint(isMenuOpen ? null : pointKey)}
+        showMenu={isMenuOpen}
+        onAddUser={() => {
+          onSetPlusMenuPoint(null)
+          onSetInsertPoint(pointKey)
+        }}
+        onImportList={() => {
+          onSetPlusMenuPoint(null)
+          onImportList(section.id)
+        }}
+        menuRef={menuRef}
+      />
+    )
   }
 
-  const addPattern = () => {
-    const patterns = [...section.patterns, {
-      id: makeId(),
-      handle: '',
-      textPattern: '',
-    }]
-    onUpdate({ ...section, patterns })
+  return (
+    <div>
+      {sectionHeading}
+
+      {/* Plus at top of section */}
+      {renderPlusButton(null)}
+
+      {section.patterns.map((pattern, idx) => (
+        <div key={pattern.id}>
+          <NewspaperPatternLine
+            pattern={pattern}
+            displayNameMap={displayNameMap}
+            mode={mode}
+            editingId={editingId}
+            follows={follows}
+            suggestions={suggestionsByHandle?.get(pattern.handle)}
+            onStartEdit={() => onStartEditPattern(pattern.id)}
+            onSaveEdit={(handle, textPattern) => onSaveEditPattern(pattern.id, handle, textPattern)}
+            onCancelEdit={onCancelEdit}
+            onDelete={() => onDeletePattern(pattern.id)}
+            onMoveUp={idx > 0 ? () => onMovePattern(pattern.id, -1) : undefined}
+            onMoveDown={idx < section.patterns.length - 1 ? () => onMovePattern(pattern.id, 1) : undefined}
+            fontClass={fontClass}
+          />
+          {renderPlusButton(pattern.id)}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function NewspaperEdition({
+  edition,
+  displayNameMap,
+  mode,
+  editingId,
+  editingSectionId,
+  editingEditionId,
+  follows,
+  suggestionsByHandle,
+  usedTimes,
+  insertPoint,
+  insertEditionId,
+  plusMenuPoint,
+  plusMenuEditionId,
+  sectionInsertPoint,
+  sectionInsertEditionId,
+  onSetInsertPoint,
+  onSetPlusMenuPoint,
+  onSetSectionInsertPoint,
+  onAddPattern,
+  onImportList,
+  onStartEditPattern,
+  onSaveEditPattern,
+  onCancelEditPattern,
+  onDeletePattern,
+  onMovePattern,
+  onStartEditSection,
+  onSaveEditSection,
+  onCancelEditSection,
+  onDeleteSection,
+  onMoveSection,
+  onAddSection,
+  onStartEditEdition,
+  onSaveEditEdition,
+  onCancelEditEdition,
+  onDeleteEdition,
+  fontClass,
+}: {
+  edition: EditorEdition
+  displayNameMap: Map<string, string>
+  mode: EditorMode
+  editingId: string | null
+  editingSectionId: string | null
+  editingEditionId: string | null
+  follows: FollowInfo[]
+  suggestionsByHandle?: SuggestionsMap
+  usedTimes: Set<string>
+  insertPoint: string | null
+  insertEditionId: string | null
+  plusMenuPoint: string | null
+  plusMenuEditionId: string | null
+  sectionInsertPoint: string | null
+  sectionInsertEditionId: string | null
+  onSetInsertPoint: (editionId: string, point: string | null) => void
+  onSetPlusMenuPoint: (editionId: string, point: string | null) => void
+  onSetSectionInsertPoint: (editionId: string, point: string | null) => void
+  onAddPattern: (editionId: string, sectionId: string, afterPatternId: string | null, handle: string, textPattern: string) => void
+  onImportList: (editionId: string, sectionId: string) => void
+  onStartEditPattern: (patternId: string) => void
+  onSaveEditPattern: (editionId: string, sectionId: string, patternId: string, handle: string, textPattern: string) => void
+  onCancelEditPattern: () => void
+  onDeletePattern: (editionId: string, sectionId: string, patternId: string) => void
+  onMovePattern: (editionId: string, sectionId: string, patternId: string, direction: -1 | 1) => void
+  onStartEditSection: (sectionId: string) => void
+  onSaveEditSection: (editionId: string, sectionId: string, name: string) => void
+  onCancelEditSection: () => void
+  onDeleteSection: (editionId: string, sectionId: string) => void
+  onMoveSection: (editionId: string, sectionId: string, direction: -1 | 1) => void
+  onAddSection: (editionId: string, afterSectionId: string | null) => void
+  onStartEditEdition: () => void
+  onSaveEditEdition: (time: string, name: string) => void
+  onCancelEditEdition: () => void
+  onDeleteEdition: () => void
+  fontClass: string
+}) {
+  const isCommonOrTail = edition.type === 'common' || edition.type === 'tail'
+  const showSections = mode !== 'edit-editions'
+  const isEditingThisEdition = editingEditionId === edition.id
+
+  // Edition headline
+  const editionHeadline = (() => {
+    if (isEditingThisEdition) {
+      return (
+        <InlineEditionForm
+          initialTime={edition.time}
+          initialName={edition.name}
+          usedTimes={usedTimes}
+          onSave={onSaveEditEdition}
+          onCancel={onCancelEditEdition}
+        />
+      )
+    }
+
+    const showAccordion = mode !== 'view'
+    // Read-only indicator: ▶ when sections hidden (edit-editions), ▼ when shown
+    const accordionIndicator = showAccordion ? (
+      <span className="text-gray-400 dark:text-gray-500 text-xs mr-1.5 flex-shrink-0">
+        {showSections ? '▼' : '▶'}
+      </span>
+    ) : null
+
+    if (isCommonOrTail) {
+      return (
+        <div className="flex items-center py-2">
+          {accordionIndicator}
+          <h2 className={`${fontClass} text-base text-gray-400 dark:text-gray-500 flex-1`}>
+            {edition.name}
+          </h2>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex items-center py-2 border-b-2 border-gray-800 dark:border-gray-300 mb-2">
+        {accordionIndicator}
+        <h2 className={`${fontClass} text-2xl font-bold text-gray-900 dark:text-gray-100 flex-1`}>
+          {edition.name || 'Untitled Edition'}
+        </h2>
+        <span className="text-sm text-gray-400 dark:text-gray-500 ml-4 flex-shrink-0">
+          {edition.time}
+        </span>
+        {mode === 'edit-editions' && (
+          <div className="flex items-center gap-0.5 ml-2">
+            <button type="button" onClick={onStartEditEdition} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit">✏️</button>
+            <button type="button" onClick={onDeleteEdition} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete">🗑️</button>
+          </div>
+        )}
+      </div>
+    )
+  })()
+
+  if (!showSections) {
+    return <div className="mb-4">{editionHeadline}</div>
   }
 
-  // --- Bluesky List Import ---
+  // Section insert plus
+  const renderSectionPlus = (afterSectionId: string | null) => {
+    if (mode !== 'add-section') return null
+    const pointKey = afterSectionId || 'top'
+    const isActive = sectionInsertEditionId === edition.id && sectionInsertPoint === pointKey
+
+    if (isActive) {
+      return (
+        <InlineSectionForm
+          onSave={(name) => {
+            onAddSection(edition.id, afterSectionId)
+            // The add will be done with the name from the form
+            // We need a different approach - save name directly
+            onSaveEditSection(edition.id, '__new__', name)
+            onSetSectionInsertPoint(edition.id, null)
+          }}
+          onCancel={() => onSetSectionInsertPoint(edition.id, null)}
+        />
+      )
+    }
+
+    return (
+      <div className="py-0.5">
+        <button
+          type="button"
+          onClick={() => onSetSectionInsertPoint(edition.id, pointKey)}
+          className="text-gray-300 dark:text-gray-600 hover:text-blue-500 dark:hover:text-blue-400 text-sm font-bold w-5 h-5 flex items-center justify-center rounded transition-colors"
+          title="Add section here"
+        >
+          +
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mb-6">
+      {editionHeadline}
+
+      {/* Only show top + if first section is named (otherwise it duplicates the + after the default section) */}
+      {edition.sections.length === 0 || edition.sections[0].name !== '' ? renderSectionPlus(null) : null}
+
+      {edition.sections.map((section, sIdx) => (
+        <div key={section.id}>
+          <NewspaperSection
+            section={section}
+            edition={edition}
+            isDefault={section.name === '' && sIdx === 0}
+            displayNameMap={displayNameMap}
+            mode={mode}
+            editingId={insertEditionId === edition.id ? editingId : null}
+            follows={follows}
+            suggestionsByHandle={suggestionsByHandle}
+            insertPoint={insertEditionId === edition.id ? insertPoint : null}
+            plusMenuPoint={plusMenuEditionId === edition.id ? plusMenuPoint : null}
+            onSetInsertPoint={(point) => onSetInsertPoint(edition.id, point)}
+            onSetPlusMenuPoint={(point) => onSetPlusMenuPoint(edition.id, point)}
+            onAddPattern={(afterPatternId, handle, textPattern) =>
+              onAddPattern(edition.id, section.id, afterPatternId, handle, textPattern)
+            }
+            onImportList={(sectionId) => onImportList(edition.id, sectionId)}
+            onStartEditPattern={onStartEditPattern}
+            onSaveEditPattern={(patternId, handle, textPattern) =>
+              onSaveEditPattern(edition.id, section.id, patternId, handle, textPattern)
+            }
+            onCancelEdit={onCancelEditPattern}
+            onDeletePattern={(patternId) => onDeletePattern(edition.id, section.id, patternId)}
+            onMovePattern={(patternId, direction) => onMovePattern(edition.id, section.id, patternId, direction)}
+            editingSectionId={editingSectionId}
+            onStartEditSection={() => onStartEditSection(section.id)}
+            onSaveEditSection={(name) => onSaveEditSection(edition.id, section.id, name)}
+            onCancelEditSection={onCancelEditSection}
+            onDeleteSection={() => onDeleteSection(edition.id, section.id)}
+            onMoveSectionUp={sIdx > 1 || (sIdx > 0 && edition.sections[0].name !== '') ? () => onMoveSection(edition.id, section.id, -1) : undefined}
+            onMoveSectionDown={sIdx < edition.sections.length - 1 ? () => onMoveSection(edition.id, section.id, 1) : undefined}
+            fontClass={fontClass}
+          />
+          {renderSectionPlus(section.id)}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// --- Editor Toolbar ---
+
+function EditorToolbar({
+  mode,
+  onModeChange,
+  suggestTextPatterns,
+  onSuggestTextPatternsChange,
+  addEditionTime,
+  onAddEditionTimeChange,
+  showAddEditionForm,
+  onToggleAddEditionForm,
+  onAddEdition,
+  usedTimes,
+  headerContent,
+}: {
+  mode: EditorMode
+  onModeChange: (mode: EditorMode) => void
+  suggestTextPatterns: boolean
+  onSuggestTextPatternsChange: (checked: boolean) => void
+  addEditionTime: string
+  onAddEditionTimeChange: (time: string) => void
+  showAddEditionForm: boolean
+  onToggleAddEditionForm: () => void
+  onAddEdition: (time: string, name: string) => void
+  usedTimes: Set<string>
+  headerContent?: React.ReactNode
+}) {
+  const [addEditionName, setAddEditionName] = useState('')
+
+  const modeButton = (label: string, targetMode: EditorMode) => (
+    <button
+      type="button"
+      onClick={() => {
+        if (showAddEditionForm) {
+          onToggleAddEditionForm()
+          setAddEditionName('')
+          onAddEditionTimeChange('')
+        }
+        onModeChange(mode === targetMode ? 'view' : targetMode)
+      }}
+      className={`px-3 py-1 text-sm rounded border transition-colors ${
+        mode === targetMode && !(showAddEditionForm && targetMode === 'edit-editions')
+          ? 'bg-blue-600 text-white border-blue-600'
+          : 'text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+      }`}
+    >
+      {label}
+    </button>
+  )
+
+  return (
+    <div className="space-y-2">
+      {/* Header content (Switch to Text Editor button) */}
+      <div>{headerContent}</div>
+
+      {/* Line 1: Add edition + Edit editions */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          onClick={() => {
+            if (showAddEditionForm) {
+              // Cancel: hide form and restore view mode
+              onToggleAddEditionForm()
+              setAddEditionName('')
+              onAddEditionTimeChange('')
+              onModeChange('view')
+            } else {
+              // Open: show form and switch to edit-editions view
+              if (mode !== 'edit-editions') onModeChange('edit-editions')
+              onToggleAddEditionForm()
+            }
+          }}
+          className={`px-3 py-1 text-sm rounded border transition-colors ${
+            showAddEditionForm
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+          }`}
+        >
+          Add edition
+        </button>
+        {showAddEditionForm && (
+          <>
+            <select
+              value={addEditionTime}
+              onChange={(e) => onAddEditionTimeChange(e.target.value)}
+              className="px-2 py-1 border rounded text-sm dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200"
+            >
+              <option value="">Time...</option>
+              {TIME_OPTIONS.map(t => (
+                <option key={t} value={t} disabled={usedTimes.has(t)}>{t}{usedTimes.has(t) ? ' (in use)' : ''}</option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={addEditionName}
+              onChange={(e) => setAddEditionName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && addEditionTime) {
+                  onAddEdition(addEditionTime, addEditionName.trim())
+                  setAddEditionName('')
+                }
+                if (e.key === 'Escape') {
+                  onToggleAddEditionForm()
+                  setAddEditionName('')
+                  onAddEditionTimeChange('')
+                  onModeChange('view')
+                }
+              }}
+              placeholder="Edition Name"
+              className="px-2 py-1 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 flex-1 min-w-[120px]"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (addEditionTime) {
+                  onAddEdition(addEditionTime, addEditionName.trim())
+                  setAddEditionName('')
+                }
+              }}
+              disabled={!addEditionTime}
+              className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onToggleAddEditionForm()
+                setAddEditionName('')
+                onAddEditionTimeChange('')
+                onModeChange('view')
+              }}
+              className="px-2 py-1 text-gray-600 dark:text-gray-400 rounded text-xs hover:bg-gray-200 dark:hover:bg-gray-700"
+            >
+              Cancel
+            </button>
+          </>
+        )}
+        {modeButton('Edit editions', 'edit-editions')}
+      </div>
+
+      {/* Line 2: Add section + Edit sections */}
+      <div className="flex items-center gap-3 ml-4">
+        {modeButton('Add section', 'add-section')}
+        {modeButton('Edit sections', 'edit-sections')}
+      </div>
+
+      {/* Line 3: Add user + Edit users + Suggest topics */}
+      <div className="flex items-center gap-3 ml-8">
+        {modeButton('Add user', 'add-user')}
+        {modeButton('Edit users', 'edit-users')}
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer ml-auto">
+          <input
+            type="checkbox"
+            checked={suggestTextPatterns}
+            onChange={(e) => onSuggestTextPatternsChange(e.target.checked)}
+            className="rounded"
+          />
+          Suggest topics
+        </label>
+      </div>
+
+      {/* Help messages */}
+      {mode === 'add-user' && (
+        <div className="text-sm text-gray-500 dark:text-gray-400 italic ml-8">
+          Click on "+" to add user and topic
+        </div>
+      )}
+      {mode === 'add-section' && (
+        <div className="text-sm text-gray-500 dark:text-gray-400 italic ml-4">
+          Click on "+" to add section
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// --- Main Component ---
+
+interface EditionLayoutEditorProps {
+  layoutText: string
+  onSave: (text: string) => Promise<void>
+  onTextChange?: (text: string) => void
+  feedback: { type: 'success' | 'error'; message: string } | null
+  unfollowedWarning?: string[] | null
+  headerContent?: React.ReactNode
+  editionFont?: 'serif' | 'sans-serif'
+}
+
+export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, feedback, unfollowedWarning, headerContent, editionFont = 'serif' }: EditionLayoutEditorProps) {
+  const [state, setState] = useState<EditorState>(() => parseLayoutToEditor(layoutText))
+  const [follows, setFollows] = useState<FollowInfo[]>([])
+  const [suggestTextPatterns, setSuggestTextPatterns] = useState(true)
+  const [suggestionsByHandle, setSuggestionsByHandle] = useState<SuggestionsMap>(new Map())
+  const initializedRef = useRef(false)
+  const internalChangeRef = useRef(false)
+
+  // Mode state
+  const [mode, setMode] = useState<EditorMode>('view')
+  const [editingId, setEditingId] = useState<string | null>(null) // pattern being edited
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
+  const [editingEditionId, setEditingEditionId] = useState<string | null>(null)
+
+  // Insert point tracking for add-user mode
+  const [insertPoint, setInsertPoint] = useState<string | null>(null)
+  const [insertEditionId, setInsertEditionId] = useState<string | null>(null)
+  const [plusMenuPoint, setPlusMenuPoint] = useState<string | null>(null)
+  const [plusMenuEditionId, setPlusMenuEditionId] = useState<string | null>(null)
+
+  // Section insert tracking for add-section mode
+  const [sectionInsertPoint, setSectionInsertPoint] = useState<string | null>(null)
+  const [sectionInsertEditionId, setSectionInsertEditionId] = useState<string | null>(null)
+
+  // Add edition form
+  const [addEditionTime, setAddEditionTime] = useState('')
+  const [showAddEditionForm, setShowAddEditionForm] = useState(false)
+
+  // List import state
   const { agent } = useSession()
   const [showListPicker, setShowListPicker] = useState(false)
   const [lists, setLists] = useState<{ uri: string; name: string }[]>([])
   const [loadingLists, setLoadingLists] = useState(false)
   const [importingList, setImportingList] = useState(false)
+  const [importTargetEditionId, setImportTargetEditionId] = useState<string | null>(null)
+  const [importTargetSectionId, setImportTargetSectionId] = useState<string | null>(null)
   const listPickerRef = useRef<HTMLDivElement>(null)
 
-  // Close list picker on click outside
+  // Close list picker on outside click
   useEffect(() => {
     if (!showListPicker) return
     const handleClick = (e: MouseEvent) => {
@@ -681,371 +1485,42 @@ function SectionEditor({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [showListPicker])
 
-  const handleOpenListPicker = async () => {
-    if (showListPicker) {
-      setShowListPicker(false)
-      return
-    }
-    if (!agent) return
-    setShowListPicker(true)
-    setLoadingLists(true)
-    try {
-      const userLists = await getUserLists(agent)
-      setLists(userLists)
-    } catch (err) {
-      alert(`Failed to fetch lists: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      setShowListPicker(false)
-    } finally {
-      setLoadingLists(false)
-    }
-  }
-
-  const handleSelectList = async (listUri: string, listName: string) => {
-    if (!agent) return
-    setImportingList(true)
-    try {
-      const handles = await getListMembers(agent, listUri)
-      if (handles.length === 0) {
-        alert(`No members found in "${listName}".`)
-        setShowListPicker(false)
-        setImportingList(false)
-        return
-      }
-
-      // Check follow status against loaded follows
-      const followedHandles = new Set(follows.map(f => f.username))
-      const unfollowedCount = handles.filter(h => !followedHandles.has(h)).length
-      const total = handles.length
-
-      // Confirmation dialog if any unfollowed users or more than 10 total
-      if (unfollowedCount > 0 || total > 10) {
-        let message = `Import ${total} users from "${listName}"?`
-        if (unfollowedCount > 0) {
-          message += `\n\nThere are ${unfollowedCount} unfollowed users in the list. You will need to follow them for their posts to be included in editions.`
+  // Escape key to return to view mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && mode !== 'view') {
+        // Only exit mode if no inline form is open
+        if (!editingId && !editingSectionId && !editingEditionId && !insertPoint && !sectionInsertPoint) {
+          setMode('view')
         }
-        if (!window.confirm(message)) {
-          setShowListPicker(false)
-          setImportingList(false)
-          return
-        }
+        // Close inline forms
+        setEditingId(null)
+        setEditingSectionId(null)
+        setEditingEditionId(null)
+        setInsertPoint(null)
+        setInsertEditionId(null)
+        setPlusMenuPoint(null)
+        setPlusMenuEditionId(null)
+        setSectionInsertPoint(null)
+        setSectionInsertEditionId(null)
       }
-
-      const newPatterns: EditorPattern[] = handles.map(handle => ({
-        id: makeId(),
-        handle,
-        textPattern: '',
-      }))
-      onUpdate({ ...section, patterns: [...section.patterns, ...newPatterns] })
-      setShowListPicker(false)
-    } catch (err) {
-      alert(`Failed to import list: ${err instanceof Error ? err.message : 'Unknown error'}`)
-    } finally {
-      setImportingList(false)
     }
-  }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [mode, editingId, editingSectionId, editingEditionId, insertPoint, sectionInsertPoint])
 
-  const listPickerDropdown = showListPicker && (
-    <div
-      ref={listPickerRef}
-      className="absolute z-50 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-60 overflow-y-auto min-w-[200px]"
-    >
-      {loadingLists || importingList ? (
-        <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
-          {importingList ? 'Importing...' : 'Loading lists...'}
-        </div>
-      ) : lists.length === 0 ? (
-        <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
-          No lists found
-        </div>
-      ) : (
-        lists.map(list => (
-          <button
-            key={list.uri}
-            type="button"
-            onClick={() => handleSelectList(list.uri, list.name)}
-            className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200"
-          >
-            {list.name}
-          </button>
-        ))
-      )}
-    </div>
-  )
-
-  if (isDefault) {
-    return (
-      <div className="space-y-1">
-        {section.patterns.map((pat, idx) => (
-          <PatternRow
-            key={pat.id}
-            pattern={pat}
-            follows={follows}
-            suggestions={suggestionsByHandle?.get(pat.handle)}
-            onUpdate={(updated) => updatePattern(idx, updated)}
-            onDelete={() => deletePattern(idx)}
-            onMoveUp={idx > 0 ? () => movePattern(idx, -1) : undefined}
-            onMoveDown={idx < section.patterns.length - 1 ? () => movePattern(idx, 1) : undefined}
-          />
-        ))}
-        <div className="flex items-center gap-4 mt-1 ml-4 relative">
-          <button
-            type="button"
-            onClick={addPattern}
-            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
-          >
-            + Add Users+topics
-          </button>
-          <button
-            type="button"
-            onClick={handleOpenListPicker}
-            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
-          >
-            Import Bluesky List
-          </button>
-          {listPickerDropdown}
-        </div>
-      </div>
-    )
-  }
-
-  // Named section with collapsible header
-  return (
-    <div className="border-t border-gray-200 dark:border-gray-700">
-      {/* Section header with blue divider lines */}
-      <div
-        className="flex items-center gap-3 px-4 py-2 bg-gray-50 dark:bg-gray-800/50 cursor-pointer"
-        onClick={() => onUpdate({ ...section, collapsed: !section.collapsed })}
-      >
-        <span className="text-xs text-gray-500">{section.collapsed ? '▶' : '▼'}</span>
-        <span className="flex-1 h-px bg-blue-400" />
-        <input
-          type="text"
-          value={section.name}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => onUpdate({ ...section, name: e.target.value })}
-          placeholder="Section Name"
-          className="px-2 py-0.5 border rounded text-sm font-semibold text-blue-600 dark:text-blue-400 bg-transparent dark:border-gray-600 text-center w-40"
-        />
-        <span className="flex-1 h-px bg-blue-400" />
-        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          {onMoveUp && (
-            <button
-              type="button"
-              onClick={onMoveUp}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm px-1"
-              title="Move section up"
-            >
-              ▲
-            </button>
-          )}
-          {onMoveDown && (
-            <button
-              type="button"
-              onClick={onMoveDown}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm px-1"
-              title="Move section down"
-            >
-              ▼
-            </button>
-          )}
-          {onDelete && (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="text-red-500 hover:text-red-700 dark:text-red-400 text-sm flex-shrink-0"
-              title="Remove section"
-            >
-              ×
-            </button>
-          )}
-        </div>
-      </div>
-      {!section.collapsed && (
-        <div className="px-4 py-2 space-y-1">
-          {section.patterns.map((pat, idx) => (
-            <PatternRow
-              key={pat.id}
-              pattern={pat}
-              follows={follows}
-              suggestions={suggestionsByHandle?.get(pat.handle)}
-              onUpdate={(updated) => updatePattern(idx, updated)}
-              onDelete={() => deletePattern(idx)}
-              onMoveUp={idx > 0 ? () => movePattern(idx, -1) : undefined}
-              onMoveDown={idx < section.patterns.length - 1 ? () => movePattern(idx, 1) : undefined}
-            />
-          ))}
-          <div className="flex items-center gap-4 mt-1 relative">
-            <button
-              type="button"
-              onClick={addPattern}
-              className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
-            >
-              + Add Users+topics
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenListPicker}
-              className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
-            >
-              Import Bluesky List
-            </button>
-            {listPickerDropdown}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// --- Edition Card Component ---
-
-function EditionCard({
-  edition,
-  follows,
-  suggestionsByHandle,
-  onUpdate,
-  onDelete,
-}: {
-  edition: EditorEdition
-  follows: FollowInfo[]
-  suggestionsByHandle?: SuggestionsMap
-  onUpdate: (updated: EditorEdition) => void
-  onDelete?: () => void
-}) {
-  const isCommon = edition.type === 'common'
-
-  const updateSection = (idx: number, updated: EditorSection) => {
-    const sections = [...edition.sections]
-    sections[idx] = updated
-    onUpdate({ ...edition, sections })
-  }
-
-  const deleteSection = (idx: number) => {
-    const sections = edition.sections.filter((_, i) => i !== idx)
-    onUpdate({ ...edition, sections })
-  }
-
-  const moveSection = (idx: number, direction: -1 | 1) => {
-    const sections = [...edition.sections]
-    const targetIdx = idx + direction
-    if (targetIdx < 0 || targetIdx >= sections.length) return
-    ;[sections[idx], sections[targetIdx]] = [sections[targetIdx], sections[idx]]
-    onUpdate({ ...edition, sections })
-  }
-
-  const addSection = () => {
-    const sections = [...edition.sections, {
-      id: makeId(),
-      name: '',
-      patterns: [],
-      collapsed: false,
-    }]
-    onUpdate({ ...edition, sections })
-  }
-
-  return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      {/* Edition header */}
-      <div
-        className="flex items-center gap-3 px-4 py-3 bg-gray-50 dark:bg-gray-800 cursor-pointer"
-        onClick={() => onUpdate({ ...edition, collapsed: !edition.collapsed })}
-      >
-        <span className="text-xs text-gray-500">{edition.collapsed ? '▶' : '▼'}</span>
-
-        {isCommon ? (
-          <span className="font-semibold text-gray-700 dark:text-gray-300 flex-1">
-            Users and sections common to all editions
-          </span>
-        ) : (
-          <div className="flex items-center gap-2 flex-1" onClick={(e) => e.stopPropagation()}>
-            <span className="font-semibold text-gray-700 dark:text-gray-300 flex-shrink-0">
-              Edition
-            </span>
-            <select
-              value={edition.time}
-              onChange={(e) => onUpdate({ ...edition, time: e.target.value })}
-              className="px-2 py-1 border rounded text-sm dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200"
-              title="Edition time (24-hour format)"
-            >
-              <option value="">--:--</option>
-              {TIME_OPTIONS.map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-            <input
-              type="text"
-              value={edition.name}
-              onChange={(e) => onUpdate({ ...edition, name: e.target.value })}
-              placeholder="Edition Name"
-              className="flex-1 px-2 py-1 border rounded text-sm dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200"
-            />
-          </div>
-        )}
-
-        {/* Delete button for timed editions */}
-        {!isCommon && onDelete && (
-          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              onClick={onDelete}
-              className="text-red-500 hover:text-red-700 dark:text-red-400 text-sm px-1"
-              title="Remove edition"
-            >
-              ×
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Edition body */}
-      {!edition.collapsed && (
-        <div className="px-4 py-3 space-y-2">
-          {edition.sections.map((section, idx) => (
-            <SectionEditor
-              key={section.id}
-              section={section}
-              isDefault={section.name === '' && idx === 0}
-              follows={follows}
-              suggestionsByHandle={suggestionsByHandle}
-              onUpdate={(updated) => updateSection(idx, updated)}
-              onDelete={idx === 0 && section.name === '' ? undefined : () => deleteSection(idx)}
-              onMoveUp={idx > 0 ? () => moveSection(idx, -1) : undefined}
-              onMoveDown={idx < edition.sections.length - 1 ? () => moveSection(idx, 1) : undefined}
-            />
-          ))}
-          <hr className="border-gray-200 dark:border-gray-700 mt-2" />
-          <button
-            type="button"
-            onClick={addSection}
-            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
-          >
-            + Add Section
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// --- Main Component ---
-
-interface EditionLayoutEditorProps {
-  layoutText: string
-  onSave: (text: string) => Promise<void>
-  onTextChange?: (text: string) => void  // lightweight sync without validation
-  feedback: { type: 'success' | 'error'; message: string } | null
-  unfollowedWarning?: string[] | null
-  headerContent?: React.ReactNode
-}
-
-export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, feedback, unfollowedWarning, headerContent }: EditionLayoutEditorProps) {
-  const [state, setState] = useState<EditorState>(() => parseLayoutToEditor(layoutText))
-  const [follows, setFollows] = useState<FollowInfo[]>([])
-  const [suggestTextPatterns, setSuggestTextPatterns] = useState(true)
-  const [suggestionsByHandle, setSuggestionsByHandle] = useState<SuggestionsMap>(new Map())
-  const [allExpanded, setAllExpanded] = useState(true)
-  const initializedRef = useRef(false)
-  const internalChangeRef = useRef(false)  // track changes originating from this editor
+  // Reset inline state when mode changes
+  useEffect(() => {
+    setEditingId(null)
+    setEditingSectionId(null)
+    setEditingEditionId(null)
+    setInsertPoint(null)
+    setInsertEditionId(null)
+    setPlusMenuPoint(null)
+    setPlusMenuEditionId(null)
+    setSectionInsertPoint(null)
+    setSectionInsertEditionId(null)
+  }, [mode])
 
   // Load follows for autocomplete
   useEffect(() => {
@@ -1068,7 +1543,7 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
     })
   }, [suggestTextPatterns])
 
-  // Re-parse when layoutText changes externally (e.g., switching from text editor)
+  // Re-parse when layoutText changes externally
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true
@@ -1081,42 +1556,239 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
     setState(parseLayoutToEditor(layoutText))
   }, [layoutText])
 
-  const updateEdition = (idx: number, updated: EditorEdition) => {
-    const editions = [...state.editions]
-    editions[idx] = updated
-    // Re-sort timed editions by time (ascending), keeping common edition(s) in place
+  // Build display name map
+  const displayNameMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const f of follows) {
+      if (f.displayName) {
+        map.set(f.username, f.displayName)
+      }
+    }
+    return map
+  }, [follows])
+
+  // --- State Update Helpers ---
+
+  const findEditionAndApply = (editionId: string, updater: (edition: EditorEdition) => EditorEdition) => {
+    const editions = state.editions.map(e =>
+      e.id === editionId ? updater(e) : e
+    )
+    // Re-sort timed editions by time
     const common = editions.filter(e => e.type === 'common')
     const timed = editions.filter(e => e.type === 'timed')
+    const tail = editions.filter(e => e.type === 'tail')
     timed.sort((a, b) => a.time.localeCompare(b.time))
-    setState({ ...state, editions: [...common, ...timed] })
+    setState({ ...state, editions: [...common, ...timed, ...tail] })
   }
 
-  const deleteEdition = (idx: number) => {
-    const editions = state.editions.filter((_, i) => i !== idx)
-    setState({ ...state, editions })
+  const addPatternToSection = (editionId: string, sectionId: string, afterPatternId: string | null, handle: string, textPattern: string) => {
+    const newPattern: EditorPattern = { id: makeId(), handle, textPattern }
+    findEditionAndApply(editionId, edition => ({
+      ...edition,
+      sections: edition.sections.map(s => {
+        if (s.id !== sectionId) return s
+        const patterns = [...s.patterns]
+        if (!afterPatternId) {
+          patterns.unshift(newPattern)
+        } else {
+          const idx = patterns.findIndex(p => p.id === afterPatternId)
+          patterns.splice(idx + 1, 0, newPattern)
+        }
+        return { ...s, patterns }
+      })
+    }))
   }
 
-  const addEdition = () => {
+  const updatePatternInSection = (editionId: string, sectionId: string, patternId: string, handle: string, textPattern: string) => {
+    findEditionAndApply(editionId, edition => ({
+      ...edition,
+      sections: edition.sections.map(s => {
+        if (s.id !== sectionId) return s
+        return {
+          ...s,
+          patterns: s.patterns.map(p =>
+            p.id === patternId ? { ...p, handle, textPattern } : p
+          )
+        }
+      })
+    }))
+    setEditingId(null)
+  }
+
+  const deletePatternFromSection = (editionId: string, sectionId: string, patternId: string) => {
+    if (!window.confirm('Delete this user entry?')) return
+    findEditionAndApply(editionId, edition => ({
+      ...edition,
+      sections: edition.sections.map(s => {
+        if (s.id !== sectionId) return s
+        return { ...s, patterns: s.patterns.filter(p => p.id !== patternId) }
+      })
+    }))
+  }
+
+  const movePatternInSection = (editionId: string, sectionId: string, patternId: string, direction: -1 | 1) => {
+    findEditionAndApply(editionId, edition => ({
+      ...edition,
+      sections: edition.sections.map(s => {
+        if (s.id !== sectionId) return s
+        const patterns = [...s.patterns]
+        const idx = patterns.findIndex(p => p.id === patternId)
+        const targetIdx = idx + direction
+        if (targetIdx < 0 || targetIdx >= patterns.length) return s
+        ;[patterns[idx], patterns[targetIdx]] = [patterns[targetIdx], patterns[idx]]
+        return { ...s, patterns }
+      })
+    }))
+  }
+
+  const addSectionToEdition = (editionId: string, afterSectionId: string | null, name: string) => {
+    const newSection: EditorSection = { id: makeId(), name, patterns: [], collapsed: false }
+    findEditionAndApply(editionId, edition => {
+      const sections = [...edition.sections]
+      if (!afterSectionId) {
+        // Insert after default section (index 0) if it exists
+        if (sections.length > 0 && sections[0].name === '') {
+          sections.splice(1, 0, newSection)
+        } else {
+          sections.unshift(newSection)
+        }
+      } else {
+        const idx = sections.findIndex(s => s.id === afterSectionId)
+        sections.splice(idx + 1, 0, newSection)
+      }
+      return { ...edition, sections }
+    })
+  }
+
+  const updateSectionInEdition = (editionId: string, sectionId: string, name: string) => {
+    findEditionAndApply(editionId, edition => ({
+      ...edition,
+      sections: edition.sections.map(s =>
+        s.id === sectionId ? { ...s, name } : s
+      )
+    }))
+    setEditingSectionId(null)
+  }
+
+  const deleteSectionFromEdition = (editionId: string, sectionId: string) => {
+    if (!window.confirm('Delete this section and all its users?')) return
+    findEditionAndApply(editionId, edition => ({
+      ...edition,
+      sections: edition.sections.filter(s => s.id !== sectionId)
+    }))
+  }
+
+  const moveSectionInEdition = (editionId: string, sectionId: string, direction: -1 | 1) => {
+    findEditionAndApply(editionId, edition => {
+      const sections = [...edition.sections]
+      const idx = sections.findIndex(s => s.id === sectionId)
+      const targetIdx = idx + direction
+      if (targetIdx < 0 || targetIdx >= sections.length) return edition
+      ;[sections[idx], sections[targetIdx]] = [sections[targetIdx], sections[idx]]
+      return { ...edition, sections }
+    })
+  }
+
+  const addEdition = (time: string, name: string) => {
     const newEdition: EditorEdition = {
       id: makeId(),
       type: 'timed',
-      time: '',
-      name: '',
+      time,
+      name,
       sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
       collapsed: false,
     }
-    setState({ ...state, editions: [...state.editions, newEdition] })
+    const common = state.editions.filter(e => e.type === 'common')
+    const timed = [...state.editions.filter(e => e.type === 'timed'), newEdition]
+    const tail = state.editions.filter(e => e.type === 'tail')
+    timed.sort((a, b) => a.time.localeCompare(b.time))
+    setState({ ...state, editions: [...common, ...timed, ...tail] })
+    setAddEditionTime('')
+    setShowAddEditionForm(false)
   }
 
-  const toggleAllSections = () => {
-    const collapse = allExpanded
-    const editions = state.editions.map(e => ({
-      ...e,
-      collapsed: collapse,
-      sections: e.sections.map(s => ({ ...s, collapsed: collapse })),
+  const updateEdition = (editionId: string, time: string, name: string) => {
+    findEditionAndApply(editionId, edition => ({
+      ...edition,
+      time,
+      name,
     }))
-    setState({ ...state, editions })
-    setAllExpanded(!allExpanded)
+    setEditingEditionId(null)
+  }
+
+  const deleteEdition = (editionId: string) => {
+    if (!window.confirm('Delete this edition and all its contents?')) return
+    setState({
+      ...state,
+      editions: state.editions.filter(e => e.id !== editionId)
+    })
+  }
+
+  // List import handler
+  const handleImportList = async (editionId: string, sectionId: string) => {
+    if (!agent) return
+    setImportTargetEditionId(editionId)
+    setImportTargetSectionId(sectionId)
+    setShowListPicker(true)
+    setLoadingLists(true)
+    try {
+      const userLists = await getUserLists(agent)
+      setLists(userLists)
+    } catch (err) {
+      alert(`Failed to fetch lists: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      setShowListPicker(false)
+    } finally {
+      setLoadingLists(false)
+    }
+  }
+
+  const handleSelectList = async (listUri: string, listName: string) => {
+    if (!agent || !importTargetEditionId || !importTargetSectionId) return
+    setImportingList(true)
+    try {
+      const handles = await getListMembers(agent, listUri)
+      if (handles.length === 0) {
+        alert(`No members found in "${listName}".`)
+        setShowListPicker(false)
+        setImportingList(false)
+        return
+      }
+
+      const followedHandles = new Set(follows.map(f => f.username))
+      const unfollowedCount = handles.filter(h => !followedHandles.has(h)).length
+
+      if (unfollowedCount > 0 || handles.length > 10) {
+        let message = `Import ${handles.length} users from "${listName}"?`
+        if (unfollowedCount > 0) {
+          message += `\n\nThere are ${unfollowedCount} unfollowed users in the list. You will need to follow them for their posts to be included in editions.`
+        }
+        if (!window.confirm(message)) {
+          setShowListPicker(false)
+          setImportingList(false)
+          return
+        }
+      }
+
+      const newPatterns: EditorPattern[] = handles.map(handle => ({
+        id: makeId(),
+        handle,
+        textPattern: '',
+      }))
+
+      findEditionAndApply(importTargetEditionId, edition => ({
+        ...edition,
+        sections: edition.sections.map(s => {
+          if (s.id !== importTargetSectionId) return s
+          return { ...s, patterns: [...s.patterns, ...newPatterns] }
+        })
+      }))
+
+      setShowListPicker(false)
+    } catch (err) {
+      alert(`Failed to import list: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setImportingList(false)
+    }
   }
 
   const handleSave = async () => {
@@ -1124,7 +1796,7 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
     await onSave(text)
   }
 
-  // Sync editor state to parent whenever it changes (so switching editors preserves edits)
+  // Sync editor state to parent whenever it changes
   useEffect(() => {
     if (!initializedRef.current) return
     if (onTextChange) {
@@ -1134,19 +1806,14 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
     }
   }, [state]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Deduplicate warnings for display; suppress "at least one user/topic" in visual editor
-  // since the user may still be building the layout — this is caught at save time instead
+  // Deduplicate warnings
   const uniqueWarnings = [...new Set(state.warnings)]
     .filter(w => !w.includes('at least one user/topic'))
+    .filter(w => !w.includes('TAIL section preserved as read-only'))
 
-  // Separate common and timed editions
-  const commonEdition = state.editions.find(e => e.type === 'common')
-  const timedEditions = state.editions.filter(e => e.type === 'timed')
-
-  const activeSuggestions = suggestTextPatterns ? suggestionsByHandle : undefined
-
-  // Detect empty layout: no timed editions means no editions will ever be assembled
   const hasTimedEditions = state.editions.some(e => e.type === 'timed')
+
+  // Empty state: prompt for edition times
   const [timesInput, setTimesInput] = useState('')
   const [timesError, setTimesError] = useState('')
 
@@ -1181,10 +1848,8 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
       validTimes.push(part)
     }
 
-    // Sort chronologically
     validTimes.sort((a, b) => a.localeCompare(b))
 
-    // Create new timed editions
     const newTimedEditions: EditorEdition[] = validTimes.map(time => ({
       id: makeId(),
       type: 'timed' as const,
@@ -1194,32 +1859,33 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
       collapsed: false,
     }))
 
-    // If layoutText is blank, start fresh; otherwise preserve existing parsed state
     let newState: EditorState
     if (!layoutText.trim()) {
       newState = {
-        editions: [makeEmptyCommon(), ...newTimedEditions],
+        editions: [makeEmptyCommon(), ...newTimedEditions, makeEmptyTail()],
         warnings: [],
       }
     } else {
       const existingCommon = state.editions.filter(e => e.type === 'common')
       const existingTimed = state.editions.filter(e => e.type === 'timed')
+      const existingTail = state.editions.filter(e => e.type === 'tail')
       const allTimed = [...existingTimed, ...newTimedEditions].sort((a, b) => a.time.localeCompare(b.time))
-      newState = { ...state, editions: [...existingCommon, ...allTimed] }
+      newState = { ...state, editions: [...existingCommon, ...allTimed, ...(existingTail.length > 0 ? existingTail : [makeEmptyTail()])] }
     }
 
     setState(newState)
     setTimesInput('')
   }
 
+  const activeSuggestions = suggestTextPatterns ? suggestionsByHandle : undefined
+
   return (
     <div className="space-y-4">
-      {/* Header content (Switch to Text Editor button) — always shown */}
-      <div>{headerContent}</div>
-
       {!hasTimedEditions ? (
         /* Empty state: prompt for edition times */
         <div className="space-y-3">
+          {/* Header content always shown */}
+          <div>{headerContent}</div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
             Enter one or more edition times (24-hr hh:mm format, comma-separated):
           </label>
@@ -1247,26 +1913,20 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
       ) : (
         /* Full editor UI */
         <>
-          {/* Header row: toggle + suggest checkbox */}
-          <div className="flex items-center justify-end">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={toggleAllSections}
-                className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
-              >
-                {allExpanded ? 'Close Sections' : 'Open Sections'}
-              </button>
-              <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={suggestTextPatterns}
-                  onChange={(e) => setSuggestTextPatterns(e.target.checked)}
-                  className="rounded"
-                />
-                Suggest topics
-              </label>
-            </div>
-          </div>
+          {/* Toolbar */}
+          <EditorToolbar
+            mode={mode}
+            onModeChange={setMode}
+            suggestTextPatterns={suggestTextPatterns}
+            onSuggestTextPatternsChange={setSuggestTextPatterns}
+            addEditionTime={addEditionTime}
+            onAddEditionTimeChange={setAddEditionTime}
+            showAddEditionForm={showAddEditionForm}
+            onToggleAddEditionForm={() => setShowAddEditionForm(!showAddEditionForm)}
+            onAddEdition={addEdition}
+            usedTimes={new Set(state.editions.filter(e => e.type === 'timed').map(e => e.time))}
+            headerContent={headerContent}
+          />
 
           {/* Warnings */}
           {uniqueWarnings.length > 0 && (
@@ -1280,49 +1940,104 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
             </div>
           )}
 
-          {/* Common patterns card */}
-          {commonEdition && (
-            <EditionCard
-              edition={commonEdition}
-              follows={follows}
-              suggestionsByHandle={activeSuggestions}
-              onUpdate={(updated) => updateEdition(state.editions.indexOf(commonEdition), updated)}
-            />
-          )}
-
-          {/* Timed edition cards */}
-          {timedEditions.map((edition) => {
-            const editionIdx = state.editions.indexOf(edition)
-            return (
-              <EditionCard
+          {/* Newspaper Layout */}
+          <div className="max-w-2xl rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-5 py-4 shadow-sm" style={{ boxShadow: 'inset 0 0 12px 2px rgba(180, 160, 120, 0.12), 0 1px 3px 0 rgba(0, 0, 0, 0.05)' }}>
+            {state.editions.map((edition) => (
+              <NewspaperEdition
                 key={edition.id}
                 edition={edition}
+                displayNameMap={displayNameMap}
+                mode={mode}
+                editingId={editingId}
+                editingSectionId={editingSectionId}
+                editingEditionId={editingEditionId}
                 follows={follows}
                 suggestionsByHandle={activeSuggestions}
-                onUpdate={(updated) => updateEdition(editionIdx, updated)}
-                onDelete={() => deleteEdition(editionIdx)}
+                usedTimes={new Set(state.editions.filter(e => e.type === 'timed').map(e => e.time))}
+                insertPoint={insertPoint}
+                insertEditionId={insertEditionId}
+                plusMenuPoint={plusMenuPoint}
+                plusMenuEditionId={plusMenuEditionId}
+                sectionInsertPoint={sectionInsertPoint}
+                sectionInsertEditionId={sectionInsertEditionId}
+                onSetInsertPoint={(edId, point) => { setInsertEditionId(edId); setInsertPoint(point) }}
+                onSetPlusMenuPoint={(edId, point) => { setPlusMenuEditionId(edId); setPlusMenuPoint(point) }}
+                onSetSectionInsertPoint={(edId, point) => { setSectionInsertEditionId(edId); setSectionInsertPoint(point) }}
+                onAddPattern={addPatternToSection}
+                onImportList={handleImportList}
+                onStartEditPattern={(patternId) => setEditingId(patternId)}
+                onSaveEditPattern={updatePatternInSection}
+                onCancelEditPattern={() => setEditingId(null)}
+                onDeletePattern={deletePatternFromSection}
+                onMovePattern={movePatternInSection}
+                onStartEditSection={(sectionId) => setEditingSectionId(sectionId)}
+                onSaveEditSection={(editionId, sectionId, name) => {
+                  if (sectionId === '__new__') {
+                    // Adding new section - find the insert point
+                    const afterSectionId = sectionInsertPoint === 'top' ? null : sectionInsertPoint
+                    addSectionToEdition(editionId, afterSectionId, name)
+                    setSectionInsertPoint(null)
+                    setSectionInsertEditionId(null)
+                  } else {
+                    updateSectionInEdition(editionId, sectionId, name)
+                  }
+                }}
+                onCancelEditSection={() => {
+                  setEditingSectionId(null)
+                  setSectionInsertPoint(null)
+                  setSectionInsertEditionId(null)
+                }}
+                onDeleteSection={deleteSectionFromEdition}
+                onMoveSection={moveSectionInEdition}
+                onAddSection={(editionId, afterSectionId) => {
+                  setSectionInsertEditionId(editionId)
+                  setSectionInsertPoint(afterSectionId || 'top')
+                }}
+                onStartEditEdition={() => setEditingEditionId(edition.id)}
+                onSaveEditEdition={(time, name) => updateEdition(edition.id, time, name)}
+                onCancelEditEdition={() => setEditingEditionId(null)}
+                onDeleteEdition={() => deleteEdition(edition.id)}
+                fontClass={editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}
               />
-            )
-          })}
+            ))}
+          </div>
 
-          {/* Add edition button */}
-          <button
-            type="button"
-            onClick={addEdition}
-            className="text-blue-600 dark:text-blue-400 text-sm hover:underline"
-          >
-            + Add Edition
-          </button>
-
-          {/* Read-only TAIL */}
-          {state.preservedTail && (
-            <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-              <div className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-sm font-medium text-gray-500 dark:text-gray-400">
-                TAIL (read-only)
+          {/* List Picker Overlay */}
+          {showListPicker && (
+            <div
+              ref={listPickerRef}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-xl max-h-80 overflow-y-auto min-w-[250px] p-2"
+            >
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300 px-2 py-1 mb-1">
+                Select a list to import:
               </div>
-              <pre className="px-4 py-3 text-sm font-mono text-gray-500 dark:text-gray-400 whitespace-pre-wrap">
-                {state.preservedTail}
-              </pre>
+              {loadingLists || importingList ? (
+                <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                  {importingList ? 'Importing...' : 'Loading lists...'}
+                </div>
+              ) : lists.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                  No lists found
+                </div>
+              ) : (
+                lists.map(list => (
+                  <button
+                    key={list.uri}
+                    type="button"
+                    onClick={() => handleSelectList(list.uri, list.name)}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 rounded"
+                  >
+                    {list.name}
+                  </button>
+                ))
+              )}
+              <button
+                type="button"
+                onClick={() => setShowListPicker(false)}
+                className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mt-1"
+              >
+                Cancel
+              </button>
             </div>
           )}
 

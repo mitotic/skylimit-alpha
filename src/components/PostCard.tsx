@@ -55,9 +55,13 @@ interface PostCardProps {
    * If true, use stacked layout with avatar+header on top and full-width body below (for thread anchor posts)
    */
   stackedLayout?: boolean
+  /** If true, use newspaper view layout (avatar + display name only, side actions) */
+  newspaperView?: boolean
+  /** Font family for edition layout display */
+  editionFont?: 'serif' | 'sans-serif'
 }
 
-export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, onDeletePost, onPinPost, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false }: PostCardProps) {
+export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, onDeletePost, onPinPost, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false, newspaperView = false, editionFont }: PostCardProps) {
   const navigate = useNavigate()
   const { session } = useSession()
   const { theme } = useTheme()
@@ -440,7 +444,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   timezone={followInfo?.timezone}
                   onNavigateToSettings={() => {
                     setShowPopup(false)
-                    navigate('/settings?tab=curation')
+                    navigate('/settings?tab=editions')
                   }}
                   onClose={() => setShowPopup(false)}
                 />
@@ -451,13 +455,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       )}
       
       {/* Counter for periodic edition posts (repost header hidden, counter shown at top right) */}
-      {isEditionPost && showCounterDisplay && curation && (
+      {isEditionPost && !newspaperView && showCounterDisplay && curation && (
         <div className="px-4 pt-2 flex justify-end items-center gap-1 relative">
-          {showTime && (
-            <span className="text-gray-500 dark:text-gray-400">
-              {getTimeInTimezone(postedAt, settingsTimezone)}{settingsTimezone && timezonesAreDifferent(settingsTimezone, getBrowserTimezone()) ? ` ${getTimezoneAbbreviation(settingsTimezone)}` : ''}
-            </span>
-          )}
           <button
             ref={repostCounterButtonRef}
             onClick={handleCounterClick}
@@ -496,6 +495,103 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         </div>
       )}
 
+      {/* Newspaper view layout for edition posts */}
+      {newspaperView && isEditionPost ? (
+        <div
+          className="flex p-4 min-h-[160px]"
+          onClick={handlePostClick}
+          style={{ cursor: 'pointer' }}
+        >
+          {/* Left: main content area */}
+          <div className="flex-1 min-w-0">
+            {/* Header: display name + post number (no avatar in newspaper view) */}
+            <div className="flex items-center gap-2 mb-2">
+              <span
+                onClick={handleAuthorClick}
+                className={`font-semibold hover:underline cursor-pointer truncate ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}
+              >
+                {author.displayName || author.handle}
+              </span>
+              {/* Post number at right end of header */}
+              {showCounterDisplay && curation && (
+                <span className="ml-auto flex items-center gap-1 flex-shrink-0">
+                  <button
+                    ref={repostCounterButtonRef}
+                    onClick={handleCounterClick}
+                    className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer"
+                    title="Click for edition curation info"
+                  >
+                    {formatCounterDisplay(postNumber)}
+                  </button>
+                  <span className="w-3 inline-block text-center text-gray-500 dark:text-gray-400 text-xs">{isViewedOld ? '✔' : ''}</span>
+                </span>
+              )}
+            </div>
+
+            {/* Post body with edition font */}
+            {record?.text && (
+              <div
+                className={`mb-2 whitespace-pre-wrap break-words ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}
+                style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
+              >
+                <RichText text={record.text} facets={record.facets} />
+              </div>
+            )}
+
+            {embed && (
+              <div className="mb-2">
+                <PostMedia embed={embed as any} newspaperView={true} editionFont={editionFont} />
+              </div>
+            )}
+          </div>
+
+          {/* Right: vertical actions column */}
+          <div className="flex-shrink-0 pl-3 ml-3 border-l border-gray-200 dark:border-gray-700">
+            <PostActions
+              post={actualPost}
+              author={actualPost.author}
+              isOwnPost={actualPost.author?.did === session?.did}
+              onReply={onReply}
+              onRepost={onRepost}
+              onQuotePost={onQuotePost}
+              onLike={onLike}
+              onBookmark={onBookmark}
+              onDeletePost={onDeletePost}
+              onPinPost={onPinPost}
+              verticalLayout={true}
+            />
+          </div>
+
+          {/* Curation popup for newspaper view */}
+          {showPopup && curation && (
+            <CurationPopup
+              ref={popupRef}
+              displayName={popupAuthor.displayName || ''}
+              handle={popupAuthor.handle}
+              popupPosition={popupPosition}
+              anchorRect={popupAnchorRect || undefined}
+              editionMode={true}
+              postTimestamp={postedAt.getTime()}
+              postProperties={{ rawPostNumber: null, viewedAt: curation?.viewedAt }}
+              editedPerDay={userEntry?.edited_daily}
+              matchingPattern={curation.matching_pattern}
+              showAmpButtons={false}
+              onAmpUp={() => {}}
+              onAmpDown={() => {}}
+              ampLoading={false}
+              debugMode={debugMode}
+              followedAt={followInfo?.followed_at}
+              timezone={followInfo?.timezone}
+              onNavigateToSettings={() => {
+                setShowPopup(false)
+                navigate('/settings?tab=editions')
+              }}
+              onClose={() => setShowPopup(false)}
+            />
+          )}
+        </div>
+      ) : (
+      <>
       {/* Show root post if this is a reply (but not in thread views where context is already shown, and not for dropped posts) */}
       {isReply && rootUri && showRootPost && !isStatusDrop(curation?.curation_status) && (
         <RootPost rootUri={rootUri} isDirectReply={isDirectReply} />
@@ -507,7 +603,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         style={{ cursor: 'pointer' }}
       >
         {/* Counter for regular posts (not replies, not reposts) - show at top right */}
-        {showCounterDisplay && !isReposted && !isReply && (
+        {showCounterDisplay && !isReposted && !isReply && !isEditionPost && (
           <>
             <div className="absolute top-4 right-4 z-10 flex items-center gap-1">
               {/* Time display - controlled by showTime setting */}
@@ -566,7 +662,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 timezone={followInfo?.timezone}
                 onNavigateToSettings={() => {
                   setShowPopup(false)
-                  navigate('/settings?tab=curation')
+                  navigate('/settings?tab=editions')
                 }}
                 onClose={() => setShowPopup(false)}
               />
@@ -644,7 +740,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               </>
             )}
             {/* Counter for replies - show on same line as author name */}
-            {isReply && showCounterDisplay && !isReposted && (
+            {isReply && showCounterDisplay && !isReposted && !isEditionPost && (
               <>
                 <span className="ml-auto flex items-center gap-1">
                   {/* Time display - controlled by showTime setting */}
@@ -702,7 +798,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     timezone={followInfo?.timezone}
                     onNavigateToSettings={() => {
                       setShowPopup(false)
-                      navigate('/settings?tab=curation')
+                      navigate('/settings?tab=editions')
                     }}
                     onClose={() => setShowPopup(false)}
                   />
@@ -741,6 +837,8 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           />
         </div>
       </div>
+      </>
+      )}
     </article>
   )
 }

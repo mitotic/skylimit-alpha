@@ -15,9 +15,13 @@ interface PostMediaProps {
   embed: EmbedView | any
   maxDepth?: number
   depth?: number
+  /** If true, hide engagement counts and secondary info in embedded posts (newspaper view) */
+  newspaperView?: boolean
+  /** Font family for newspaper view display */
+  editionFont?: 'serif' | 'sans-serif'
 }
 
-export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaProps) {
+export default function PostMedia({ embed, maxDepth = 1, depth = 0, newspaperView = false, editionFont }: PostMediaProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
 
   // Handle images
@@ -161,7 +165,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
     }
     return (
       <div>
-        <QuotedPost record={embed as any} maxDepth={maxDepth} depth={depth} />
+        <QuotedPost record={embed as any} maxDepth={maxDepth} depth={depth} newspaperView={newspaperView} editionFont={editionFont} />
       </div>
     )
   }
@@ -173,7 +177,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
       <div>
         {recordWithMedia.media && (
           <div>
-            <PostMedia embed={recordWithMedia.media} maxDepth={maxDepth} depth={depth} />
+            <PostMedia embed={recordWithMedia.media} maxDepth={maxDepth} depth={depth} newspaperView={newspaperView} editionFont={editionFont} />
           </div>
         )}
         {recordWithMedia.record && (
@@ -185,7 +189,7 @@ export default function PostMedia({ embed, maxDepth = 1, depth = 0 }: PostMediaP
                 </p>
               </div>
             ) : (
-              <QuotedPost record={recordWithMedia.record} maxDepth={maxDepth} depth={depth} />
+              <QuotedPost record={recordWithMedia.record} maxDepth={maxDepth} depth={depth} newspaperView={newspaperView} editionFont={editionFont} />
             )}
           </div>
         )}

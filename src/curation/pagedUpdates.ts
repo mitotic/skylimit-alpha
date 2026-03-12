@@ -38,6 +38,7 @@ export interface ProbeResult {
   newestProbeTimestamp: number // Timestamp of newest probed post (after cache filtering)
   rawOldestTimestamp: number   // Timestamp of oldest raw post from API
   rawNewestTimestamp: number   // Timestamp of newest raw post from API
+  hasGap: boolean             // True if probe didn't reach stopTimestamp (counts may be underestimates)
 }
 
 /**
@@ -77,6 +78,7 @@ export function calculatePageRaw(
  * @param myUsername - Current user's username
  * @param myDid - Current user's DID
  * @param newestDisplayedTimestamp - Timestamp of newest displayed post (only count posts newer than this)
+ * @param stopTimestamp - If provided, stop looking back at this timestamp (posts already counted in prior probes)
  * @returns ProbeResult with availability information
  */
 export async function probeForNewPosts(
@@ -84,7 +86,8 @@ export async function probeForNewPosts(
   pageRaw: number,
   myUsername: string,
   myDid: string,
-  newestDisplayedTimestamp: number  // Defines "today" for midnight boundary calculation
+  newestDisplayedTimestamp: number,  // Defines "today" for midnight boundary calculation
+  stopTimestamp?: number  // Stop boundary from prior probes — posts at or before this were already counted
 ): Promise<ProbeResult> {
   const result: ProbeResult = {
     hasFullPage: false,
@@ -97,6 +100,7 @@ export async function probeForNewPosts(
     newestProbeTimestamp: 0,
     rawOldestTimestamp: Number.MAX_SAFE_INTEGER,
     rawNewestTimestamp: 0,
+    hasGap: false,
   }
 
   try {
@@ -111,19 +115,33 @@ export async function probeForNewPosts(
       return result
     }
 
-    // Adaptive fetch: if many posts in the initial batch are already cached,
-    // the probe is undersampling new posts. Fetch a second batch for better accuracy.
+    // Adaptive fetch: check if the initial batch reached the stopTimestamp boundary.
+    // If not, fetch a second batch to try to close the gap.
     if (initialFeed.length >= pageRaw && cursor) {
-      let cachedInSample = 0
-      for (const post of initialFeed) {
-        if (cachedPostIds.has(getPostUniqueId(post))) {
-          cachedInSample++
+      let reachedBoundary = false
+      if (stopTimestamp) {
+        // Check if any post in the initial batch is at or before the stop boundary
+        for (const post of initialFeed) {
+          const ts = getFeedViewPostTimestamp(post).getTime()
+          if (ts <= stopTimestamp) {
+            reachedBoundary = true
+            break
+          }
         }
       }
-      if (cachedInSample > initialFeed.length / 2) {
-        log.verbose('Probe', `High cache-hit rate (${cachedInSample}/${initialFeed.length}), fetching additional batch`)
-        const { feed: moreFeed } = await getHomeFeed(agent, { limit: pageRaw, cursor })
-        feed = [...feed, ...moreFeed]
+      if (!reachedBoundary) {
+        // Also check cache-hit rate as a secondary signal
+        let cachedInSample = 0
+        for (const post of initialFeed) {
+          if (cachedPostIds.has(getPostUniqueId(post))) {
+            cachedInSample++
+          }
+        }
+        if (stopTimestamp || cachedInSample > initialFeed.length / 2) {
+          log.verbose('Probe', `Fetching additional batch (stopBoundary=${stopTimestamp ? 'not reached' : 'none'}, cacheHits=${cachedInSample}/${initialFeed.length})`)
+          const { feed: moreFeed } = await getHomeFeed(agent, { limit: pageRaw, cursor })
+          feed = [...feed, ...moreFeed]
+        }
       }
     }
 
@@ -222,6 +240,8 @@ export async function probeForNewPosts(
     const sameDayPosts: { post: AppBskyFeedDefs.FeedViewPost; timestamp: number }[] = []
     const nextDayPosts: { post: AppBskyFeedDefs.FeedViewPost; timestamp: number }[] = []
 
+    let reachedStopBoundary = false
+
     for (const post of feed) {
       // Get post unique ID and skip if already in cache
       const postUniqueId = getPostUniqueId(post)
@@ -231,6 +251,12 @@ export async function probeForNewPosts(
 
       // Get post timestamp (use repost time for reposts)
       const postTimestamp = getFeedViewPostTimestamp(post).getTime()
+
+      // Stop if we've reached the boundary from prior probes
+      if (stopTimestamp && postTimestamp <= stopTimestamp) {
+        reachedStopBoundary = true
+        continue  // Continue to check remaining posts for raw timestamp tracking
+      }
 
       // Categorize by midnight boundary
       if (postTimestamp < nextDayMidnightMs) {
@@ -265,6 +291,13 @@ export async function probeForNewPosts(
         log.warn('Probe', `WARNING: Probed posts span midnight boundary! ` +
           `Newest: ${newestDate.toLocaleString()}, Oldest: ${oldestDate.toLocaleString()}`)
       }
+    }
+
+    // Gap detection: if stopTimestamp was provided but we never reached it,
+    // there are unprobed posts in the middle — counts may be underestimates
+    if (stopTimestamp && !reachedStopBoundary) {
+      result.hasGap = true
+      log.verbose('Probe', `Gap detected: probe didn't reach stopTimestamp ${new Date(stopTimestamp).toLocaleTimeString()}`)
     }
 
     // Check page availability

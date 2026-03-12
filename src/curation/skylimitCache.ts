@@ -1380,3 +1380,70 @@ export async function clearAllTimeVariantDataAndLogout(): Promise<void> {
   window.location.href = '/login'
 }
 
+// --- Storage usage utilities ---
+
+export interface StorageUsage {
+  localStorageBytes: number
+  sessionStorageBytes: number
+  indexedDBBytes: number | null
+  indexedDBQuota: number | null
+  storeRecordCounts: Record<string, number>
+}
+
+function measureWebStorage(storage: Storage): number {
+  let bytes = 0
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i)!
+    bytes += (key.length + storage.getItem(key)!.length) * 2 // UTF-16
+  }
+  return bytes
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export async function getStorageUsage(): Promise<StorageUsage> {
+  const localStorageBytes = measureWebStorage(localStorage)
+  const sessionStorageBytes = measureWebStorage(sessionStorage)
+
+  let indexedDBBytes: number | null = null
+  let indexedDBQuota: number | null = null
+  if (navigator.storage?.estimate) {
+    try {
+      const estimate = await navigator.storage.estimate()
+      indexedDBBytes = estimate.usage ?? null
+      indexedDBQuota = estimate.quota ?? null
+    } catch {
+      // estimate() not available or failed
+    }
+  }
+
+  // Count records per store
+  const storeRecordCounts: Record<string, number> = {}
+  const allStores = [
+    STORE_POST_SUMMARIES, 'feed_cache', STORE_FOLLOWS,
+    STORE_PARENT_POSTS, STORE_FILTER, 'feed_metadata', STORE_SETTINGS
+  ]
+
+  try {
+    const database = await getDB()
+    for (const storeName of allStores) {
+      if (!database.objectStoreNames.contains(storeName)) continue
+      const count = await new Promise<number>((resolve, reject) => {
+        const tx = database.transaction([storeName], 'readonly')
+        const req = tx.objectStore(storeName).count()
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      storeRecordCounts[storeName] = count
+    }
+  } catch (error) {
+    log.warn('StorageUsage', 'Failed to count store records:', error)
+  }
+
+  return { localStorageBytes, sessionStorageBytes, indexedDBBytes, indexedDBQuota, storeRecordCounts }
+}
+

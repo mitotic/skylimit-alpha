@@ -71,6 +71,10 @@ export default function EditionView({
   const [editionLoading, setEditionLoading] = useState(false)
   const [hasLayout, setHasLayout] = useState(true)
 
+  // Newspaper view settings
+  const [newspaperView, setNewspaperView] = useState(false)
+  const [editionFont, setEditionFont] = useState<'serif' | 'sans-serif'>('serif')
+
   // Edition list popup
   const [showEditionList, setShowEditionList] = useState(false)
   const titleRef = useRef<HTMLButtonElement>(null)
@@ -88,6 +92,10 @@ export default function EditionView({
       try {
         // Check if edition layout is configured
         const settings = await getSettings()
+        if (!cancelled) {
+          setNewspaperView(settings.newspaperView || false)
+          setEditionFont(settings.editionFont || 'serif')
+        }
         if (!settings.editionLayout?.trim()) {
           if (!cancelled) setHasLayout(false)
           return
@@ -137,6 +145,11 @@ export default function EditionView({
       try {
         const content = await getEditionContent(entry, agent)
         if (cancelled) return
+        if (!content) {
+          log.warn('Edition', `Edition content unavailable for ${entry.editionKey} (${entry.editionName}): ` +
+            `range=${new Date(entry.startPostTimestamp).toLocaleString()}–${new Date(entry.endPostTimestamp).toLocaleString()}, ` +
+            `created=${new Date(entry.createdAt).toLocaleString()}`)
+        }
         setCurrentEdition(content)
 
         // Mark this edition as viewed in the registry
@@ -369,10 +382,19 @@ export default function EditionView({
     )
   }
 
-  if (editionLoading || !edition) {
+  if (editionLoading) {
     return (
       <div className="text-center py-12 text-gray-500 dark:text-gray-400">
         <p>Loading edition...</p>
+      </div>
+    )
+  }
+
+  if (!edition) {
+    return (
+      <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+        <p className="text-lg font-medium mb-2">Edition Unavailable</p>
+        <p>The content for this edition could not be loaded.</p>
       </div>
     )
   }
@@ -505,6 +527,8 @@ export default function EditionView({
               onBookmark={onBookmark}
               onDeletePost={onDeletePost}
               onPinPost={onPinPost}
+              newspaperView={newspaperView}
+              editionFont={editionFont}
             />
           </div>
         )
@@ -546,6 +570,8 @@ export default function EditionView({
                   onQuotePost={onQuotePost}
                   onLike={onLike}
                   onBookmark={onBookmark}
+                  newspaperView={newspaperView}
+                  editionFont={editionFont}
                 />
               </div>
             )

@@ -132,6 +132,11 @@ export default function HomePage() {
     lookupCurationAndFilter,
     forceProbeRef,
     setForceProbeTrigger,
+    probeBoundaryTimestampRef,
+    unprocessedRawCountRef,
+    unprocessedShowCountRef,
+    probeHasGapRef,
+    idleTimerForcedRef,
   } = pipeline
 
   const {
@@ -337,6 +342,21 @@ export default function HomePage() {
         setPostsNeededForPage(null)
         setFeedTopTrimmed(null)
 
+        // Fetch replaces accumulated probe counts (fetch is authoritative)
+        const totalRaw = fetchResult.entries.length
+        const remainingRaw = totalRaw - (transferResult.postsTransferred || 0)
+        unprocessedShowCountRef.current = remaining > 0 ? remaining : 0
+        unprocessedRawCountRef.current = remainingRaw > 0 ? remainingRaw : 0
+        // Update probe boundary to include fetch's newest timestamp
+        if (fetchResult.newestTimestamp) {
+          probeBoundaryTimestampRef.current = Math.max(
+            probeBoundaryTimestampRef.current ?? 0,
+            fetchResult.newestTimestamp
+          )
+        }
+        // Reset gap since fetch is authoritative
+        probeHasGapRef.current = false
+
         if (remaining > 0) {
           // More posts available — immediately enable buttons without waiting for probe
           setNextPageReady(true)
@@ -349,13 +369,18 @@ export default function HomePage() {
             setIdleTimerTriggered(true)
           }
           // Don't set lastDisplayTimeRef — avoid cooldown blocking immediate re-load
-          log.debug('New Posts', `SINGLE PAGE: ${remaining} posts remaining — buttons updated immediately`)
+          log.debug('New Posts', `SINGLE PAGE: ${remaining} posts remaining — probe refs updated (show=${remaining}, raw=${remainingRaw})`)
         } else {
           setNextPageReady(false)
           setPartialPageCount(0)
           setMultiPageCount(0)
           setIdleTimerTriggered(false)
+          idleTimerForcedRef.current = false
           lastDisplayTimeRef.current = clientNow()
+          // Full reset — nothing remaining
+          probeBoundaryTimestampRef.current = null
+          unprocessedRawCountRef.current = 0
+          unprocessedShowCountRef.current = 0
         }
 
         if (fetchResult.newestTimestamp) {
@@ -467,9 +492,16 @@ export default function HomePage() {
         setNextPageReady(false)
         setPartialPageCount(0)
         setIdleTimerTriggered(false)
+        idleTimerForcedRef.current = false
         setMultiPageCount(0)
         setFeedTopTrimmed(null)
         lastDisplayTimeRef.current = clientNow()
+
+        // Full reset of probe boundary state — all posts displayed
+        probeBoundaryTimestampRef.current = null
+        unprocessedRawCountRef.current = 0
+        unprocessedShowCountRef.current = 0
+        probeHasGapRef.current = false
 
         if (fetchResult.newestTimestamp) {
           const result = await refreshDisplayedFeed({
@@ -504,6 +536,7 @@ export default function HomePage() {
       log.debug('New Posts', `PARTIAL PAGE: ${partialPageCount} posts, using single page flow`)
       await handleLoadNewPosts()
       setIdleTimerTriggered(false)
+      idleTimerForcedRef.current = false
     }
   }, [agent, session, isLoadingMore, multiPageCount, partialPageCount, handleLoadNewPosts, newestDisplayedPostTimestamp, refreshDisplayedFeed, lookingBack])
 
@@ -1193,7 +1226,7 @@ export default function HomePage() {
                     ) : (
                       <>
                         <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
-                        New posts ({partialPageCount}+)
+                        New posts ({partialPageCount}{probeHasGapRef.current ? '+' : ''})
                       </>
                     )}
                   </button>
@@ -1220,7 +1253,7 @@ export default function HomePage() {
                     ) : (
                       <>
                         <svg className="w-4 h-4 inline-block" viewBox="0 0 24 24" fill="currentColor"><polygon points="4,21 12,11 20,21" /><polygon points="4,13 12,3 20,13" /></svg>
-                        All new posts ({multiPageCount}+)
+                        All new posts ({multiPageCount}{probeHasGapRef.current ? '+' : ''})
                       </>
                     )}
                   </button>

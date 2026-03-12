@@ -127,7 +127,7 @@ export function editorUserToProfileView(user: EditorUser): AppBskyActorDefs.Prof
  * Validate a section name: letters, numbers, spaces, and hyphens.
  * Must start and end with a letter or number.
  */
-function isValidSectionName(name: string): boolean {
+export function isValidSectionName(name: string): boolean {
   return /^[A-Za-z0-9]([A-Za-z0-9 \-]*[A-Za-z0-9])?$/.test(name)
 }
 
@@ -599,4 +599,353 @@ export async function getParsedEditions(): Promise<ParsedEditions> {
 export function invalidateEditionsCache(): void {
   cachedParsedEditions = null
   cachedEditionText = null
+}
+
+// --- Edition Match types and helpers ---
+
+export interface EditionMatch {
+  editionName: string   // e.g., "08:00 Morning" or "(default)" for HEAD
+  sectionName: string   // e.g., "Tech" or "(default)"
+  textPatterns: string  // e.g., "#tech, ai*" or ""
+  lineIndex: number     // line number in the raw text (0-based) for editing/removal
+  rawLine: string       // the full raw line
+}
+
+/**
+ * Find all edition layout lines that exactly match a user handle.
+ * Scans the raw layout text line-by-line, tracking edition/section context.
+ */
+export function findEditionMatchesForUser(editionLayout: string, handle: string): EditionMatch[] {
+  if (!editionLayout?.trim()) return []
+
+  const lines = editionLayout.split('\n')
+  const matches: EditionMatch[] = []
+  let currentEditionName = '(default)'
+  let currentSectionName = '(default)'
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    // Edition header
+    if (line.startsWith('# ') && !line.startsWith('## ')) {
+      if (/^#\s+HEAD\s*$/i.test(line)) {
+        currentEditionName = '(default)'
+      } else if (/^#\s+TAIL\s*$/i.test(line)) {
+        currentEditionName = 'Tail'
+      } else {
+        const headerMatch = line.match(/^#\s+(\d{2}:\d{2})(?:\s+(.+))?/)
+        if (headerMatch) {
+          currentEditionName = headerMatch[2]?.trim() || `${headerMatch[1]} Edition`
+        }
+      }
+      currentSectionName = '(default)'
+      continue
+    }
+
+    // Section header
+    if (line.startsWith('## ')) {
+      currentSectionName = line.substring(3).trim() || '(default)'
+      continue
+    }
+
+    // Pattern line: @userpattern or @userpattern: textpatterns
+    if (line.startsWith('@')) {
+      const content = line.substring(1).trim()
+      const colonIdx = content.indexOf(':')
+      const userPattern = colonIdx >= 0 ? content.substring(0, colonIdx).trim() : content.trim()
+      const textPatternsStr = colonIdx >= 0 ? content.substring(colonIdx + 1).trim() : ''
+
+      if (userPattern === handle) {
+        matches.push({
+          editionName: currentEditionName,
+          sectionName: currentSectionName,
+          textPatterns: textPatternsStr,
+          lineIndex: i,
+          rawLine: lines[i],
+        })
+      }
+    }
+  }
+
+  return matches
+}
+
+/**
+ * Extract editions and their sections from raw layout text for dropdown population.
+ * Lightweight line scanner — does not validate, just extracts structure.
+ */
+export interface LayoutEditionInfo {
+  editionName: string    // display name, e.g., "Morning" or "(default)" for HEAD, "Tail" for TAIL
+  editionTime: string    // "hh:mm" or "" for HEAD/TAIL
+  isHead: boolean
+  isTail: boolean
+  sectionNames: string[] // ["(default)", "Tech", ...] — (default) first if implicit default section exists
+}
+
+export function getEditionsFromLayout(editionLayout: string): LayoutEditionInfo[] {
+  if (!editionLayout?.trim()) return []
+
+  const lines = editionLayout.split('\n')
+  const editions: LayoutEditionInfo[] = []
+  let current: LayoutEditionInfo | null = null
+  let hasDefaultSection = false  // patterns seen before any ## in current edition
+
+  const finishEdition = () => {
+    if (current) {
+      if (hasDefaultSection || current.sectionNames.length === 0) {
+        current.sectionNames.unshift('(default)')
+      }
+      editions.push(current)
+    }
+  }
+
+  // Start with implicit HEAD edition
+  current = { editionName: '(default)', editionTime: '', isHead: true, isTail: false, sectionNames: [] }
+  hasDefaultSection = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    // Edition header
+    if (trimmed.startsWith('# ') && !trimmed.startsWith('## ')) {
+      if (/^#\s+HEAD\s*$/i.test(trimmed)) {
+        // HEAD is a no-op marker — current is already HEAD
+        continue
+      }
+
+      finishEdition()
+      hasDefaultSection = false
+
+      if (/^#\s+TAIL\s*$/i.test(trimmed)) {
+        current = { editionName: 'Tail', editionTime: '', isHead: false, isTail: true, sectionNames: [] }
+      } else {
+        const headerMatch = trimmed.match(/^#\s+(\d{2}:\d{2})(?:\s+(.+))?/)
+        if (headerMatch) {
+          const time = headerMatch[1]
+          const name = headerMatch[2]?.trim() || `${time} Edition`
+          current = { editionName: name, editionTime: time, isHead: false, isTail: false, sectionNames: [] }
+        }
+      }
+      continue
+    }
+
+    // Section header
+    if (trimmed.startsWith('## ')) {
+      const sectionName = trimmed.substring(3).trim() || '(default)'
+      if (current && !current.sectionNames.includes(sectionName)) {
+        current.sectionNames.push(sectionName)
+      }
+      continue
+    }
+
+    // Pattern line — means the current (possibly implicit default) section has content
+    if (trimmed.startsWith('@') && current) {
+      // If no ## seen yet in this edition, there's an implicit default section
+      if (current.sectionNames.length === 0 || (!current.sectionNames.includes('(default)') && !hasDefaultSection)) {
+        hasDefaultSection = true
+      }
+    }
+  }
+
+  finishEdition()
+
+  // Filter out HEAD edition if it has no content (only "(default)" section with no patterns)
+  // Actually, keep it — user might want to add to HEAD. But filter if layout has no HEAD content
+  // and has timed editions. Keep it simple: always include HEAD if it was populated or is the only option.
+
+  return editions
+}
+
+/**
+ * Find the line index to insert a new pattern line at the top of a given edition/section.
+ * Returns the line index after which the new line should be inserted.
+ * Returns -1 if the edition/section is not found.
+ */
+export function findInsertionLineIndex(
+  editionLayout: string,
+  editionTime: string,
+  isHead: boolean,
+  isTail: boolean,
+  sectionName: string
+): number {
+  const lines = editionLayout.split('\n')
+  let inTargetEdition = isHead  // HEAD starts at line 0
+  let insertAfterLine = isHead ? -1 : -1  // -1 means "insert at line 0" (prepend)
+  const targetIsDefaultSection = sectionName === '(default)'
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    if (!trimmed) continue
+
+    // Edition header
+    if (trimmed.startsWith('# ') && !trimmed.startsWith('## ')) {
+      if (inTargetEdition && !isHead) {
+        // We were in target edition but hit the next edition — section not found explicitly
+        // Insert at the end of the target edition (before this line)
+        break
+      }
+
+      if (/^#\s+HEAD\s*$/i.test(trimmed)) {
+        if (isHead) {
+          inTargetEdition = true
+          insertAfterLine = i
+        }
+        continue
+      }
+      if (/^#\s+TAIL\s*$/i.test(trimmed)) {
+        if (isHead) {
+          // End of HEAD section — if we haven't found the section, insert before TAIL
+          break
+        }
+        if (isTail) {
+          inTargetEdition = true
+          insertAfterLine = i
+        }
+        continue
+      }
+
+      const headerMatch = trimmed.match(/^#\s+(\d{2}:\d{2})/)
+      if (headerMatch) {
+        if (isHead) {
+          // End of HEAD — break
+          break
+        }
+        if (headerMatch[1] === editionTime) {
+          inTargetEdition = true
+          insertAfterLine = i
+        } else if (inTargetEdition) {
+          // Past target edition
+          break
+        }
+      }
+      continue
+    }
+
+    if (!inTargetEdition) continue
+
+    // Section header within target edition
+    if (trimmed.startsWith('## ')) {
+      if (targetIsDefaultSection) {
+        // Hit a named section — default section is before this, so insert before this line
+        break
+      }
+      const secName = trimmed.substring(3).trim() || '(default)'
+      if (secName === sectionName) {
+        insertAfterLine = i
+        // Continue to find the first pattern line position (right after header)
+        continue
+      } else if (insertAfterLine >= 0 && !targetIsDefaultSection) {
+        // We were in the target section and hit a different section
+        break
+      }
+      continue
+    }
+
+    // Pattern line — update insert position if we're in the right section
+    if (trimmed.startsWith('@') && insertAfterLine >= 0) {
+      // If we found the section header (or are in default section), the insert point is
+      // right after the section/edition header, not after patterns
+      // So we don't update insertAfterLine here — we want to insert at the TOP
+      break
+    }
+  }
+
+  return insertAfterLine
+}
+
+/**
+ * Find the line index of the last content line belonging to a given edition.
+ * Used for appending new sections at the end of an edition.
+ * Returns -1 if the edition is not found.
+ */
+export function findEditionEndLineIndex(
+  editionLayout: string,
+  editionTime: string,
+  isHead: boolean,
+  isTail: boolean
+): number {
+  const lines = editionLayout.split('\n')
+  let inTargetEdition = isHead
+  let lastContentLine = isHead ? -1 : -1
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+
+    // Edition header
+    if (trimmed.startsWith('# ') && !trimmed.startsWith('## ')) {
+      if (inTargetEdition && !isHead) {
+        // Hit next edition — we're done
+        break
+      }
+
+      if (/^#\s+HEAD\s*$/i.test(trimmed)) {
+        if (isHead) { inTargetEdition = true; lastContentLine = i }
+        continue
+      }
+      if (/^#\s+TAIL\s*$/i.test(trimmed)) {
+        if (isHead) break
+        if (isTail) { inTargetEdition = true; lastContentLine = i }
+        continue
+      }
+
+      const headerMatch = trimmed.match(/^#\s+(\d{2}:\d{2})/)
+      if (headerMatch) {
+        if (isHead) break
+        if (headerMatch[1] === editionTime) {
+          inTargetEdition = true
+          lastContentLine = i
+        } else if (inTargetEdition) {
+          break
+        }
+      }
+      continue
+    }
+
+    if (!inTargetEdition) continue
+
+    // Track the last non-empty line in this edition
+    if (trimmed) {
+      lastContentLine = i
+    }
+  }
+
+  return lastContentLine
+}
+
+/**
+ * Save an edition layout with full validation, cache invalidation, and post re-matching.
+ * Shared by SettingsPage and ProfilePage to avoid duplicating the save flow.
+ */
+export async function saveEditionLayout(
+  newLayout: string
+): Promise<{ success: boolean; errors: string[]; editionCount: number; patternCount: number; rematchResult?: { total: number; rematched: number; fallback: number; released: number } }> {
+  const { updateSettings } = await import('./skylimitStore')
+  const { rematchHeldPosts } = await import('./skylimitEditionMatcher')
+
+  const trimmed = newLayout.trim()
+
+  if (!trimmed) {
+    await updateSettings({ editionLayout: '' })
+    invalidateEditionsCache()
+    const rematchResult = await rematchHeldPosts()
+    return { success: true, errors: [], editionCount: 0, patternCount: 0, rematchResult }
+  }
+
+  const result = parseEditionFile(trimmed)
+  if (result.errors.length > 0) {
+    return { success: false, errors: result.errors, editionCount: 0, patternCount: 0 }
+  }
+
+  const editionCount = result.editions.filter(e => e.editionNumber > 0 && e.editionNumber < TAIL_EDITION_NUMBER).length
+  const patternCount = result.editions.reduce(
+    (sum, e) => sum + e.sections.reduce((s, sec) => s + sec.patterns.length, 0), 0
+  )
+
+  await updateSettings({ editionLayout: trimmed })
+  invalidateEditionsCache()
+  const rematchResult = await rematchHeldPosts()
+
+  return { success: true, errors: [], editionCount, patternCount, rematchResult }
 }

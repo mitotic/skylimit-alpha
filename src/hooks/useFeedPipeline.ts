@@ -91,6 +91,11 @@ export interface UseFeedPipelineReturn {
   forceProbeRef: React.MutableRefObject<boolean>
   probeExpectedCountRef: React.MutableRefObject<number>
   nextPageReadyRef: React.MutableRefObject<boolean>
+  probeBoundaryTimestampRef: React.MutableRefObject<number | null>
+  unprocessedRawCountRef: React.MutableRefObject<number>
+  unprocessedShowCountRef: React.MutableRefObject<number>
+  probeHasGapRef: React.MutableRefObject<boolean>
+  idleTimerForcedRef: React.MutableRefObject<boolean>
   // Callbacks
   loadFeed: (cursor?: string, useCache?: boolean) => Promise<void>
   redisplayFeed: () => Promise<void>
@@ -157,6 +162,12 @@ export function useFeedPipeline({
   const lastDisplayTimeRef = useRef<number>(0)
   const DISPLAY_COOLDOWN_MS = 30000
   const forceProbeRef = useRef(false)
+  // Probe boundary optimization: track already-probed range to avoid redundant API work
+  const probeBoundaryTimestampRef = useRef<number | null>(null)
+  const unprocessedRawCountRef = useRef<number>(0)
+  const unprocessedShowCountRef = useRef<number>(0)
+  const probeHasGapRef = useRef<boolean>(false)
+  const idleTimerForcedRef = useRef<boolean>(false)
   const isInitialCurationRef = useRef(false)
   const forceInitialLoadRef = useRef(false)
   const previousPageFeedRef = useRef<CurationFeedViewPost[]>([])
@@ -1280,6 +1291,7 @@ export function useFeedPipeline({
 
     if (options?.showAllNewPosts !== false) {
       setIdleTimerTriggered(true)
+      idleTimerForcedRef.current = true
     }
 
     try {
@@ -1384,6 +1396,12 @@ export function useFeedPipeline({
       setOldestDisplayedPostTimestamp(newOldestTimestamp)
 
       lastDisplayTimeRef.current = clientNow()
+
+      // Reset probe boundary state — fresh display means start probing from scratch
+      probeBoundaryTimestampRef.current = null
+      unprocessedRawCountRef.current = 0
+      unprocessedShowCountRef.current = 0
+      probeHasGapRef.current = false
 
       const firstPost = alignedPosts[0] as CurationFeedViewPost
       const lastPost = alignedPosts[alignedPosts.length - 1] as CurationFeedViewPost
@@ -1638,6 +1656,7 @@ export function useFeedPipeline({
 
     const probeInProgressRef = { current: null as number | null }
     const PROBE_STALE_MS = 5 * 60 * 1000
+    let cancelled = false
 
     let rateLimitLoggedRef = false
 
@@ -1679,24 +1698,52 @@ export function useFeedPipeline({
 
         const pageRaw = calculatePageRaw(pageSize * 3, currentFilterFrac, varFactor)
 
-        log.verbose('Paged Updates/Probe', `Probing for new posts (filterFrac=${currentFilterFrac.toFixed(2)}, pageRaw=${pageRaw}, newestDisplayed=${new Date(currentTimestamp).toLocaleTimeString()}, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'})...`)
+        const currentBoundary = probeBoundaryTimestampRef.current
+        log.verbose('Paged Updates/Probe', `Probing for new posts (filterFrac=${currentFilterFrac.toFixed(2)}, pageRaw=${pageRaw}, newestDisplayed=${new Date(currentTimestamp).toLocaleTimeString()}, stopBoundary=${currentBoundary ? new Date(currentBoundary).toLocaleTimeString() : 'none'}, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'})...`)
 
         const probeResult = await probeForNewPosts(
           agent,
           pageRaw,
           session.handle,
           session.did,
-          currentTimestamp
+          currentTimestamp,
+          currentBoundary ?? undefined
         )
+
+        // If effect was cleaned up while probe was in flight, discard results
+        if (cancelled) {
+          log.verbose('Paged Updates', 'Probe completed but effect was cleaned up, discarding results')
+          return
+        }
 
         const rawNewestTime = probeResult.rawNewestTimestamp > 0 ? new Date(probeResult.rawNewestTimestamp).toLocaleTimeString() : 'N/A'
         const rawOldestTime = probeResult.rawOldestTimestamp < Number.MAX_SAFE_INTEGER ? new Date(probeResult.rawOldestTimestamp).toLocaleTimeString() : 'N/A'
-        log.verbose('Paged Updates/Probe', `Probe result: ${probeResult.filteredPostCount}/${pageSize} displayable posts (${probeResult.totalPostCount} processed, ${probeResult.rawPostCount} raw, rawNewest=${rawNewestTime}, rawOldest=${rawOldestTime})`)
 
-        probeExpectedCountRef.current = probeResult.filteredPostCount
+        // Update probe boundary to newest raw post seen
+        if (probeResult.rawNewestTimestamp > 0) {
+          probeBoundaryTimestampRef.current = Math.max(
+            probeBoundaryTimestampRef.current ?? 0,
+            probeResult.rawNewestTimestamp
+          )
+        }
 
-        const hasFullPage = probeResult.filteredPostCount >= pageSize
-        const hasMultiplePages = probeResult.hasMultiplePages
+        // Accumulate counts from this probe
+        unprocessedRawCountRef.current += probeResult.totalPostCount
+        unprocessedShowCountRef.current += probeResult.filteredPostCount
+
+        // Track gap state (sticky until reset by button click)
+        if (probeResult.hasGap) {
+          probeHasGapRef.current = true
+        }
+
+        const effectiveCount = unprocessedShowCountRef.current
+
+        log.verbose('Paged Updates/Probe', `Probe result: ${probeResult.filteredPostCount} new displayable (${probeResult.totalPostCount} processed, ${probeResult.rawPostCount} raw, rawNewest=${rawNewestTime}, rawOldest=${rawOldestTime}, gap=${probeResult.hasGap}), accumulated: ${effectiveCount} show, ${unprocessedRawCountRef.current} raw`)
+
+        probeExpectedCountRef.current = effectiveCount
+
+        const hasFullPage = effectiveCount >= pageSize
+        const hasMultiplePages = effectiveCount > pageSize
 
         const isForceProbe = forceProbeRef.current
         if (isForceProbe) {
@@ -1710,18 +1757,16 @@ export function useFeedPipeline({
         }
 
         if (hasMultiplePages) {
-          setMultiPageCount(probeResult.filteredPostCount)
-          log.verbose('Paged Updates', `Multi-page detected: ${probeResult.filteredPostCount} posts (${probeResult.pageCount} pages)`)
+          setMultiPageCount(effectiveCount)
+          log.verbose('Paged Updates', `Multi-page detected: ${effectiveCount} posts`)
         }
         // Don't reset multiPageCount to 0 — once multi-page is detected,
         // keep it sticky until an explicit load action resets it.
-        // This prevents flip-flop when probe filteredPostCount fluctuates
-        // around the pageSize threshold due to probabilistic curation.
 
         if (nextPageReadyRef.current) {
-          setNewPostsCount(probeResult.filteredPostCount)
-          setPartialPageCount(probeResult.filteredPostCount)
-          log.verbose('Paged Updates', `Next Page already ready, skipping button state update (${probeResult.filteredPostCount} posts available)`)
+          setNewPostsCount(effectiveCount)
+          setPartialPageCount(effectiveCount)
+          log.verbose('Paged Updates', `Next Page already ready, skipping button state update (${effectiveCount} posts available)`)
           return
         }
 
@@ -1734,7 +1779,7 @@ export function useFeedPipeline({
             const remainder = newestCurationNum % pageSize
             if (remainder !== 0) {
               postsToNextBoundary = pageSize - remainder
-              if (probeResult.filteredPostCount >= postsToNextBoundary) {
+              if (effectiveCount >= postsToNextBoundary) {
                 needsBoundaryAlignment = true
               }
             }
@@ -1745,16 +1790,16 @@ export function useFeedPipeline({
         const isPartialPage = needsBoundaryAlignment && postsToNextBoundary < pageSize
         setNextPageReady(isReady)
         setPostsNeededForPage(isPartialPage ? postsToNextBoundary : null)
-        setNewPostsCount(probeResult.filteredPostCount)
-        setPartialPageCount(probeResult.filteredPostCount)
+        setNewPostsCount(effectiveCount)
+        setPartialPageCount(effectiveCount)
         setShowNewPostsButton(isReady)
 
         if (isPartialPage) {
-          log.verbose('Paged Updates', `Partial page ready (boundary alignment): ${probeResult.filteredPostCount} posts (need ${postsToNextBoundary} to reach next boundary)`)
+          log.verbose('Paged Updates', `Partial page ready (boundary alignment): ${effectiveCount} posts (need ${postsToNextBoundary} to reach next boundary)`)
         } else if (hasFullPage) {
-          log.verbose('Paged Updates', `Full page ready: ${probeResult.filteredPostCount} posts`)
+          log.verbose('Paged Updates', `Full page ready: ${effectiveCount} posts`)
         } else {
-          log.verbose('Paged Updates', `Partial page: ${probeResult.filteredPostCount}/${pageSize} posts (idle timer will handle "All new posts" button)`)
+          log.verbose('Paged Updates', `Partial page: ${effectiveCount}/${pageSize} posts (idle timer will handle "All new posts" button)`)
         }
       } catch (error) {
         log.warn('Paged Updates', 'Probe error:', error)
@@ -1776,6 +1821,7 @@ export function useFeedPipeline({
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
+      cancelled = true
       clearClientInterval(interval)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
@@ -1810,7 +1856,7 @@ export function useFeedPipeline({
       if (timeSinceTopPost >= fullPageWaitMs && partialPageCount > 0) {
         setIdleTimerTriggered(true)
         log.verbose('Idle Timer', `Triggered: ${Math.round(timeSinceTopPost / 60000)} min elapsed, ${partialPageCount} posts available`)
-      } else {
+      } else if (!idleTimerForcedRef.current) {
         setIdleTimerTriggered(false)
       }
     }
@@ -1862,6 +1908,11 @@ export function useFeedPipeline({
     forceProbeRef,
     probeExpectedCountRef,
     nextPageReadyRef,
+    probeBoundaryTimestampRef,
+    unprocessedRawCountRef,
+    unprocessedShowCountRef,
+    probeHasGapRef,
+    idleTimerForcedRef,
     loadFeed,
     redisplayFeed,
     refreshDisplayedFeed,

@@ -919,7 +919,7 @@ export default function SkylimitStatistics() {
                           timezone={account.followInfo?.timezone}
                           onNavigateToSettings={() => {
                             setShowPopup(null)
-                            navigate('/settings?tab=curation')
+                            navigate('/settings?tab=editions')
                           }}
                           onClose={() => setShowPopup(null)}
                         />

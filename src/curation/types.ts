@@ -350,6 +350,8 @@ export interface SkylimitSettings {
   timezone?: string // Stored timezone for consistent day boundaries (e.g., "America/New_York")
   lastBrowserTimezone?: string // Browser timezone when user last saved/confirmed timezone setting
   showEditionsInFeed?: boolean // Show periodic editions in home feed, default false
+  newspaperView?: boolean // Use newspaper view for periodic editions, default false
+  editionFont?: 'serif' | 'sans-serif' // Font family for edition layout display, default 'serif'
 }
 
 /**
