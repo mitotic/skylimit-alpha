@@ -498,7 +498,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
       {/* Newspaper view layout for edition posts */}
       {newspaperView && isEditionPost ? (
         <div
-          className="flex p-4 min-h-[160px]"
+          className="flex p-4 pr-2 min-h-[160px]"
           onClick={handlePostClick}
           style={{ cursor: 'pointer' }}
         >
@@ -546,7 +546,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           </div>
 
           {/* Right: vertical actions column */}
-          <div className="flex-shrink-0 pl-3 ml-3 border-l border-gray-200 dark:border-gray-700">
+          <div className="flex-shrink-0 pl-2 ml-2 border-l border-gray-200 dark:border-gray-700">
             <PostActions
               post={actualPost}
               author={actualPost.author}
