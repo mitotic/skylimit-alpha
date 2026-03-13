@@ -115,9 +115,14 @@ export default function SettingsPage() {
 
   // Handle any ?tab= param as a fresh start - clear URL and sessionStorage
   // This ensures back navigation uses sessionStorage (which preserves tab state)
+  // Also switches to the requested tab (needed when already on /settings)
   useEffect(() => {
     const urlTab = searchParams.get('tab')
     if (urlTab) {
+      // Switch to the requested tab
+      if (urlTab === 'curation' || urlTab === 'editions' || urlTab === 'following' || urlTab === 'general' || urlTab === 'basic') {
+        setActiveTab(urlTab === 'basic' ? 'general' : urlTab as Tab)
+      }
       // Clear the query parameter from URL (replace to avoid history pollution)
       navigate('/settings', { replace: true })
       // Clear saved tab and scroll position
@@ -152,6 +157,8 @@ export default function SettingsPage() {
   const [isResettingAll, setIsResettingAll] = useState(false)
   const [showClearRecentModal, setShowClearRecentModal] = useState(false)
   const [isClearingRecent, setIsClearingRecent] = useState(false)
+  const [showRecurateModal, setShowRecurateModal] = useState(false)
+  const [isRecurating, setIsRecurating] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
   const [importValidation, setImportValidation] = useState<ImportValidation | null>(null)
@@ -483,6 +490,32 @@ export default function SettingsPage() {
     } catch (error) {
       log.error('Settings', 'Failed to clear recent:', error)
       setIsClearingRecent(false)
+    }
+  }
+
+  const handleRecurate = async () => {
+    setIsRecurating(true)
+    sessionStorage.removeItem('websky_home_scroll_state')
+    sessionStorage.removeItem('websky_home_editions_scroll_state')
+    try {
+      if (typeof (window as any).recurateAndReloadHomePage === 'function') {
+        await (window as any).recurateAndReloadHomePage()
+        setShowRecurateModal(false)
+        setIsRecurating(false)
+        navigate('/')
+      } else {
+        sessionStorage.setItem('websky_reset_pending', '1')
+        navigate('/')
+        setTimeout(async () => {
+          if (typeof (window as any).recurateAndReloadHomePage === 'function') {
+            await (window as any).recurateAndReloadHomePage()
+          }
+          setIsRecurating(false)
+        }, 500)
+      }
+    } catch (error) {
+      log.error('Settings', 'Failed to re-curate:', error)
+      setIsRecurating(false)
     }
   }
 
@@ -1195,6 +1228,36 @@ This cannot be undone.`}
                 </div>
               </div>
             </div>
+
+              <div className="flex flex-wrap gap-3 mt-6">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setShowClearRecentModal(true)}
+                  disabled={isClearingRecent}
+                  className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+                >
+                  Refetch recent posts
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setShowResetFeedModal(true)}
+                  disabled={isResettingFeed}
+                  className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+                >
+                  Refresh post display
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setShowResetDataModal(true)}
+                  disabled={isResettingData}
+                  className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
+                >
+                  Reset post archive
+                </Button>
+              </div>
           </DisclosureSection>
 
           <div className="flex justify-start pt-4">
@@ -1207,6 +1270,18 @@ This cannot be undone.`}
             </Button>
           </div>
         </form>
+
+        <div className="flex flex-wrap gap-3 mt-6">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowRecurateModal(true)}
+            disabled={isRecurating}
+            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+          >
+            Re-curate recent posts
+          </Button>
+        </div>
 
         {/* Curation Settings Transfer */}
         <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
@@ -1470,35 +1545,7 @@ This cannot be undone.`}
         </DisclosureSection>
         </div>
 
-        <div className="flex flex-wrap gap-3 mt-6">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setShowClearRecentModal(true)}
-            disabled={isClearingRecent}
-            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-          >
-            Refetch recent posts
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setShowResetFeedModal(true)}
-            disabled={isResettingFeed}
-            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-          >
-            Refresh post display
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setShowResetDataModal(true)}
-            disabled={isResettingData}
-            className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
-          >
-            Reset post archive
-          </Button>
-        </div>
+
 
         {/* Refetch Recent Posts Confirmation Modal */}
         <ConfirmModal
@@ -1520,6 +1567,28 @@ You will be redirected to the home page with a fresh lookback.`}
           cancelText="Cancel"
           isDangerous={false}
           isLoading={isClearingRecent}
+        />
+
+        {/* Re-curate Recent Posts Confirmation Modal */}
+        <ConfirmModal
+          isOpen={showRecurateModal}
+          onClose={() => setShowRecurateModal(false)}
+          onConfirm={handleRecurate}
+          title="Re-curate Recent Posts"
+          message={`This will re-curate recent posts from the cache without re-fetching from the server:
+• Feed cache and pagination state (cleared entirely)
+• Post summaries newer than yesterday's midnight (removed and re-created)
+• Edition registry entries created within the lookback period (removed)
+
+Posts will be re-curated using your current curation settings, follow list, and statistics. This is faster than re-fetching since no server requests are needed.
+
+Your Skylimit settings, follow list, and login session will be preserved.
+
+You will be redirected to the home page with re-curated posts.`}
+          confirmText={isRecurating ? 'Re-curating...' : 'Re-curate Recent Posts'}
+          cancelText="Cancel"
+          isDangerous={false}
+          isLoading={isRecurating}
         />
 
         {/* Refresh Post Display Confirmation Modal */}

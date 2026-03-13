@@ -604,7 +604,7 @@ export function invalidateEditionsCache(): void {
 // --- Edition Match types and helpers ---
 
 export interface EditionMatch {
-  editionName: string   // e.g., "08:00 Morning" or "(default)" for HEAD
+  editionName: string   // e.g., "08:00 Morning" or "(head)" for HEAD
   sectionName: string   // e.g., "Tech" or "(default)"
   textPatterns: string  // e.g., "#tech, ai*" or ""
   lineIndex: number     // line number in the raw text (0-based) for editing/removal
@@ -676,7 +676,7 @@ export function findEditionMatchesForUser(editionLayout: string, handle: string)
  * Lightweight line scanner — does not validate, just extracts structure.
  */
 export interface LayoutEditionInfo {
-  editionName: string    // display name, e.g., "Morning" or "(default)" for HEAD, "Tail" for TAIL
+  editionName: string    // display name, e.g., "Morning" or "(head)" for HEAD, "(tail)" for TAIL
   editionTime: string    // "hh:mm" or "" for HEAD/TAIL
   isHead: boolean
   isTail: boolean
@@ -701,7 +701,7 @@ export function getEditionsFromLayout(editionLayout: string): LayoutEditionInfo[
   }
 
   // Start with implicit HEAD edition
-  current = { editionName: '(default)', editionTime: '', isHead: true, isTail: false, sectionNames: [] }
+  current = { editionName: '(head)', editionTime: '', isHead: true, isTail: false, sectionNames: [] }
   hasDefaultSection = false
 
   for (const line of lines) {
@@ -719,7 +719,7 @@ export function getEditionsFromLayout(editionLayout: string): LayoutEditionInfo[
       hasDefaultSection = false
 
       if (/^#\s+TAIL\s*$/i.test(trimmed)) {
-        current = { editionName: 'Tail', editionTime: '', isHead: false, isTail: true, sectionNames: [] }
+        current = { editionName: '(tail)', editionTime: '', isHead: false, isTail: true, sectionNames: [] }
       } else {
         const headerMatch = trimmed.match(/^#\s+(\d{2}:\d{2})(?:\s+(.+))?/)
         if (headerMatch) {

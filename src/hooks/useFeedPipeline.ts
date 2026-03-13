@@ -3,6 +3,7 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import type { BskyAgent } from '@atproto/api'
 import { getHomeFeed } from '../api/feed'
 import { CurationInitStatsDisplay } from '../components/CurationInitModal'
+import { RecurateResultStats } from '../components/RecurateResultModal'
 import { initDB, closeDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh, clearAllTimeVariantDataAndLogout, clearRecentData } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
 import { computeFilterFrac } from '../curation/skylimitStats'
@@ -11,7 +12,7 @@ import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
 import { GlobalStats, CurationFeedViewPost, SecondaryEntry, getIntervalHoursSync, isStatusShow } from '../curation/types'
-import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, getNextLocalMidnight, getPrevLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay } from '../curation/skylimitFeedCache'
+import { getCachedFeed, clearFeedCache, clearFeedMetadata, getLastFetchMetadata, getCachedFeedBefore, updateFeedCacheOldestPostTimestamp, getCachedFeedAfterPosts, shouldUseCacheOnLoad, createFeedCacheEntries, savePostsWithCuration, validateFeedCacheIntegrity, getLocalMidnight, getNextLocalMidnight, getPrevLocalMidnight, fetchPageFromTimestamp, isCacheWithinLookback, getNewestCachedPostTimestamp, getFreshPrevPageCursor, clearPrevPageCursor, getPrevPageCursorStatus, markInitialLookbackCompleted, fetchToSecondaryFeedCache, transferSecondaryToPrimary, curateEntriesToSecondary, secondaryEntriesToCuratedFeed, filterSecondaryForDisplay, recurateFromCache } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { numberUnnumberedPostsForDay, assignNumbersForDay, assignAllNumbers } from '../curation/skylimitNumbering'
 import { clientNow, clientDate, clientTimeout, clearClientTimeout, clientInterval, clearClientInterval } from '../utils/clientClock'
@@ -58,10 +59,14 @@ export interface UseFeedPipelineReturn {
   isInitialLoad: boolean
   lookingBack: boolean
   lookbackProgress: number | null
+  lookbackMessage: string
   initPhase: 'posts' | 'follows' | null
   showCurationInitModal: boolean
   setShowCurationInitModal: React.Dispatch<React.SetStateAction<boolean>>
   curationInitStats: CurationInitStatsDisplay | null
+  showRecurateResultModal: boolean
+  setShowRecurateResultModal: React.Dispatch<React.SetStateAction<boolean>>
+  recurateResultStats: RecurateResultStats | null
   // Paged updates state
   newPostsCount: number
   setNewPostsCount: React.Dispatch<React.SetStateAction<number>>
@@ -103,6 +108,7 @@ export interface UseFeedPipelineReturn {
   clearCacheAndReloadHomePage: () => Promise<void>
   resetFeedAndReloadHomePage: () => Promise<void>
   clearRecentAndReloadHomePage: () => Promise<void>
+  recurateAndReloadHomePage: () => Promise<void>
   prefetchPrevPage: (afterTimestamp: number, targetSize?: number) => Promise<void>
   lookupCurationAndFilter: (posts: CurationFeedViewPost[], feedReceivedTime: Date, postTimestamps?: Map<string, number>, skipFiltering?: boolean) => Promise<CurationFeedViewPost[]>
   trimFeedIfNeeded: (combinedFeed: CurationFeedViewPost[], pageSize: number, feedReceivedTime: Date, maxDisplayedFeedSize?: number) => CurationFeedViewPost[]
@@ -138,9 +144,12 @@ export function useFeedPipeline({
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [lookingBack, setLookingBack] = useState(false)
   const [lookbackProgress, setLookbackProgress] = useState<number | null>(null)
+  const [lookbackMessage, setLookbackMessage] = useState('Fetching posts')
   const [initPhase, setInitPhase] = useState<'posts' | 'follows' | null>(null)
   const [showCurationInitModal, setShowCurationInitModal] = useState(false)
   const [curationInitStats, setCurationInitStats] = useState<CurationInitStatsDisplay | null>(null)
+  const [showRecurateResultModal, setShowRecurateResultModal] = useState(false)
+  const [recurateResultStats, setRecurateResultStats] = useState<RecurateResultStats | null>(null)
   // Paged updates state
   const [newPostsCount, setNewPostsCount] = useState(0)
   const [showNewPostsButton, setShowNewPostsButton] = useState(false)
@@ -1563,17 +1572,119 @@ export function useFeedPipeline({
     }
   }, [loadFeed])
 
+  // Re-curate from cache (no server re-fetch)
+  const recurateAndReloadHomePage = useCallback(async () => {
+    log.info('Debug', 'recurateAndReloadHomePage: Starting...')
+    resetPendingRef.current = true
+    lookbackInProgressRef.current = false
+
+    try {
+      if (!session) {
+        log.error('Debug', 'recurateAndReloadHomePage: No session')
+        return
+      }
+      const myUsername = session.handle
+      const myDid = session.did
+
+      // Calculate lookback boundary
+      const settings = await getSettings()
+      const lookbackDays = settings?.initialLookbackDays ?? 1
+      const pageLength = settings?.feedPageLength || 25
+      const { getLookbackBoundary } = await import('../curation/feedCacheCore')
+      const boundary = getLookbackBoundary(lookbackDays, settings?.timezone)
+      log.debug('Debug', `Re-curate lookback boundary: ${boundary.toISOString()} (${lookbackDays} days)`)
+
+      // Clear sessionStorage
+      sessionStorage.removeItem(getFeedStateKey('curated'))
+      sessionStorage.removeItem(getScrollStateKey('curated'))
+      sessionStorage.removeItem(getFeedStateKey('editions'))
+      sessionStorage.removeItem(getScrollStateKey('editions'))
+      sessionStorage.removeItem(HOME_TAB_STATE_KEY)
+
+      // Reset React state
+      setFeed([])
+      setCursor(undefined)
+      setServerCursor(undefined)
+      setHasMorePosts(false)
+      setPreviousPageFeed([])
+      setIsLoading(true)
+      setIsInitialLoad(true)
+      setInitialPrefetchDone(false)
+      setNewestDisplayedPostTimestamp(null)
+      setOldestDisplayedPostTimestamp(null)
+      setNewPostsCount(0)
+      setShowNewPostsButton(false)
+      setLookingBack(true)
+      setLookbackProgress(0)
+      setLookbackMessage('Re-curating posts')
+
+      const result = await recurateFromCache(
+        myUsername,
+        myDid,
+        boundary.getTime(),
+        pageLength,
+        (percent) => setLookbackProgress(percent),
+      )
+
+      if (result) {
+        log.debug('Debug', `Re-curation transferred ${result.postsTransferred} posts`)
+        // Number posts (same as idle return post-transfer)
+        const recurateSettings = await getSettings()
+        const todayMidnightDate = getLocalMidnight(clientDate(), recurateSettings?.timezone)
+        const todayMidnight = todayMidnightDate.getTime()
+        const todayEnd = getNextLocalMidnight(todayMidnightDate, recurateSettings?.timezone).getTime()
+        const yesterdayMidnight = getPrevLocalMidnight(todayMidnightDate, recurateSettings?.timezone).getTime()
+        await numberUnnumberedPostsForDay(yesterdayMidnight, todayMidnight, 'Re-curate (yesterday)')
+        await numberUnnumberedPostsForDay(todayMidnight, todayEnd, 'Re-curate')
+        sessionStorage.removeItem(getFeedStateKey('curated'))
+      }
+
+      setLookingBack(false)
+      setLookbackMessage('Fetching posts')
+      setLookbackProgress(null)
+      setIsLoading(false)
+      setIsInitialLoad(false)
+
+      if (result) {
+        // Display final numbered feed
+        await refreshDisplayedFeed({ triggerProbe: true, showAllNewPosts: true })
+
+        // Show re-curation result modal
+        setRecurateResultStats({
+          totalEntriesRecurated: result.totalEntriesRecurated,
+          displayableCount: result.displayableCount,
+          editionsAssembled: result.editionsAssembled,
+          oldestEntryTimestamp: result.oldestEntryTimestamp,
+          newestEntryTimestamp: result.newestEntryTimestamp,
+        })
+        setShowRecurateResultModal(true)
+      }
+
+      log.debug('Debug', 'recurateAndReloadHomePage: Complete!')
+    } catch (error) {
+      log.error('Debug', 'recurateAndReloadHomePage failed:', error)
+      setLookingBack(false)
+      setLookbackMessage('Fetching posts')
+      setLookbackProgress(null)
+    } finally {
+      resetPendingRef.current = false
+      sessionStorage.removeItem('websky_reset_pending')
+    }
+  }, [session, refreshDisplayedFeed])
+
   // Expose reset functions globally
   useEffect(() => {
     (window as any).clearCacheAndReloadHomePage = clearCacheAndReloadHomePage;
     (window as any).resetFeedAndReloadHomePage = resetFeedAndReloadHomePage;
-    (window as any).clearRecentAndReloadHomePage = clearRecentAndReloadHomePage
+    (window as any).clearRecentAndReloadHomePage = clearRecentAndReloadHomePage;
+    (window as any).recurateAndReloadHomePage = recurateAndReloadHomePage
     return () => {
       delete (window as any).clearCacheAndReloadHomePage;
       delete (window as any).resetFeedAndReloadHomePage;
-      delete (window as any).clearRecentAndReloadHomePage
+      delete (window as any).clearRecentAndReloadHomePage;
+      delete (window as any).recurateAndReloadHomePage
     }
-  }, [clearCacheAndReloadHomePage, resetFeedAndReloadHomePage, clearRecentAndReloadHomePage])
+  }, [clearCacheAndReloadHomePage, resetFeedAndReloadHomePage, clearRecentAndReloadHomePage, recurateAndReloadHomePage])
 
   // Navigation/load feed effect
   useEffect(() => {
@@ -1887,9 +1998,12 @@ export function useFeedPipeline({
     isInitialLoad,
     lookingBack,
     lookbackProgress,
+    lookbackMessage,
     initPhase,
     showCurationInitModal, setShowCurationInitModal,
     curationInitStats,
+    showRecurateResultModal, setShowRecurateResultModal,
+    recurateResultStats,
     newPostsCount, setNewPostsCount,
     showNewPostsButton, setShowNewPostsButton,
     nextPageReady, setNextPageReady,
@@ -1919,6 +2033,7 @@ export function useFeedPipeline({
     clearCacheAndReloadHomePage,
     resetFeedAndReloadHomePage,
     clearRecentAndReloadHomePage,
+    recurateAndReloadHomePage,
     prefetchPrevPage,
     lookupCurationAndFilter,
     trimFeedIfNeeded,

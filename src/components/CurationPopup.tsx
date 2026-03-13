@@ -1,4 +1,4 @@
-import { forwardRef, useRef, useEffect, useCallback } from 'react'
+import { forwardRef, useRef, useEffect, useCallback, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { DEFAULT_PRIORITY_PATTERNS } from '../curation/types'
 
@@ -87,6 +87,8 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   editionMode,
   postTimestamp,
 }, ref) => {
+  const [showCopied, setShowCopied] = useState(false)
+
   // Format count: show 1 decimal if < 10, otherwise round to integer
   const formatCount = (count: number): string => {
     if (count < 10) return count.toFixed(1)
@@ -171,6 +173,21 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       style={positionStyle}
       onClick={(e) => e.stopPropagation()}
     >
+      {showCopied ? (
+        <div className="px-4 py-3 text-sm leading-relaxed bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+          <div>Username <span className="font-semibold">@{handle}</span> copied to clipboard.</div>
+          <div className="mt-2">
+            Navigate to{' '}
+            <button
+              onClick={() => onNavigateToSettings?.()}
+              className="text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              Settings/Editions
+            </button>
+            {' '}to add the user to an Edition.
+          </div>
+        </div>
+      ) : (<>
       {/* Header */}
       <div className="px-3 py-1.5 border-b border-gray-200 dark:border-gray-700 leading-snug">
         <div className="flex items-center justify-between">
@@ -284,10 +301,13 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
       ) : (
         <div className="px-3 py-1.5 border-t border-gray-200 dark:border-gray-700">
           <button
-            onClick={onNavigateToSettings}
+            onClick={() => {
+              navigator.clipboard.writeText(handle)
+              setShowCopied(true)
+            }}
             className="w-full text-sm text-blue-600 dark:text-blue-400 hover:underline"
           >
-            Edition Settings
+            Add user to an Edition
           </button>
         </div>
       ))}
@@ -343,6 +363,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
           </div>
         </div>
       )}
+      </>)}
     </div>
   )
 

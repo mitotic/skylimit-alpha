@@ -10,6 +10,7 @@ import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
 import CurationInitModal from '../components/CurationInitModal'
+import RecurateResultModal from '../components/RecurateResultModal'
 import Modal from '../components/Modal'
 import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { getBrowserTimezone, timezonesAreDifferent } from '../utils/timezoneUtils'
@@ -111,9 +112,12 @@ export default function HomePage() {
     oldestDisplayedPostTimestamp, setOldestDisplayedPostTimestamp,
     lookingBack,
     lookbackProgress,
+    lookbackMessage,
     initPhase,
     showCurationInitModal, setShowCurationInitModal,
     curationInitStats,
+    showRecurateResultModal, setShowRecurateResultModal,
+    recurateResultStats,
     newPostsCount, setNewPostsCount,
     showNewPostsButton, setShowNewPostsButton,
     nextPageReady, setNextPageReady,
@@ -981,7 +985,7 @@ export default function HomePage() {
               {lookingBack ? (
                 <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
                   <Spinner size="sm" />
-                  <span>Fetching posts{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}...</span>
+                  <span>{lookbackMessage}{lookbackProgress !== null ? ` (${lookbackProgress}%)` : ''}...</span>
                 </div>
               ) : (
                 <>
@@ -1455,6 +1459,12 @@ export default function HomePage() {
         isOpen={showCurationInitModal}
         onClose={() => setShowCurationInitModal(false)}
         stats={curationInitStats}
+      />
+
+      <RecurateResultModal
+        isOpen={showRecurateResultModal}
+        onClose={() => setShowRecurateResultModal(false)}
+        stats={recurateResultStats}
       />
 
       <Modal isOpen={showIntroModal} onClose={() => setShowIntroModal(false)} title="About Skylimit" size="md">

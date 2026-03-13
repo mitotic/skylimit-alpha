@@ -5,6 +5,7 @@
 
 import { removePostSummariesBefore } from './skylimitCache'
 import { getSettings } from './skylimitStore'
+import { FEED_CACHE_RETENTION_DAYS } from './feedCacheCore'
 import { clientNow, clientTimeout, clearClientTimeout } from '../utils/clientClock'
 import { cullEditionRegistry } from './editionRegistry'
 import log from '../utils/logger'
@@ -24,8 +25,11 @@ export async function performCleanup(): Promise<void> {
     const settings = await getSettings()
     const daysOfData = settings?.daysOfData || 30
 
-    // Calculate cutoff timestamp based on daysOfData setting
-    const retentionMs = daysOfData * 24 * 60 * 60 * 1000
+    // Calculate cutoff timestamp: daysOfData + feed cache retention buffer
+    // The buffer ensures summaries remain available for reproducible re-curation
+    // when statistics are computed looking back daysOfData
+    const retentionDays = daysOfData + FEED_CACHE_RETENTION_DAYS
+    const retentionMs = retentionDays * 24 * 60 * 60 * 1000
     const cutoffTimestamp = clientNow() - retentionMs
 
     // Remove post summaries older than cutoff

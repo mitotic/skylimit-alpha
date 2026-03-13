@@ -10,6 +10,7 @@ import {
   getAllFollows,
   savePostsToPrimaryCache,
   savePostSummariesForce,
+  clearRecentData,
 } from './skylimitCache'
 import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary, getEditionTimeStrs } from './skylimitGeneral'
 import { CurationFeedViewPost, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync, FetchMode, FetchStopReason, SecondaryEntry, SecondaryFetchResult, SecondaryRepostIndex, addToRepostIndex } from './types'
@@ -31,6 +32,7 @@ import {
   getLastFetchMetadata,
   DEFAULT_PAGE_LENGTH,
   MAX_FETCH_ITERATIONS,
+  getAllFeedCacheEntries,
 } from './feedCacheCore'
 import {
   tryCreateEdition,
@@ -77,6 +79,7 @@ export async function curateEntriesToSecondary(
   entries: FeedCacheEntryWithPost[],
   myUsername: string,
   myDid: string,
+  onProgress?: (percent: number) => void,
 ): Promise<SecondaryEntry[]> {
   // Setup curation context (same as fetchToSecondaryFeedCache)
   const settings = await getSettings()
@@ -112,6 +115,9 @@ export async function curateEntriesToSecondary(
     }
     result.push({ entry, summary })
     addToRepostIndex(repostIndex, summary)
+    if (onProgress) {
+      onProgress(Math.round((result.length / entries.length) * 100))
+    }
   }
   return result
 }
@@ -838,6 +844,7 @@ export interface TransferResult {
   displayableCount: number
   newestTransferredTimestamp: number | null
   oldestTransferredTimestamp: number | null
+  editionsAssembled: number
 }
 
 /**
@@ -929,7 +936,7 @@ export async function transferSecondaryToPrimary(
 
   if (secondaryEntries.length === 0) {
     log.debug(topic, ` No entries to transfer`)
-    return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null, oldestTransferredTimestamp: null }
+    return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null, oldestTransferredTimestamp: null, editionsAssembled: 0 }
   }
 
   // Sort oldest-first for correct numbering order
@@ -1008,6 +1015,7 @@ export async function transferSecondaryToPrimary(
   }> = []
   const summariesToSave: PostSummary[] = []
   let displayableCount = 0
+  let editionsAssembled = 0
   let newestTransferredTimestamp: number | null = null
   let oldestTransferredTimestamp: number | null = null
 
@@ -1143,6 +1151,7 @@ export async function transferSecondaryToPrimary(
 
       // Insert synthetic entries into sorted array at gapIdx position
       sorted.splice(gapIdx, 0, ...syntheticEntries)
+      editionsAssembled++
 
       log.verbose('Transfer/edition', `Injected ${syntheticPosts.length} synthetic edition posts`)
     }
@@ -1252,5 +1261,84 @@ export async function transferSecondaryToPrimary(
     displayableCount,
     newestTransferredTimestamp,
     oldestTransferredTimestamp,
+    editionsAssembled,
+  }
+}
+
+export interface RecurateResult extends TransferResult {
+  totalEntriesRecurated: number
+  oldestEntryTimestamp: number
+  newestEntryTimestamp: number
+}
+
+/**
+ * Re-curate posts from the feed cache without re-fetching from the server.
+ * Reads cached entries, clears the cache, re-curates all entries through the
+ * secondary→primary transfer pipeline with current curation settings.
+ *
+ * Since re-curation is fast (no network), the caller displays the final
+ * numbered result directly after this function returns.
+ *
+ * @param myUsername - Current user's username
+ * @param myDid - Current user's DID
+ * @param lookbackBoundaryMs - Timestamp boundary (entries >= this are re-curated)
+ * @param pageLength - Number of displayable posts per page
+ * @param onProgress - Callback with re-curation progress (0-100)
+ * @returns RecurateResult or null if no entries to re-curate
+ */
+export async function recurateFromCache(
+  myUsername: string,
+  myDid: string,
+  lookbackBoundaryMs: number,
+  pageLength: number,
+  onProgress: (percent: number) => void,
+): Promise<RecurateResult | null> {
+  const topic = 'Re-curate'
+
+  // Phase A: Read entries from feed cache before clearing
+  log.info(topic, `Reading feed cache entries >= ${new Date(lookbackBoundaryMs).toISOString()}`)
+  const rawEntries = await getAllFeedCacheEntries(lookbackBoundaryMs)
+  log.info(topic, `Found ${rawEntries.length} entries to re-curate`)
+
+  if (rawEntries.length === 0) {
+    onProgress(100)
+    return null
+  }
+
+  // Convert FeedCacheEntry → FeedCacheEntryWithPost (restore originalPost from stored post)
+  const savedEntries: FeedCacheEntryWithPost[] = rawEntries.map(entry => ({
+    ...entry,
+    originalPost: entry.post,
+  }))
+
+  // Sort newest-first (matching loadFeed fetch order)
+  savedEntries.sort((a, b) => b.postTimestamp - a.postTimestamp)
+  const oldestEntryTimestamp = savedEntries[savedEntries.length - 1].postTimestamp
+  const newestEntryTimestamp = savedEntries[0].postTimestamp
+  const totalEntriesRecurated = savedEntries.length
+
+  // Clear feed cache, metadata, recent summaries, and edition registry
+  log.debug(topic, 'Clearing recent data...')
+  await clearRecentData(lookbackBoundaryMs)
+
+  // Phase B: Curate ALL entries in a single call (shared repostIndex for duplicate detection)
+  log.debug(topic, `Curating ${savedEntries.length} entries...`)
+  const secondaryEntries = await curateEntriesToSecondary(
+    savedEntries, myUsername, myDid, onProgress
+  )
+  log.debug(topic, `Curation complete: ${secondaryEntries.length} entries`)
+
+  // Phase C: Transfer all entries to primary cache (edition assembly, numbering deferred)
+  log.debug(topic, 'Transferring to primary cache...')
+  const transferResult = await transferSecondaryToPrimary(
+    secondaryEntries, 'all', pageLength, true  // skipNumbering=true (same as idle return)
+  )
+  log.info(topic, `Complete: ${transferResult.postsTransferred} posts transferred, ${transferResult.displayableCount} displayable, ${transferResult.editionsAssembled} editions`)
+
+  return {
+    ...transferResult,
+    totalEntriesRecurated,
+    oldestEntryTimestamp,
+    newestEntryTimestamp,
   }
 }

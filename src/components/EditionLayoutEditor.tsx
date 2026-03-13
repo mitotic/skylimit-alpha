@@ -19,8 +19,7 @@ import { getUserLists, getListMembers } from '../api/social'
 interface EditorPattern {
   id: string
   handle: string
-  textPattern: string
-  extraTextPatterns?: string[]  // additional patterns from parsed file, read-only display
+  textPattern: string          // comma-separated topics (e.g. "tech, science")
   readOnly?: boolean           // true for wildcard patterns
   originalLine?: string        // original text for read-only patterns
 }
@@ -152,22 +151,15 @@ function convertEdition(
 
     for (const pat of sec.patterns) {
       const hasWildcard = pat.userPattern.includes('*')
-      const extraTexts = pat.textPatterns.length > 1
-        ? pat.textPatterns.slice(1).map(tp => tp.pattern)
-        : undefined
 
       if (hasWildcard) {
         warnings.push(`Wildcard pattern "@${pat.userPattern}" shown as read-only`)
-      }
-      if (extraTexts) {
-        warnings.push(`Multiple topics for "@${pat.userPattern}" — only first is editable`)
       }
 
       patterns.push({
         id: makeId(),
         handle: pat.userPattern,
-        textPattern: pat.textPatterns.length > 0 ? pat.textPatterns[0].pattern : '',
-        extraTextPatterns: extraTexts,
+        textPattern: pat.textPatterns.map(tp => tp.pattern).join(', '),
         readOnly: hasWildcard,
         originalLine: hasWildcard
           ? `@${pat.userPattern}${pat.textPatterns.length > 0 ? ': ' + pat.textPatterns.map(tp => tp.pattern).join(', ') : ''}`
@@ -254,9 +246,8 @@ function generateEditionPatternLines(edition: EditorEdition): string[] {
         continue
       }
 
-      const allPatterns = [pattern.textPattern, ...(pattern.extraTextPatterns || [])].filter(Boolean)
-      if (allPatterns.length > 0) {
-        lines.push(`@${pattern.handle}: ${allPatterns.join(', ')}`)
+      if (pattern.textPattern) {
+        lines.push(`@${pattern.handle}: ${pattern.textPattern}`)
       } else {
         lines.push(`@${pattern.handle}`)
       }
@@ -403,10 +394,12 @@ function TextPatternAutocomplete({
   value,
   onChange,
   suggestions,
+  priorityPatterns,
 }: {
   value: string
   onChange: (pattern: string) => void
   suggestions: TextSuggestions
+  priorityPatterns?: string
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState(value)
@@ -418,15 +411,33 @@ function TextPatternAutocomplete({
     setSearch(value)
   }, [value])
 
+  // Disable autocomplete when comma-separated topics are present
+  const hasComma = search.includes(',')
+
   const filtered = useMemo(() => {
-    const all = [
-      ...suggestions.hashtags.map(h => ({ value: h, type: 'tag' as const })),
-      ...suggestions.domains.map(d => ({ value: d, type: 'domain' as const })),
+    if (hasComma) return []
+    // Parse priority patterns into individual items, shown first
+    const priorityItems: { value: string; type: 'priority' }[] = []
+    if (priorityPatterns) {
+      const seen = new Set<string>()
+      for (const p of priorityPatterns.split(',')) {
+        const trimmed = p.trim()
+        if (trimmed && !seen.has(trimmed)) {
+          seen.add(trimmed)
+          priorityItems.push({ value: trimmed, type: 'priority' as const })
+        }
+      }
+    }
+    const priorityValues = new Set(priorityItems.map(p => p.value.toLowerCase()))
+    const searchItems = [
+      ...suggestions.hashtags.filter(h => !priorityValues.has(h.toLowerCase())).map(h => ({ value: h, type: 'tag' as const })),
+      ...suggestions.domains.filter(d => !priorityValues.has(d.toLowerCase())).map(d => ({ value: d, type: 'domain' as const })),
     ]
+    const all = [...priorityItems, ...searchItems]
     if (!search) return all.slice(0, 10)
     const lower = search.toLowerCase()
     return all.filter(item => item.value.toLowerCase().includes(lower)).slice(0, 10)
-  }, [suggestions, search])
+  }, [suggestions, search, hasComma, priorityPatterns])
 
   const handleSelect = useCallback((pattern: string) => {
     setSearch(pattern)
@@ -513,7 +524,10 @@ function TextPatternAutocomplete({
                 handleSelect(item.value)
               }}
             >
-              <span className={item.type === 'tag' ? 'text-blue-600 dark:text-blue-400' : ''}>
+              <span className={
+                item.type === 'priority' ? 'text-orange-600 dark:text-orange-400' :
+                item.type === 'tag' ? 'text-blue-600 dark:text-blue-400' : ''
+              }>
                 {item.value}
               </span>
               <span className="ml-2 text-xs text-gray-400">{item.type}</span>
@@ -560,6 +574,7 @@ function InlinePatternForm({
             value={textPattern}
             onChange={setTextPattern}
             suggestions={suggestions}
+            priorityPatterns={follows.find(f => f.username === handle)?.priorityPatterns}
           />
         </div>
       ) : (
@@ -798,7 +813,6 @@ function NewspaperPatternLine({
   }
 
   const displayName = displayNameMap.get(pattern.handle)
-  const allTopics = [pattern.textPattern, ...(pattern.extraTextPatterns || [])].filter(Boolean)
 
   return (
     <div className="flex items-center group py-0.5">
@@ -816,9 +830,9 @@ function NewspaperPatternLine({
         ) : (
           <span>@{pattern.handle}</span>
         )}
-        {allTopics.length > 0 && (
+        {pattern.textPattern && (
           <span className="text-gray-600 dark:text-gray-400">
-            : {allTopics.join(', ')}
+            : {pattern.textPattern}
           </span>
         )}
       </div>

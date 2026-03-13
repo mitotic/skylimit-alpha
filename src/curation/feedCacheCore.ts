@@ -22,8 +22,9 @@ async function getDB(): Promise<IDBDatabase> {
 
 const STORE_FEED_CACHE = 'feed_cache'
 
-// Feed cache retention period - aligns with max lookback period (2 days)
-export const FEED_CACHE_RETENTION_HOURS = 48
+// Feed cache retention period - aligns with max lookback period
+export const FEED_CACHE_RETENTION_DAYS = 2
+export const FEED_CACHE_RETENTION_HOURS = FEED_CACHE_RETENTION_DAYS * 24
 export const FEED_CACHE_RETENTION_MS = FEED_CACHE_RETENTION_HOURS * 60 * 60 * 1000
 
 // Safety limits for fetch iterations and default page size
@@ -1056,6 +1057,36 @@ export async function getCachedFeed(limit: number = 50): Promise<CurationFeedVie
     })
   } catch (error) {
     log.warn('Feed Cache', 'Failed to get cached feed:', error)
+    return []
+  }
+}
+
+/**
+ * Get all raw feed cache entries, optionally filtered by minimum postTimestamp.
+ * Returns FeedCacheEntry[] (not converted to CurationFeedViewPost).
+ * Used by recurateFromCache to read entries before clearing.
+ */
+export async function getAllFeedCacheEntries(
+  minPostTimestamp?: number
+): Promise<FeedCacheEntry[]> {
+  try {
+    const database = await getDB()
+    const transaction = database.transaction([STORE_FEED_CACHE], 'readonly')
+    const store = transaction.objectStore(STORE_FEED_CACHE)
+
+    return new Promise((resolve, reject) => {
+      const request = store.getAll()
+      request.onsuccess = () => {
+        let entries = request.result as FeedCacheEntry[]
+        if (minPostTimestamp !== undefined) {
+          entries = entries.filter(e => e.postTimestamp >= minPostTimestamp)
+        }
+        resolve(entries)
+      }
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    log.warn('Feed Cache', 'Failed to get all feed cache entries:', error)
     return []
   }
 }
