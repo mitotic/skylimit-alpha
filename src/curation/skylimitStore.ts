@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   secretKey: 'default',
   editionLayout: '',
   anonymizeUsernames: false,
-  debugMode: false,
+  debugMode: true,
   feedRedisplayIdleInterval: FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT * 60 * 1000, // in milliseconds
   feedPageLength: 25, // number of posts per page, default 25
   infiniteScrollingOption: false, // default to "Load More" button

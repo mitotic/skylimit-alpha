@@ -214,6 +214,9 @@ export async function detectSkyspeed(
   serviceUrl: string,
   accessJwt: string,
 ): Promise<SkyspeedConfig | null> {
+  // Skip Skyspeed detection for standard Bluesky servers — avoids a 501 console error
+  if (serviceUrl === 'https://bsky.social') return null
+
   try {
     const response = await fetch(`${serviceUrl}/xrpc/dev.skyspeed.getConfig`, {
       headers: {

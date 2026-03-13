@@ -14,7 +14,7 @@ import type { BskyAgent } from '@atproto/api'
 import PostCard from './PostCard'
 import { getEditionList, getEditionContent, EditionDisplayData } from '../curation/skylimitEditionAssembly'
 import { getPostUniqueId } from '../curation/skylimitGeneral'
-import { getSettings } from '../curation/skylimitStore'
+import { getSettings, updateSettings } from '../curation/skylimitStore'
 import { useSwipeNavigation } from '../hooks/useSwipeNavigation'
 import { useViewTracking } from '../hooks/useViewTracking'
 import { CurationFeedViewPost, EditionRegistryEntry } from '../curation/types'
@@ -279,6 +279,12 @@ export default function EditionView({
     setSectionsExpanded(prev => !prev)
   }, [])
 
+  const handleNewspaperViewToggle = useCallback(async () => {
+    const newValue = !newspaperView
+    setNewspaperView(newValue)
+    await updateSettings({ newspaperView: newValue })
+  }, [newspaperView])
+
   // Swipe left/right to navigate between editions on mobile
   // Use state (not ref) so the hook's effect re-runs when the element appears
   // after conditional early returns (loading states render without this div).
@@ -427,11 +433,11 @@ export default function EditionView({
             <button
               ref={titleRef}
               onClick={() => setShowEditionList(prev => !prev)}
-              className="font-semibold text-lg text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
+              className={`font-semibold text-lg text-blue-700 dark:text-blue-400 hover:underline cursor-pointer ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}
             >
               {edition.editionName}
             </button>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
+            <div className={`text-base text-gray-500 dark:text-gray-400 ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}>
               {edition.editionDate.toLocaleString(undefined, {
                 hour: 'numeric', minute: '2-digit',
                 month: 'long', day: 'numeric', year: 'numeric',
@@ -499,17 +505,26 @@ export default function EditionView({
           </button>
         </div>
 
-        {/* Open/Close Sections toggle */}
-        {namedSections.length > 0 && (
-          <div className="text-center pb-2">
+        {/* Newspaper view checkbox + Open/Close Sections toggle */}
+        <div className="flex items-center justify-between px-4 pb-2">
+          <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={newspaperView}
+              onChange={handleNewspaperViewToggle}
+              className="w-4 h-4"
+            />
+            Newspaper view
+          </label>
+          {namedSections.length > 0 && (
             <button
               onClick={toggleSections}
               className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
             >
-              {sectionsExpanded ? 'Close Sections' : 'Open Sections'}
+              {sectionsExpanded ? 'Close sections' : 'Open sections'}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Default section (always expanded, no header) */}
@@ -547,7 +562,7 @@ export default function EditionView({
             </span>
             <div className="flex-1 flex items-center gap-2">
               <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />
-              <span className="text-base font-semibold text-blue-600 dark:text-blue-400 tracking-wide">
+              <span className={`text-lg font-semibold text-blue-600 dark:text-blue-400 tracking-wide ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}>
                 {section.name}
               </span>
               <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />

@@ -809,7 +809,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           )}
 
           {record?.text && (
-            <div className="mb-2 whitespace-pre-wrap break-words" style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>
+            <div className={`mb-2 whitespace-pre-wrap break-words ${isEditionPost && editionFont ? (editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif') : ''}`} style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>
               <RichText text={record.text} facets={record.facets} />
             </div>
           )}

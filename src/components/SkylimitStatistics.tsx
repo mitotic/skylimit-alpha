@@ -12,6 +12,7 @@ import { getSettings } from '../curation/skylimitStore'
 import { useSession } from '../auth/SessionContext'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 import CurationPopup from './CurationPopup'
+import { getGlossaryDefinition } from '../data/helpGlossary'
 import { clientNow } from '../utils/clientClock'
 import log from '../utils/logger'
 
@@ -27,7 +28,7 @@ interface AccountStatistics {
   isSelf: boolean
 }
 
-type SortField = 'username' | 'postsPerDay' | 'allowedPerDay' | 'probability' | 'amp' | 'engaged' | 'name'
+type SortField = 'username' | 'postsPerDay' | 'allowedPerDay' | 'shown' | 'probability' | 'amp' | 'engaged' | 'name'
 type SortDirection = 'asc' | 'desc'
 
 type ChartMode = 'posting' | 'normalized'
@@ -244,6 +245,7 @@ export default function SkylimitStatistics() {
   const [loadingAmp, setLoadingAmp] = useState(false)
   const [sortField, setSortField] = useState<SortField>('postsPerDay')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [headerTooltip, setHeaderTooltip] = useState<string | null>(null)
   const [debugMode, setDebugMode] = useState(false)
   const [chartMode, setChartMode] = useState<ChartMode>('posting')
   const popupRef = useRef<HTMLDivElement>(null)
@@ -582,6 +584,9 @@ export default function SkylimitStatistics() {
           comparison = allowA - allowB
           break
         }
+        case 'shown':
+          comparison = a.userEntry.shown_daily - b.userEntry.shown_daily
+          break
         case 'probability':
           comparison = a.displayProbability - b.displayProbability
           break
@@ -603,14 +608,91 @@ export default function SkylimitStatistics() {
     })
   }, [accountStats, sortField, sortDirection])
 
-  // Get sort indicator for column header
-  const getSortIndicator = (field: SortField): JSX.Element => {
-    if (sortField !== field) {
-      // Unsorted: stacked up/down chevron outlines to indicate sortable
-      return <span className="text-gray-400 dark:text-gray-500 ml-1 inline-flex flex-col align-middle leading-none"><svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-2" fill="none" viewBox="0 0 24 16" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 12l7-7 7 7" /></svg><svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-2" fill="none" viewBox="0 0 24 16" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 4l-7 7-7-7" /></svg></span>
+  // Glossary key mapping for column headers
+  const columnGlossaryMap: Record<string, string> = {
+    username: 'Followee',
+    amp: 'Amp factor',
+    postsPerDay: 'Posts',
+    allowedPerDay: 'Allow',
+    shown: 'Shown',
+    probability: 'Show probability',
+    engaged: 'Enggd',
+    name: '', // inline help text, not from glossary
+  }
+
+  // Get help text for a column
+  const getColumnHelp = (field: SortField): string => {
+    if (field === 'name') return 'The display name of the account.'
+    const glossaryKey = columnGlossaryMap[field]
+    return glossaryKey ? (getGlossaryDefinition(glossaryKey) || '') : ''
+  }
+
+  // Position and show tooltip for a column header
+  const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null)
+
+  const handleHeaderClick = (field: SortField, e: React.MouseEvent) => {
+    if (headerTooltip === field) {
+      setHeaderTooltip(null)
+      setTooltipPos(null)
+      return
     }
-    // Sorted: filled green triangle pointing up (asc) or down (desc)
-    return <span className="text-green-600 dark:text-green-400 ml-1 inline-flex align-middle">{sortDirection === 'asc' ? <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24"><polygon points="12,3 23,21 1,21" fill="currentColor" /></svg> : <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24"><polygon points="12,21 1,3 23,3" fill="currentColor" /></svg>}</span>
+    // Position tooltip relative to the clicked header text
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const tooltipWidth = 260
+    const tooltipHeight = 80 // approximate
+    const viewportW = window.innerWidth
+    const viewportH = window.innerHeight
+
+    // Prefer below the header, but flip above if not enough space
+    let top = rect.bottom + 4
+    if (top + tooltipHeight > viewportH) {
+      top = rect.top - tooltipHeight - 4
+    }
+
+    // Prefer aligned to left edge of header, but shift left if it would clip the right edge
+    let left = rect.left
+    if (left + tooltipWidth > viewportW - 8) {
+      left = viewportW - tooltipWidth - 8
+    }
+    if (left < 8) left = 8
+
+    setTooltipPos({ top, left })
+    setHeaderTooltip(field)
+  }
+
+  // Render a sortable column header with info tooltip and sort control
+  const renderSortableHeader = (label: string, field: SortField, options?: { italic?: boolean }): JSX.Element => {
+    const isActive = sortField === field
+
+    const sortIcon = isActive ? (
+      sortDirection === 'asc'
+        ? <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24"><polygon points="12,3 23,21 1,21" fill="currentColor" /></svg>
+        : <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24"><polygon points="12,21 1,3 23,3" fill="currentColor" /></svg>
+    ) : (
+      <span className="inline-flex flex-col leading-none">
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-2" fill="none" viewBox="0 0 24 16" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 12l7-7 7 7" /></svg>
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-2" fill="none" viewBox="0 0 24 16" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M19 4l-7 7-7-7" /></svg>
+      </span>
+    )
+
+    return (
+      <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm font-semibold select-none">
+        <div className="flex flex-col items-start">
+          <span
+            className={`text-blue-600 dark:text-blue-400 cursor-pointer${options?.italic ? ' italic' : ''}`}
+            onClick={(e) => handleHeaderClick(field, e)}
+          >
+            {label}
+          </span>
+          <span
+            className="text-blue-600 dark:text-blue-400 cursor-pointer pt-1 inline-flex align-middle"
+            onClick={() => handleSort(field)}
+          >
+            {sortIcon}
+          </span>
+        </div>
+      </th>
+    )
   }
 
   if (loading) {
@@ -745,62 +827,34 @@ export default function SkylimitStatistics() {
         </div>
       )}
 
+      {/* Header tooltip overlay (fixed position to avoid table clipping) */}
+      {headerTooltip && tooltipPos && (
+        <div
+          className="fixed z-50 p-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg text-xs font-normal text-gray-700 dark:text-gray-300"
+          style={{ top: tooltipPos.top, left: tooltipPos.left, width: 260 }}
+          onClick={() => { setHeaderTooltip(null); setTooltipPos(null) }}
+        >
+          {getColumnHelp(headerTooltip as SortField)}
+        </div>
+      )}
+
       {/* Active Followee Statistics Table */}
       <div className="w-full">
         <h3 className="text-lg font-semibold mb-1">Active Followees</h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Daily average statistics (* =&gt; probabilities updated within last week)</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Daily average statistics (* indicates probabilities updated within last week)</p>
         <div className="overflow-x-auto max-w-full" style={{ WebkitOverflowScrolling: 'touch' }}>
           <table className="w-full border-collapse border border-gray-300 dark:border-gray-600 text-sm">
             <thead>
               <tr className="bg-gray-100 dark:bg-gray-700">
                 <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">#</th>
-                <th
-                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
-                  onClick={() => handleSort('username')}
-                >
-                  Followee{getSortIndicator('username')}
-                </th>
-                <th
-                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
-                  onClick={() => handleSort('amp')}
-                >
-                  Amp{getSortIndicator('amp')}
-                </th>
-                <th
-                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
-                  onClick={() => handleSort('postsPerDay')}
-                >
-                  Posts{getSortIndicator('postsPerDay')}
-                </th>
-                <th
-                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
-                  onClick={() => handleSort('allowedPerDay')}
-                >
-                  Allow{getSortIndicator('allowedPerDay')}
-                </th>
-                {debugMode && (
-                  <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold">
-                    Shown
-                  </th>
-                )}
-                <th
-                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
-                  onClick={() => handleSort('probability')}
-                >
-                  Prob{getSortIndicator('probability')}
-                </th>
-                <th
-                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
-                  onClick={() => handleSort('engaged')}
-                >
-                  Enggd{getSortIndicator('engaged')}
-                </th>
-                <th
-                  className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left text-sm font-semibold cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none"
-                  onClick={() => handleSort('name')}
-                >
-                  Name{getSortIndicator('name')}
-                </th>
+                {renderSortableHeader('Followee', 'username')}
+                {renderSortableHeader('Amp', 'amp')}
+                {renderSortableHeader('Posts', 'postsPerDay')}
+                {renderSortableHeader('Allow', 'allowedPerDay')}
+                {debugMode && renderSortableHeader('Shown', 'shown', { italic: true })}
+                {renderSortableHeader('Prob', 'probability')}
+                {renderSortableHeader('Enggd', 'engaged')}
+                {renderSortableHeader('Name', 'name')}
               </tr>
             </thead>
             <tbody>

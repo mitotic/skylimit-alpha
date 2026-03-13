@@ -20,6 +20,7 @@ import ConfirmModal from '../components/ConfirmModal'
 import EditionLayoutEditor from '../components/EditionLayoutEditor'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
+import { helpGlossary } from '../data/helpGlossary'
 import {
   exportCurationData, validateCurationImport, applyCurationImport,
   downloadJson, type ImportValidation
@@ -163,6 +164,10 @@ export default function SettingsPage() {
   const [readOnlyMode, setReadOnlyMode] = useState(() =>
     isReadOnlyMode()
   )
+  const [beginnerMode, setBeginnerMode] = useState(() => {
+    const stored = localStorage.getItem('websky_beginner_mode')
+    return stored === null ? true : stored === 'true'
+  })
   const [textSize, setTextSize] = useState<'small' | 'medium' | 'large'>(() => {
     const stored = localStorage.getItem('websky_text_size')
     if (stored === 'small' || stored === 'medium' || stored === 'large') return stored
@@ -572,46 +577,82 @@ export default function SettingsPage() {
 
       <div className="card space-y-4">
         <h2 className="text-lg font-semibold">Interaction</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-medium">Read-only Mode</div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              Prevent accidental likes, reposts, replies, bookmarks, and follows
-            </div>
-          </div>
-          <button
-            onClick={() => {
+        <label className="flex items-center space-x-3">
+          <input
+            type="checkbox"
+            checked={readOnlyMode}
+            onChange={() => {
               const newValue = !readOnlyMode
               localStorage.setItem('websky_read_only_mode', newValue.toString())
               setReadOnlyMode(newValue)
             }}
-            className={`btn ${readOnlyMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
-          >
-            {readOnlyMode ? 'Disable' : 'Enable'}
-          </button>
-        </div>
+            className="w-5 h-5"
+          />
+          <div>
+            <span className="font-medium">Read-only Mode</span>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Prevent accidental likes, reposts, replies, bookmarks, and follows
+            </div>
+          </div>
+        </label>
+        {settings && (
+          <label className="flex items-center space-x-3">
+            <input
+              type="checkbox"
+              checked={settings.debugMode}
+              onChange={(e) => updateSetting('debugMode', e.target.checked)}
+              className="w-5 h-5"
+            />
+            <div>
+              <span className="font-medium">Debug Mode</span>
+              <div className="text-sm text-gray-500 dark:text-gray-400">
+                Enable additional UI features for debugging
+              </div>
+            </div>
+          </label>
+        )}
+        <label className="flex items-center space-x-3">
+          <input
+            type="checkbox"
+            checked={beginnerMode}
+            onChange={() => {
+              const newValue = !beginnerMode
+              localStorage.setItem('websky_beginner_mode', newValue.toString())
+              setBeginnerMode(newValue)
+            }}
+            className="w-5 h-5"
+          />
+          <div>
+            <span className="font-medium">Beginner Mode</span>
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Display additional help info for user interaction
+            </div>
+          </div>
+        </label>
       </div>
 
       <div className="card space-y-4">
         <h2 className="text-lg font-semibold">Navigation</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-medium">Click to <span className="text-blue-500">Bluesky</span></div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              Open threads, search, saved posts, notifications, and profiles in Bluesky. You can return to Skylimit by using back navigation repeatedly (i.e., clicking back once more after returning to the Bluesky home page).
-            </div>
-          </div>
-          <button
-            onClick={() => {
+        <label className="flex items-start space-x-3">
+          <input
+            type="checkbox"
+            checked={clickToBlueSky}
+            onChange={() => {
               const newValue = !clickToBlueSky
               localStorage.setItem('websky_click_to_bluesky', newValue.toString())
               setClickToBlueSky(newValue)
             }}
-            className="btn bg-blue-500 hover:bg-blue-600 text-white"
-          >
-            {clickToBlueSky ? 'Disable' : 'Enable'}
-          </button>
-        </div>
+            className="w-5 h-5 mt-0.5 shrink-0"
+          />
+          <div>
+            <span className="font-medium">Click to <span className="text-blue-500">Bluesky</span></span>
+            {beginnerMode && (
+              <div className="text-sm text-gray-500 dark:text-gray-400">
+                Open threads, search, saved posts, notifications, and profiles in Bluesky. You can return to Skylimit by using back navigation repeatedly (i.e., clicking back once more after returning to the Bluesky home page).
+              </div>
+            )}
+          </div>
+        </label>
       </div>
 
       <div className="card space-y-4">
@@ -963,16 +1004,6 @@ This cannot be undone.`}
 
           <DisclosureSection title="Debug Settings">
             <div className="space-y-4">
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={settings.debugMode}
-                  onChange={(e) => updateSetting('debugMode', e.target.checked)}
-                  className="w-5 h-5"
-                />
-                <span>Debug mode (enables additional UI features)</span>
-              </label>
-
               <label className="flex items-center space-x-3">
                 <span>Console log level</span>
                 <select
@@ -1679,12 +1710,11 @@ You will be logged out and redirected to the login page.`}
                   rows={28}
                   placeholder={"# HEAD\n\n@*: #BreakingNews\n@quietposter.bsky.social\n\n## Workplace - common section for all editions\n@coworker1\n@coworker2\n\n# 08:00 Morning Edition\n@always.interesting.bsky.social\n@sometimes.interesting: topic, second topic\n\n## Substacks in the morning\n@author1.com: blogname1.substack.com\n@author2.bsky.social: blogname2.substack.com\n\n# 12:00 Noon Edition\n\n## Humor\n@xkcd.com\n\n# 18:00 Evening Edition\n\n## Coding\n@simonwillison.net\n\n# TAIL\n\n## Another common catchall section\n@author1.com"}
                 />
-                <p className="text-sm text-gray-500 mt-1">
-                  Configure edition layout patterns. Lines starting with @ define user patterns
-                  (with optional topics after colon separated by commas). ## marks sections, # hh:mm marks timed editions.
-                  # HEAD and # TAIL mark leading/trailing sections that apply to all editions.
-                  * denotes wildcard match to word boundary. Patterns are matched top-to-bottom (first match wins).
-                </p>
+                {beginnerMode && (
+                  <p className="text-sm text-gray-500 mt-1">
+                    Configure edition layout patterns. {helpGlossary['Edition layout']}
+                  </p>
+                )}
                 <div className="mt-2 flex items-center gap-3">
                   <Button
                     variant="primary"
@@ -1736,21 +1766,6 @@ You will be logged out and redirected to the login page.`}
           </p>
         </div>
 
-        <div>
-          <label className="flex items-center space-x-3">
-            <input
-              type="checkbox"
-              checked={settings.newspaperView || false}
-              onChange={async (e) => {
-                const newValue = e.target.checked
-                updateSetting('newspaperView', newValue)
-                await updateSettings({ ...settings, newspaperView: newValue })
-              }}
-              className="w-5 h-5"
-            />
-            <span>Use newspaper view for editions</span>
-          </label>
-        </div>
 
         <div className="flex items-center space-x-3">
           <span>Edition font:</span>
