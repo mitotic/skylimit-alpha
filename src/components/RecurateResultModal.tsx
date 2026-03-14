@@ -12,9 +12,11 @@ interface RecurateResultModalProps {
   isOpen: boolean
   onClose: () => void
   stats: RecurateResultStats | null
+  title?: string
+  verb?: string
 }
 
-export default function RecurateResultModal({ isOpen, onClose, stats }: RecurateResultModalProps) {
+export default function RecurateResultModal({ isOpen, onClose, stats, title = 'Re-curation complete', verb = 'Re-curated' }: RecurateResultModalProps) {
   if (!stats) return null
 
   const droppedCount = stats.totalEntriesRecurated - stats.displayableCount
@@ -31,10 +33,10 @@ export default function RecurateResultModal({ isOpen, onClose, stats }: Recurate
   const endTimeStr = new Date(stats.newestEntryTimestamp).toLocaleString()
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Re-curation complete" size="sm">
+    <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm">
       <div className="space-y-4">
         <p className="text-gray-700 dark:text-gray-300">
-          Re-curated <strong>{stats.totalEntriesRecurated.toLocaleString()}</strong> posts
+          {verb} <strong>{stats.totalEntriesRecurated.toLocaleString()}</strong> posts
           spanning <strong>{timeDesc}</strong>, from {startTimeStr} to {endTimeStr}.
         </p>
 
@@ -48,7 +50,7 @@ export default function RecurateResultModal({ isOpen, onClose, stats }: Recurate
 
         <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
           <span>Shown: <strong>{stats.displayableCount.toLocaleString()}</strong></span>
-          <span>Editions: <strong>{stats.editionsAssembled}</strong></span>
+          <span className="text-red-600 dark:text-red-400">Editions: <strong>{stats.editionsAssembled}</strong></span>
         </div>
 
         <button

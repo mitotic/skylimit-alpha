@@ -205,10 +205,15 @@ export type SuggestionsMap = Map<string, TextSuggestions>
  * IMPORTANT: uniqueId vs URI distinction:
  * - uniqueId: For original posts, same as the post's URI. For reposts, it's
  *   reason.uri (the AT Protocol repost URI) if available, otherwise a synthetic
- *   ID in the format `sl://repost/${reposterDid}:${postUri}`.
+ *   ID in the format `sl-rp://repost/${reposterDid}:${postUri}`.
+ *   Synthetic edition posts use `sl-ed://repost/${editorDid}:${postUri}`.
  * - repostUri: The actual AT Protocol URI of the original post (for reposts only).
  * - inReplyToUri: The actual AT Protocol URI of the parent post (for replies only).
  */
+// Synthetic URI protocol prefixes for repost and edition unique IDs
+export const SL_REPOST_PREFIX = 'sl-rp://'   // Regular reposts without reason.uri
+export const SL_EDITION_PREFIX = 'sl-ed://'  // Synthetic edition posts
+
 // Post engagement level constants (powers of 10, additive).
 // Multiple levels can be combined: e.g., 111 = none + clicked + liked.
 // Use Math.floor(Math.log10(postEngagement)) to get highest level index (0–5).
@@ -383,7 +388,8 @@ export type CurationFeedViewPost = AppBskyFeedDefs.FeedViewPost & {
  * IMPORTANT: uniqueId is NOT the same as the post's URI for reposts.
  * - For original posts: uniqueId equals post.post.uri
  * - For reposts: uniqueId is reason.uri (the AT Protocol repost URI) if available,
- *   otherwise a synthetic ID in the format `sl://repost/${reposterDid}:${post.post.uri}`
+ *   otherwise a synthetic ID in the format `sl-rp://repost/${reposterDid}:${post.post.uri}`
+ *   Synthetic edition posts use `sl-ed://repost/${editorDid}:${post.post.uri}`
  */
 export interface FeedCacheEntry {
   uniqueId: string               // Unique identifier (see above for format)

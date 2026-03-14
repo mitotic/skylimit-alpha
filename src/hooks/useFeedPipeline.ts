@@ -64,9 +64,10 @@ export interface UseFeedPipelineReturn {
   showCurationInitModal: boolean
   setShowCurationInitModal: React.Dispatch<React.SetStateAction<boolean>>
   curationInitStats: CurationInitStatsDisplay | null
-  showRecurateResultModal: boolean
-  setShowRecurateResultModal: React.Dispatch<React.SetStateAction<boolean>>
-  recurateResultStats: RecurateResultStats | null
+  showRefreshResultModal: boolean
+  setShowRefreshResultModal: React.Dispatch<React.SetStateAction<boolean>>
+  refreshResultStats: RecurateResultStats | null
+  refreshResultTitle: string
   // Paged updates state
   newPostsCount: number
   setNewPostsCount: React.Dispatch<React.SetStateAction<number>>
@@ -148,8 +149,10 @@ export function useFeedPipeline({
   const [initPhase, setInitPhase] = useState<'posts' | 'follows' | null>(null)
   const [showCurationInitModal, setShowCurationInitModal] = useState(false)
   const [curationInitStats, setCurationInitStats] = useState<CurationInitStatsDisplay | null>(null)
-  const [showRecurateResultModal, setShowRecurateResultModal] = useState(false)
-  const [recurateResultStats, setRecurateResultStats] = useState<RecurateResultStats | null>(null)
+  const [showRefreshResultModal, setShowRefreshResultModal] = useState(false)
+  const [refreshResultStats, setRefreshResultStats] = useState<RecurateResultStats | null>(null)
+  const [refreshResultTitle, setRefreshResultTitle] = useState('Re-curation complete')
+  const refetchPendingRef = useRef(false)
   // Paged updates state
   const [newPostsCount, setNewPostsCount] = useState(0)
   const [showNewPostsButton, setShowNewPostsButton] = useState(false)
@@ -931,8 +934,9 @@ export function useFeedPipeline({
                 log.debug('Lookback', `Combined ${initialSecondaryEntries.length} initial + ${fetchResult.entries.length} lookback = ${allEntries.length} total entries`)
               }
 
+              let transferResult = null
               if (allEntries.length > 0) {
-                const transferResult = await transferSecondaryToPrimary(allEntries, 'all', pageLength, isInitialLoadMode)
+                transferResult = await transferSecondaryToPrimary(allEntries, 'all', pageLength, isInitialLoadMode)
                 log.debug('Lookback', `Transferred ${transferResult.postsTransferred} posts to primary`)
               }
 
@@ -1010,10 +1014,27 @@ export function useFeedPipeline({
                 log.debug('Lookback', 'Refreshing feed display with numbered posts...')
                 await refreshDisplayedFeed({ triggerProbe: true, showAllNewPosts: true })
                 setInitialPrefetchDone(true)
+
+                // Show refetch result modal if this was triggered by clearRecentAndReloadHomePage
+                if (refetchPendingRef.current && transferResult && fetchResult.postsFetched > 0) {
+                  refetchPendingRef.current = false
+                  setRefreshResultStats({
+                    totalEntriesRecurated: allEntries.length,
+                    displayableCount: transferResult.displayableCount,
+                    editionsAssembled: transferResult.editionsAssembled,
+                    oldestEntryTimestamp: fetchResult.oldestTimestamp ?? 0,
+                    newestEntryTimestamp: fetchResult.newestTimestamp ?? 0,
+                  })
+                  setRefreshResultTitle('Refetch complete')
+                  setShowRefreshResultModal(true)
+                } else if (refetchPendingRef.current) {
+                  refetchPendingRef.current = false
+                }
               }
             }).catch((err) => {
               log.error('Lookback', 'Failed:', err)
               lookbackInProgressRef.current = false
+              refetchPendingRef.current = false
               setLookingBack(false)
               setLookbackProgress(null)
               setInitPhase(null)
@@ -1561,6 +1582,7 @@ export function useFeedPipeline({
       // (feedCacheIsFresh=false with summariesCacheIsFresh=true → idle return mode)
 
       log.debug('Debug', 'Triggering fresh loadFeed with useCache=false...')
+      refetchPendingRef.current = true
       await loadFeed(undefined, false)
       log.debug('Debug', 'clearRecentAndReloadHomePage: Complete!')
 
@@ -1650,14 +1672,15 @@ export function useFeedPipeline({
         await refreshDisplayedFeed({ triggerProbe: true, showAllNewPosts: true })
 
         // Show re-curation result modal
-        setRecurateResultStats({
+        setRefreshResultStats({
           totalEntriesRecurated: result.totalEntriesRecurated,
           displayableCount: result.displayableCount,
           editionsAssembled: result.editionsAssembled,
           oldestEntryTimestamp: result.oldestEntryTimestamp,
           newestEntryTimestamp: result.newestEntryTimestamp,
         })
-        setShowRecurateResultModal(true)
+        setRefreshResultTitle('Re-curation complete')
+        setShowRefreshResultModal(true)
       }
 
       log.debug('Debug', 'recurateAndReloadHomePage: Complete!')
@@ -2002,8 +2025,9 @@ export function useFeedPipeline({
     initPhase,
     showCurationInitModal, setShowCurationInitModal,
     curationInitStats,
-    showRecurateResultModal, setShowRecurateResultModal,
-    recurateResultStats,
+    showRefreshResultModal, setShowRefreshResultModal,
+    refreshResultStats,
+    refreshResultTitle,
     newPostsCount, setNewPostsCount,
     showNewPostsButton, setShowNewPostsButton,
     nextPageReady, setNextPageReady,

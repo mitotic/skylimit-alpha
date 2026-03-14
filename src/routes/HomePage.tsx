@@ -116,8 +116,9 @@ export default function HomePage() {
     initPhase,
     showCurationInitModal, setShowCurationInitModal,
     curationInitStats,
-    showRecurateResultModal, setShowRecurateResultModal,
-    recurateResultStats,
+    showRefreshResultModal, setShowRefreshResultModal,
+    refreshResultStats,
+    refreshResultTitle,
     newPostsCount, setNewPostsCount,
     showNewPostsButton, setShowNewPostsButton,
     nextPageReady, setNextPageReady,
@@ -1462,9 +1463,11 @@ export default function HomePage() {
       />
 
       <RecurateResultModal
-        isOpen={showRecurateResultModal}
-        onClose={() => setShowRecurateResultModal(false)}
-        stats={recurateResultStats}
+        isOpen={showRefreshResultModal}
+        onClose={() => setShowRefreshResultModal(false)}
+        stats={refreshResultStats}
+        title={refreshResultTitle}
+        verb={refreshResultTitle === 'Refetch complete' ? 'Refetched' : 'Re-curated'}
       />
 
       <Modal isOpen={showIntroModal} onClose={() => setShowIntroModal(false)} title="About Skylimit" size="md">

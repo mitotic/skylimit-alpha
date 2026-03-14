@@ -7,8 +7,8 @@ import { getAuthorFeed, getActorLikes } from '../api/feed'
 import { follow, unfollow } from '../api/social'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost, deletePost } from '../api/posts'
 import { pinPost } from '../api/profile'
-import { getPostUniqueId, getProfileUrl, extractPriorityPatternsFromProfile } from '../curation/skylimitGeneral'
-import { getFilter, getFollow, saveFollow } from '../curation/skylimitCache'
+import { getPostUniqueId, getProfileUrl, extractPriorityPatternsFromProfile, extractTimezone } from '../curation/skylimitGeneral'
+import { getFilter, getFollow, saveFollow, deleteFollow } from '../curation/skylimitCache'
 import { UserEntry, FollowInfo, DEFAULT_PRIORITY_PATTERNS, GlobalStats } from '../curation/types'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
@@ -252,12 +252,25 @@ export default function ProfilePage() {
     try {
       if (profile.viewer?.following) {
         await unfollow(agent, profile.viewer.following)
+        await deleteFollow(profile.handle)
         addToast('Unfollowed', 'success')
       } else {
         await follow(agent, profile.did)
+        const priorityPatterns = extractPriorityPatternsFromProfile(profile)
+        const timezone = extractTimezone(profile)
+        await saveFollow({
+          username: profile.handle,
+          accountDid: profile.did,
+          displayName: profile.displayName || undefined,
+          followed_at: new Date().toISOString(),
+          amp_factor: 1,
+          priorityPatterns: priorityPatterns || undefined,
+          timezone,
+        })
         addToast('Following', 'success')
       }
-      loadProfile()
+      await loadProfile()
+      loadCurationData()
     } catch (error) {
       addToast(error instanceof Error ? error.message : 'Failed to update follow status', 'error')
     }
@@ -827,7 +840,7 @@ export default function ProfilePage() {
                 onClick={handleFollow}
                 className={isReadOnlyMode() ? 'opacity-50 cursor-not-allowed' : ''}
               >
-                {profile.viewer?.following ? 'Following' : 'Follow'}
+                {profile.viewer?.following ? 'Unfollow' : 'Follow'}
               </Button>
             )}
           </div>
@@ -857,14 +870,16 @@ export default function ProfilePage() {
       </div>
 
       {/* Curation Info */}
-      {curationUserEntry && (() => {
-        const postingPerDay = countTotalPostsForUser(curationUserEntry)
-        const regularPerDay = hasPriority ? postingPerDay - curationUserEntry.priority_daily : postingPerDay
+      {(curationUserEntry || curationFollowInfo) && (() => {
+        const postingPerDay = curationUserEntry ? countTotalPostsForUser(curationUserEntry) : 0
+        const regularPerDay = curationUserEntry && hasPriority ? postingPerDay - curationUserEntry.priority_daily : postingPerDay
         return (
           <div className="border-b border-gray-200 dark:border-gray-700 px-4 py-2">
             <div className="text-base font-semibold text-gray-700 dark:text-gray-300 mb-1">Curation Info</div>
             <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
-              <div><span className="font-semibold">Posts/day:</span> {formatCount(regularPerDay)} regular{hasPriority ? `, ${formatCount(curationUserEntry.priority_daily)} priority` : ''}, {formatCount(curationUserEntry.edited_daily)} edited</div>
+              {curationUserEntry && (
+                <div><span className="font-semibold">Posts/day:</span> {formatCount(regularPerDay)} regular{hasPriority ? `, ${formatCount(curationUserEntry.priority_daily)} priority` : ''}, {formatCount(curationUserEntry.edited_daily)} edited</div>
+              )}
               {isOwnProfile && (
                 <div>
                   <span className="font-semibold">Priority topics:</span>{' '}
@@ -873,50 +888,54 @@ export default function ProfilePage() {
               )}
               {!isOwnProfile && (
                 <>
-                  <div><span className="font-semibold">Show probability:</span> <span className={curationUserEntry.regular_prob >= 1.0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{(curationUserEntry.regular_prob * 100).toFixed(1)}%</span> regular{hasPriority ? <>, <span className={curationUserEntry.priority_prob >= 1.0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{(curationUserEntry.priority_prob * 100).toFixed(1)}%</span> priority</> : ''}</div>
-                  <div>
-                    <span className="font-semibold">Amplification factor:</span> {(curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor) < 1 ? (curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor).toFixed(2) : (curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor).toFixed(1)}{' '}
-                    <button
-                      ref={changeButtonRef}
-                      onClick={() => {
-                        if (changeButtonRef.current) {
-                          setCurationPopupAnchorRect(changeButtonRef.current.getBoundingClientRect())
-                        }
-                        setShowCurationPopup(true)
-                      }}
-                      className="ml-1 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
-                    >
-                      Change
-                    </button>
-                    {showCurationPopup && (
-                      <CurationPopup
-                        displayName={profile.displayName || ''}
-                        handle={profile.handle}
-                        popupPosition="below"
-                        anchorRect={curationPopupAnchorRect || undefined}
-                        postingPerDay={Math.round(postingPerDay)}
-                        originalsPerDay={curationUserEntry.original_daily}
-                        priorityPerDay={curationUserEntry.priority_daily}
-                        repostsPerDay={curationUserEntry.repost_daily}
-                        followedRepliesPerDay={curationUserEntry.followed_reply_daily}
-                        unfollowedRepliesPerDay={curationUserEntry.unfollowed_reply_daily}
-                        editedPerDay={curationUserEntry.edited_daily}
-                        regularProb={curationUserEntry.regular_prob}
-                        priorityProb={curationUserEntry.priority_prob}
-                        skylimitNumber={curationGlobalStats?.skylimit_number}
-                        showAmpButtons={true}
-                        ampFactor={curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor}
-                        onAmpUp={handleCurationAmpUp}
-                        onAmpDown={handleCurationAmpDown}
-                        ampLoading={ampLoading}
-                        debugMode={debugMode}
-                        followedAt={curationFollowInfo?.followed_at}
-                        priorityPatterns={priorityPatterns}
-                        timezone={curationFollowInfo?.timezone}
-                        onClose={() => setShowCurationPopup(false)}
-                      />
-                    )}
-                  </div>
+                  {curationUserEntry && (
+                    <div><span className="font-semibold">Show probability:</span> <span className={curationUserEntry.regular_prob >= 1.0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{(curationUserEntry.regular_prob * 100).toFixed(1)}%</span> regular{hasPriority ? <>, <span className={curationUserEntry.priority_prob >= 1.0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{(curationUserEntry.priority_prob * 100).toFixed(1)}%</span> priority</> : ''}</div>
+                  )}
+                  {curationUserEntry && (
+                    <div>
+                      <span className="font-semibold">Amplification factor:</span> {(curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor) < 1 ? (curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor).toFixed(2) : (curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor).toFixed(1)}{' '}
+                      <button
+                        ref={changeButtonRef}
+                        onClick={() => {
+                          if (changeButtonRef.current) {
+                            setCurationPopupAnchorRect(changeButtonRef.current.getBoundingClientRect())
+                          }
+                          setShowCurationPopup(true)
+                        }}
+                        className="ml-1 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
+                      >
+                        Change
+                      </button>
+                      {showCurationPopup && (
+                        <CurationPopup
+                          displayName={profile.displayName || ''}
+                          handle={profile.handle}
+                          popupPosition="below"
+                          anchorRect={curationPopupAnchorRect || undefined}
+                          postingPerDay={Math.round(postingPerDay)}
+                          originalsPerDay={curationUserEntry.original_daily}
+                          priorityPerDay={curationUserEntry.priority_daily}
+                          repostsPerDay={curationUserEntry.repost_daily}
+                          followedRepliesPerDay={curationUserEntry.followed_reply_daily}
+                          unfollowedRepliesPerDay={curationUserEntry.unfollowed_reply_daily}
+                          editedPerDay={curationUserEntry.edited_daily}
+                          regularProb={curationUserEntry.regular_prob}
+                          priorityProb={curationUserEntry.priority_prob}
+                          skylimitNumber={curationGlobalStats?.skylimit_number}
+                          showAmpButtons={true}
+                          ampFactor={curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor}
+                          onAmpUp={handleCurationAmpUp}
+                          onAmpDown={handleCurationAmpDown}
+                          ampLoading={ampLoading}
+                          debugMode={debugMode}
+                          followedAt={curationFollowInfo?.followed_at}
+                          priorityPatterns={priorityPatterns}
+                          timezone={curationFollowInfo?.timezone}
+                          onClose={() => setShowCurationPopup(false)}
+                        />
+                      )}
+                    </div>
+                  )}
                   <div className="mt-2">
                     <div>
                       <span className="font-semibold">Priority topics:</span>{' '}

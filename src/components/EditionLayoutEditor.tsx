@@ -3,7 +3,7 @@
  *
  * Newspaper-style display with mutually exclusive edit modes.
  * Supports: HEAD (common), timed editions, TAIL — all fully editable.
- * Read-only: wildcard patterns displayed inline.
+ * Wildcard patterns (@*) editable as blank handle with required topics.
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
@@ -18,10 +18,8 @@ import { getUserLists, getListMembers } from '../api/social'
 
 interface EditorPattern {
   id: string
-  handle: string
+  handle: string               // blank or '*' means wildcard (@*)
   textPattern: string          // comma-separated topics (e.g. "tech, science")
-  readOnly?: boolean           // true for wildcard patterns
-  originalLine?: string        // original text for read-only patterns
 }
 
 interface EditorSection {
@@ -45,7 +43,7 @@ interface EditorState {
   warnings: string[]
 }
 
-type EditorMode = 'view' | 'add-user' | 'add-section' | 'edit-users' | 'edit-sections' | 'edit-editions'
+type EditorMode = 'view' | 'add-user' | 'add-section' | 'edit-users' | 'edit-sections' | 'edit-editions' | 'import-list'
 
 // --- Time Options (30-minute intervals, 24-hour format) ---
 
@@ -70,7 +68,7 @@ function makeEmptyCommon(): EditorEdition {
     id: makeId(),
     type: 'common',
     time: '',
-    name: 'Head (common to all editions)',
+    name: 'HEAD (common to all editions)',
     sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
     collapsed: false,
   }
@@ -81,7 +79,7 @@ function makeEmptyTail(): EditorEdition {
     id: makeId(),
     type: 'tail',
     time: '',
-    name: 'Tail (common to all editions)',
+    name: 'TAIL (common to all editions)',
     sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
     collapsed: false,
   }
@@ -106,7 +104,7 @@ export function parseLayoutToEditor(text: string): EditorState {
 
   // Process HEAD (editionNumber=0)
   const headEdition = parsed.editions.find(e => e.editionNumber === HEAD_EDITION_NUMBER)
-  const common = convertEdition(headEdition, 'common', warnings)
+  const common = convertEdition(headEdition, 'common')
   editions.push(common)
 
   // Process timed editions
@@ -115,12 +113,12 @@ export function parseLayoutToEditor(text: string): EditorState {
     .sort((a, b) => a.editionNumber - b.editionNumber)
 
   for (const ed of timedEditions) {
-    editions.push(convertEdition(ed, 'timed', warnings))
+    editions.push(convertEdition(ed, 'timed'))
   }
 
   // Process TAIL as editable edition
   const tailParsed = parsed.editions.find(e => e.editionNumber === TAIL_EDITION_NUMBER)
-  const tail = convertEdition(tailParsed, 'tail', warnings)
+  const tail = convertEdition(tailParsed, 'tail')
   editions.push(tail)
 
   return { editions, warnings }
@@ -129,7 +127,6 @@ export function parseLayoutToEditor(text: string): EditorState {
 function convertEdition(
   parsed: Edition | undefined,
   type: 'common' | 'timed' | 'tail',
-  warnings: string[]
 ): EditorEdition {
   if (!parsed) {
     if (type === 'common') return makeEmptyCommon()
@@ -150,20 +147,13 @@ function convertEdition(
     const patterns: EditorPattern[] = []
 
     for (const pat of sec.patterns) {
-      const hasWildcard = pat.userPattern.includes('*')
-
-      if (hasWildcard) {
-        warnings.push(`Wildcard pattern "@${pat.userPattern}" shown as read-only`)
-      }
+      // Wildcard @* stored as blank handle; explicit @* preserved as '*'
+      const handle = pat.userPattern === '*' ? '' : pat.userPattern
 
       patterns.push({
         id: makeId(),
-        handle: pat.userPattern,
+        handle,
         textPattern: pat.textPatterns.map(tp => tp.pattern).join(', '),
-        readOnly: hasWildcard,
-        originalLine: hasWildcard
-          ? `@${pat.userPattern}${pat.textPatterns.length > 0 ? ': ' + pat.textPatterns.map(tp => tp.pattern).join(', ') : ''}`
-          : undefined,
       })
     }
 
@@ -181,8 +171,8 @@ function convertEdition(
   }
 
   const labelMap = {
-    common: 'Head (common to all editions)',
-    tail: 'Tail (common to all editions)',
+    common: 'HEAD (common to all editions)',
+    tail: 'TAIL (common to all editions)',
     timed: parsed.name,
   }
 
@@ -241,16 +231,16 @@ function generateEditionPatternLines(edition: EditorEdition): string[] {
     }
 
     for (const pattern of section.patterns) {
-      if (pattern.readOnly && pattern.originalLine) {
-        lines.push(pattern.originalLine)
-        continue
-      }
+      // Blank or '*' handle → serialize as @*
+      const handle = (!pattern.handle || pattern.handle === '*') ? '*' : pattern.handle
 
       if (pattern.textPattern) {
-        lines.push(`@${pattern.handle}: ${pattern.textPattern}`)
-      } else {
-        lines.push(`@${pattern.handle}`)
+        lines.push(`@${handle}: ${pattern.textPattern}`)
+      } else if (handle !== '*') {
+        // Only emit bare handle if it's not a wildcard (bare @* is invalid)
+        lines.push(`@${handle}`)
       }
+      // Skip patterns with wildcard handle and no topics (invalid)
     }
   }
 
@@ -264,11 +254,13 @@ function HandleAutocomplete({
   onChange,
   follows,
   disabled,
+  placeholder,
 }: {
   value: string
   onChange: (handle: string) => void
   follows: FollowInfo[]
   disabled?: boolean
+  placeholder?: string
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState(value)
@@ -356,7 +348,7 @@ function HandleAutocomplete({
           }, 150)
         }}
         onKeyDown={handleKeyDown}
-        placeholder="handle.bsky.social"
+        placeholder={placeholder || "handle.bsky.social"}
         className="w-full pl-1 pr-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
       />
       {open && filtered.length > 0 && (
@@ -556,50 +548,73 @@ function InlinePatternForm({
 }) {
   const [handle, setHandle] = useState(initial?.handle || '')
   const [textPattern, setTextPattern] = useState(initial?.textPattern || '')
+  const [error, setError] = useState('')
+
+  const handleSave = () => {
+    const h = handle.trim()
+    const t = textPattern.trim()
+    // Both blank is not allowed
+    if (!h && !t) {
+      setError('Handle or topics required')
+      return
+    }
+    // Standalone * not allowed in topics (blank topics implicitly match all)
+    const topicWords = t.split(',').map(w => w.trim())
+    if (topicWords.some(w => w === '*')) {
+      setError('Use blank topics instead of *')
+      return
+    }
+    // Blank handle with topics → wildcard (stored as blank, serialized as @*)
+    onSave(h, t)
+  }
 
   return (
-    <div className="flex items-center gap-2 py-1.5 px-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-      <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">@</span>
-      <div className="flex-[3] min-w-0">
-        <HandleAutocomplete
-          value={handle}
-          follows={follows}
-          onChange={setHandle}
-        />
-      </div>
-      <span className="text-gray-400 dark:text-gray-500 text-sm flex-shrink-0">:</span>
-      {suggestions ? (
-        <div className="flex-[2] min-w-0">
-          <TextPatternAutocomplete
-            value={textPattern}
-            onChange={setTextPattern}
-            suggestions={suggestions}
-            priorityPatterns={follows.find(f => f.username === handle)?.priorityPatterns}
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 py-1.5 px-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+        <span className="text-gray-500 dark:text-gray-400 text-sm flex-shrink-0">@</span>
+        <div className="flex-[3] min-w-0">
+          <HandleAutocomplete
+            value={handle}
+            follows={follows}
+            onChange={(v) => { setHandle(v); setError('') }}
+            placeholder="handle (blank = any)"
           />
         </div>
-      ) : (
-        <input
-          type="text"
-          value={textPattern}
-          onChange={(e) => setTextPattern(e.target.value)}
-          placeholder="topic(s)"
-          className="flex-[2] min-w-0 px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
-        />
-      )}
-      <button
-        type="button"
-        onClick={() => { if (handle.trim()) onSave(handle.trim(), textPattern.trim()) }}
-        className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
-      >
-        Save
-      </button>
-      <button
-        type="button"
-        onClick={onCancel}
-        className="px-2 py-1 text-gray-600 dark:text-gray-400 rounded text-xs hover:bg-gray-200 dark:hover:bg-gray-700"
-      >
-        Cancel
-      </button>
+        <span className="text-gray-400 dark:text-gray-500 text-sm flex-shrink-0">:</span>
+        {suggestions ? (
+          <div className="flex-[2] min-w-0">
+            <TextPatternAutocomplete
+              value={textPattern}
+              onChange={(v) => { setTextPattern(v); setError('') }}
+              suggestions={suggestions}
+              priorityPatterns={follows.find(f => f.username === handle)?.priorityPatterns}
+            />
+          </div>
+        ) : (
+          <input
+            type="text"
+            value={textPattern}
+            onChange={(e) => { setTextPattern(e.target.value); setError('') }}
+            placeholder="topic(s)"
+            className="flex-[2] min-w-0 px-3 py-1.5 border rounded text-sm dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+          />
+        )}
+        <button
+          type="button"
+          onClick={handleSave}
+          className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-2 py-1 text-gray-600 dark:text-gray-400 rounded text-xs hover:bg-gray-200 dark:hover:bg-gray-700"
+        >
+          Cancel
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-600 dark:text-red-400 px-3">{error}</p>}
     </div>
   )
 }
@@ -721,16 +736,8 @@ function InlineEditionForm({
 
 function PlusButton({
   onClick,
-  showMenu,
-  onAddUser,
-  onImportList,
-  menuRef,
 }: {
   onClick: () => void
-  showMenu?: boolean
-  onAddUser?: () => void
-  onImportList?: () => void
-  menuRef?: React.Ref<HTMLDivElement>
 }) {
   return (
     <div className="relative flex items-center py-0.5 group">
@@ -742,27 +749,6 @@ function PlusButton({
       >
         +
       </button>
-      {showMenu && onAddUser && onImportList && (
-        <div
-          ref={menuRef}
-          className="absolute left-6 z-30 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg"
-        >
-          <button
-            type="button"
-            onClick={onAddUser}
-            className="block w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 whitespace-nowrap"
-          >
-            Add user + topic
-          </button>
-          <button
-            type="button"
-            onClick={onImportList}
-            className="block w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 whitespace-nowrap"
-          >
-            Import Bluesky list
-          </button>
-        </div>
-      )}
     </div>
   )
 }
@@ -812,15 +798,15 @@ function NewspaperPatternLine({
     )
   }
 
-  const displayName = displayNameMap.get(pattern.handle)
+  const isWildcard = !pattern.handle || pattern.handle === '*'
+  const displayName = isWildcard ? undefined : displayNameMap.get(pattern.handle)
 
   return (
     <div className="flex items-center group py-0.5">
       <div className={`flex-1 ${fontClass} text-base text-gray-800 dark:text-gray-200`}>
-        {pattern.readOnly && (
-          <span className="text-xs mr-1 text-gray-400">🔒</span>
-        )}
-        {displayName ? (
+        {isWildcard ? (
+          <span className="text-gray-400 dark:text-gray-500 italic">any user</span>
+        ) : displayName ? (
           <>
             <span>{displayName}</span>
             <span className="text-sm text-gray-400 dark:text-gray-500 italic ml-1">
@@ -837,7 +823,7 @@ function NewspaperPatternLine({
         )}
       </div>
 
-      {mode === 'edit-users' && !pattern.readOnly && (
+      {mode === 'edit-users' && (
         <div className="flex items-center gap-0.5 ml-2">
           {onMoveUp && (
             <button type="button" onClick={onMoveUp} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs px-1" title="Move up">▲</button>
@@ -863,11 +849,14 @@ function NewspaperSection({
   follows,
   suggestionsByHandle,
   insertPoint,
-  plusMenuPoint,
   onSetInsertPoint,
-  onSetPlusMenuPoint,
   onAddPattern,
   onImportList,
+  lists,
+  loadingLists,
+  importingList,
+  onSelectList,
+  onCancelListPicker,
   onStartEditPattern,
   onSaveEditPattern,
   onCancelEdit,
@@ -892,11 +881,14 @@ function NewspaperSection({
   follows: FollowInfo[]
   suggestionsByHandle?: SuggestionsMap
   insertPoint: string | null  // afterPatternId or 'top' for insert at top
-  plusMenuPoint: string | null
   onSetInsertPoint: (point: string | null) => void
-  onSetPlusMenuPoint: (point: string | null) => void
   onAddPattern: (afterPatternId: string | null, handle: string, textPattern: string) => void
-  onImportList: (sectionId: string) => void
+  onImportList: () => void
+  lists: { uri: string; name: string }[]
+  loadingLists: boolean
+  importingList: boolean
+  onSelectList: (listUri: string, listName: string) => void
+  onCancelListPicker: () => void
   onStartEditPattern: (patternId: string) => void
   onSaveEditPattern: (patternId: string, handle: string, textPattern: string) => void
   onCancelEdit: () => void
@@ -912,20 +904,6 @@ function NewspaperSection({
   onMoveSectionDown?: () => void
   fontClass: string
 }) {
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  // Close menu on outside click
-  useEffect(() => {
-    if (!plusMenuPoint) return
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onSetPlusMenuPoint(null)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [plusMenuPoint, onSetPlusMenuPoint])
-
   const showPatterns = mode !== 'add-section' && mode !== 'edit-sections' && mode !== 'edit-editions'
   const showSectionControls = mode === 'edit-sections'
   const isEditingThisSection = editingSectionId === section.id
@@ -972,13 +950,13 @@ function NewspaperSection({
   }
 
   const renderPlusButton = (afterPatternId: string | null) => {
-    if (mode !== 'add-user') return null
+    if (mode !== 'add-user' && mode !== 'import-list') return null
     // Prefix with section ID to avoid collisions when multiple sections share the same pointKey (e.g., 'top')
     const pointKey = `${section.id}:${afterPatternId || 'top'}`
     const isActive = insertPoint === pointKey
-    const isMenuOpen = plusMenuPoint === pointKey
 
-    if (isActive) {
+    // In add-user mode, show inline pattern form when active
+    if (mode === 'add-user' && isActive) {
       return (
         <InlinePatternForm
           follows={follows}
@@ -992,19 +970,65 @@ function NewspaperSection({
       )
     }
 
+    // In import-list mode, show inline list picker only at the exact + that was clicked
+    if (mode === 'import-list' && isActive) {
+      return (
+        <div className="flex items-center gap-2 py-1 ml-5">
+          {loadingLists || importingList ? (
+            <span className="text-sm text-gray-500 dark:text-gray-400">
+              {importingList ? 'Importing...' : 'Loading lists...'}
+            </span>
+          ) : lists.length === 0 ? (
+            <>
+              <span className="text-sm text-gray-500 dark:text-gray-400">No lists found</span>
+              <button
+                type="button"
+                onClick={onCancelListPicker}
+                className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 border border-gray-300 dark:border-gray-600 rounded"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <select
+                onChange={(e) => {
+                  if (e.target.value) {
+                    const list = lists.find(l => l.uri === e.target.value)
+                    if (list) onSelectList(list.uri, list.name)
+                  }
+                }}
+                defaultValue=""
+                className="px-2 py-1 border rounded text-sm dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200"
+              >
+                <option value="" disabled>Select a list...</option>
+                {lists.map(list => (
+                  <option key={list.uri} value={list.uri}>{list.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={onCancelListPicker}
+                className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 border border-gray-300 dark:border-gray-600 rounded"
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )
+    }
+
     return (
       <PlusButton
-        onClick={() => onSetPlusMenuPoint(isMenuOpen ? null : pointKey)}
-        showMenu={isMenuOpen}
-        onAddUser={() => {
-          onSetPlusMenuPoint(null)
-          onSetInsertPoint(pointKey)
+        onClick={() => {
+          if (mode === 'add-user') {
+            onSetInsertPoint(pointKey)
+          } else if (mode === 'import-list') {
+            onSetInsertPoint(pointKey)
+            onImportList()
+          }
         }}
-        onImportList={() => {
-          onSetPlusMenuPoint(null)
-          onImportList(section.id)
-        }}
-        menuRef={menuRef}
       />
     )
   }
@@ -1052,15 +1076,17 @@ function NewspaperEdition({
   usedTimes,
   insertPoint,
   insertEditionId,
-  plusMenuPoint,
-  plusMenuEditionId,
   sectionInsertPoint,
   sectionInsertEditionId,
   onSetInsertPoint,
-  onSetPlusMenuPoint,
   onSetSectionInsertPoint,
   onAddPattern,
   onImportList,
+  lists,
+  loadingLists,
+  importingList,
+  onSelectList,
+  onCancelListPicker,
   onStartEditPattern,
   onSaveEditPattern,
   onCancelEditPattern,
@@ -1089,15 +1115,17 @@ function NewspaperEdition({
   usedTimes: Set<string>
   insertPoint: string | null
   insertEditionId: string | null
-  plusMenuPoint: string | null
-  plusMenuEditionId: string | null
   sectionInsertPoint: string | null
   sectionInsertEditionId: string | null
   onSetInsertPoint: (editionId: string, point: string | null) => void
-  onSetPlusMenuPoint: (editionId: string, point: string | null) => void
   onSetSectionInsertPoint: (editionId: string, point: string | null) => void
   onAddPattern: (editionId: string, sectionId: string, afterPatternId: string | null, handle: string, textPattern: string) => void
-  onImportList: (editionId: string, sectionId: string) => void
+  onImportList: () => void
+  lists: { uri: string; name: string }[]
+  loadingLists: boolean
+  importingList: boolean
+  onSelectList: (listUri: string, listName: string) => void
+  onCancelListPicker: () => void
   onStartEditPattern: (patternId: string) => void
   onSaveEditPattern: (editionId: string, sectionId: string, patternId: string, handle: string, textPattern: string) => void
   onCancelEditPattern: () => void
@@ -1155,7 +1183,7 @@ function NewspaperEdition({
     return (
       <div className="flex items-center py-2 border-b-2 border-gray-800 dark:border-gray-300 mb-2">
         {accordionIndicator}
-        <h2 className={`${fontClass} text-2xl font-bold text-gray-900 dark:text-gray-100 flex-1`}>
+        <h2 className={`${fontClass} text-xl font-bold text-gray-900 dark:text-gray-100 flex-1`}>
           {edition.name || 'Untitled Edition'}
         </h2>
         <span className="text-sm text-gray-400 dark:text-gray-500 ml-4 flex-shrink-0">
@@ -1229,13 +1257,16 @@ function NewspaperEdition({
             follows={follows}
             suggestionsByHandle={suggestionsByHandle}
             insertPoint={insertEditionId === edition.id ? insertPoint : null}
-            plusMenuPoint={plusMenuEditionId === edition.id ? plusMenuPoint : null}
             onSetInsertPoint={(point) => onSetInsertPoint(edition.id, point)}
-            onSetPlusMenuPoint={(point) => onSetPlusMenuPoint(edition.id, point)}
             onAddPattern={(afterPatternId, handle, textPattern) =>
               onAddPattern(edition.id, section.id, afterPatternId, handle, textPattern)
             }
-            onImportList={(sectionId) => onImportList(edition.id, sectionId)}
+            onImportList={onImportList}
+            lists={lists}
+            loadingLists={loadingLists}
+            importingList={importingList}
+            onSelectList={onSelectList}
+            onCancelListPicker={onCancelListPicker}
             onStartEditPattern={onStartEditPattern}
             onSaveEditPattern={(patternId, handle, textPattern) =>
               onSaveEditPattern(edition.id, section.id, patternId, handle, textPattern)
@@ -1273,6 +1304,7 @@ function EditorToolbar({
   onAddEdition,
   usedTimes,
   headerContent,
+  fontClass,
 }: {
   mode: EditorMode
   onModeChange: (mode: EditorMode) => void
@@ -1285,10 +1317,11 @@ function EditorToolbar({
   onAddEdition: (time: string, name: string) => void
   usedTimes: Set<string>
   headerContent?: React.ReactNode
+  fontClass: string
 }) {
   const [addEditionName, setAddEditionName] = useState('')
 
-  const modeButton = (label: string, targetMode: EditorMode) => (
+  const modeButton = (label: string, targetMode: EditorMode, sizeClass = 'text-sm', weightClass = '') => (
     <button
       type="button"
       onClick={() => {
@@ -1299,7 +1332,7 @@ function EditorToolbar({
         }
         onModeChange(mode === targetMode ? 'view' : targetMode)
       }}
-      className={`px-3 py-1 text-sm rounded border transition-colors ${
+      className={`${fontClass} px-3 py-1 ${sizeClass} ${weightClass} rounded border transition-colors ${
         mode === targetMode && !(showAddEditionForm && targetMode === 'edit-editions')
           ? 'bg-blue-600 text-white border-blue-600'
           : 'text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -1331,7 +1364,7 @@ function EditorToolbar({
               onToggleAddEditionForm()
             }
           }}
-          className={`px-3 py-1 text-sm rounded border transition-colors ${
+          className={`${fontClass} px-3 py-1 text-lg font-bold rounded border transition-colors ${
             showAddEditionForm
               ? 'bg-blue-600 text-white border-blue-600'
               : 'text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -1397,19 +1430,20 @@ function EditorToolbar({
             </button>
           </>
         )}
-        {modeButton('Edit editions', 'edit-editions')}
+        {modeButton('Edit editions', 'edit-editions', 'text-lg', 'font-bold')}
       </div>
 
       {/* Line 2: Add section + Edit sections */}
       <div className="flex items-center gap-3 ml-4">
-        {modeButton('Add section', 'add-section')}
-        {modeButton('Edit sections', 'edit-sections')}
+        {modeButton('Add section', 'add-section', 'text-base', 'font-semibold')}
+        {modeButton('Edit sections', 'edit-sections', 'text-base', 'font-semibold')}
       </div>
 
-      {/* Line 3: Add user + Edit users + Suggest topics */}
+      {/* Line 3: Add user + Edit users + Import Bluesky list + Suggest topics */}
       <div className="flex items-center gap-3 ml-8">
-        {modeButton('Add user', 'add-user')}
-        {modeButton('Edit users', 'edit-users')}
+        {modeButton('Add user', 'add-user', 'text-base')}
+        {modeButton('Edit users', 'edit-users', 'text-base')}
+        {modeButton('Import Bluesky list', 'import-list', 'text-base')}
         <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer ml-auto">
           <input
             type="checkbox"
@@ -1425,6 +1459,11 @@ function EditorToolbar({
       {mode === 'add-user' && (
         <div className="text-sm text-gray-500 dark:text-gray-400 italic ml-8">
           Click on "+" to add user and topic
+        </div>
+      )}
+      {mode === 'import-list' && (
+        <div className="text-sm text-gray-500 dark:text-gray-400 italic ml-8">
+          Click on "+" to insert Bluesky list
         </div>
       )}
       {mode === 'add-section' && (
@@ -1443,13 +1482,12 @@ interface EditionLayoutEditorProps {
   layoutText: string
   onSave: (text: string) => Promise<void>
   onTextChange?: (text: string) => void
-  feedback: { type: 'success' | 'error'; message: string } | null
-  unfollowedWarning?: string[] | null
   headerContent?: React.ReactNode
   editionFont?: 'serif' | 'sans-serif'
+  readOnly?: boolean
 }
 
-export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, feedback, unfollowedWarning, headerContent, editionFont = 'serif' }: EditionLayoutEditorProps) {
+export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, headerContent, editionFont = 'serif', readOnly = false }: EditionLayoutEditorProps) {
   const [state, setState] = useState<EditorState>(() => parseLayoutToEditor(layoutText))
   const [follows, setFollows] = useState<FollowInfo[]>([])
   const [suggestTextPatterns, setSuggestTextPatterns] = useState(true)
@@ -1466,8 +1504,6 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
   // Insert point tracking for add-user mode
   const [insertPoint, setInsertPoint] = useState<string | null>(null)
   const [insertEditionId, setInsertEditionId] = useState<string | null>(null)
-  const [plusMenuPoint, setPlusMenuPoint] = useState<string | null>(null)
-  const [plusMenuEditionId, setPlusMenuEditionId] = useState<string | null>(null)
 
   // Section insert tracking for add-section mode
   const [sectionInsertPoint, setSectionInsertPoint] = useState<string | null>(null)
@@ -1477,27 +1513,11 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
   const [addEditionTime, setAddEditionTime] = useState('')
   const [showAddEditionForm, setShowAddEditionForm] = useState(false)
 
-  // List import state
+  // List import state (reuses insertPoint/insertEditionId for location tracking)
   const { agent } = useSession()
-  const [showListPicker, setShowListPicker] = useState(false)
   const [lists, setLists] = useState<{ uri: string; name: string }[]>([])
   const [loadingLists, setLoadingLists] = useState(false)
   const [importingList, setImportingList] = useState(false)
-  const [importTargetEditionId, setImportTargetEditionId] = useState<string | null>(null)
-  const [importTargetSectionId, setImportTargetSectionId] = useState<string | null>(null)
-  const listPickerRef = useRef<HTMLDivElement>(null)
-
-  // Close list picker on outside click
-  useEffect(() => {
-    if (!showListPicker) return
-    const handleClick = (e: MouseEvent) => {
-      if (listPickerRef.current && !listPickerRef.current.contains(e.target as Node)) {
-        setShowListPicker(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [showListPicker])
 
   // Escape key to return to view mode
   useEffect(() => {
@@ -1513,10 +1533,9 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
         setEditingEditionId(null)
         setInsertPoint(null)
         setInsertEditionId(null)
-        setPlusMenuPoint(null)
-        setPlusMenuEditionId(null)
         setSectionInsertPoint(null)
         setSectionInsertEditionId(null)
+        setLists([])
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -1530,10 +1549,9 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
     setEditingEditionId(null)
     setInsertPoint(null)
     setInsertEditionId(null)
-    setPlusMenuPoint(null)
-    setPlusMenuEditionId(null)
     setSectionInsertPoint(null)
     setSectionInsertEditionId(null)
+    setLists([])
   }, [mode])
 
   // Load follows for autocomplete
@@ -1738,32 +1756,39 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
     })
   }
 
-  // List import handler
-  const handleImportList = async (editionId: string, sectionId: string) => {
+  // List import handler — reuses insertPoint/insertEditionId for location tracking
+  const handleImportList = async () => {
     if (!agent) return
-    setImportTargetEditionId(editionId)
-    setImportTargetSectionId(sectionId)
-    setShowListPicker(true)
     setLoadingLists(true)
     try {
       const userLists = await getUserLists(agent)
       setLists(userLists)
     } catch (err) {
       alert(`Failed to fetch lists: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      setShowListPicker(false)
+      setInsertPoint(null)
+      setInsertEditionId(null)
     } finally {
       setLoadingLists(false)
     }
   }
 
+  const handleCancelListPicker = () => {
+    setInsertPoint(null)
+    setInsertEditionId(null)
+    setLists([])
+  }
+
   const handleSelectList = async (listUri: string, listName: string) => {
-    if (!agent || !importTargetEditionId || !importTargetSectionId) return
+    if (!agent || !insertEditionId || !insertPoint) return
+    // Extract sectionId from insertPoint (format: "sectionId:afterPatternId")
+    const sectionId = insertPoint.split(':')[0]
     setImportingList(true)
     try {
       const handles = await getListMembers(agent, listUri)
       if (handles.length === 0) {
         alert(`No members found in "${listName}".`)
-        setShowListPicker(false)
+        setInsertPoint(null)
+        setInsertEditionId(null)
         setImportingList(false)
         return
       }
@@ -1777,7 +1802,8 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
           message += `\n\nThere are ${unfollowedCount} unfollowed users in the list. You will need to follow them for their posts to be included in editions.`
         }
         if (!window.confirm(message)) {
-          setShowListPicker(false)
+          setInsertPoint(null)
+          setInsertEditionId(null)
           setImportingList(false)
           return
         }
@@ -1789,15 +1815,16 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
         textPattern: '',
       }))
 
-      findEditionAndApply(importTargetEditionId, edition => ({
+      findEditionAndApply(insertEditionId, edition => ({
         ...edition,
         sections: edition.sections.map(s => {
-          if (s.id !== importTargetSectionId) return s
+          if (s.id !== sectionId) return s
           return { ...s, patterns: [...s.patterns, ...newPatterns] }
         })
       }))
 
-      setShowListPicker(false)
+      setInsertPoint(null)
+      setInsertEditionId(null)
     } catch (err) {
       alert(`Failed to import list: ${err instanceof Error ? err.message : 'Unknown error'}`)
     } finally {
@@ -1823,124 +1850,31 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
   // Deduplicate warnings
   const uniqueWarnings = [...new Set(state.warnings)]
     .filter(w => !w.includes('at least one user/topic'))
-    .filter(w => !w.includes('TAIL section preserved as read-only'))
-
-  const hasTimedEditions = state.editions.some(e => e.type === 'timed')
-
-  // Empty state: prompt for edition times
-  const [timesInput, setTimesInput] = useState('')
-  const [timesError, setTimesError] = useState('')
-
-  const handleInitializeFromTimes = () => {
-    setTimesError('')
-    const raw = timesInput.trim()
-    if (!raw) {
-      setTimesError('Please enter at least one edition time.')
-      return
-    }
-
-    const parts = raw.split(',').map(s => s.trim()).filter(Boolean)
-    const timeRegex = /^\d{2}:\d{2}$/
-    const validTimes: string[] = []
-
-    for (const part of parts) {
-      if (!timeRegex.test(part)) {
-        setTimesError(`Invalid time format: "${part}". Use hh:mm (e.g., 08:00).`)
-        return
-      }
-      const [hStr, mStr] = part.split(':')
-      const h = parseInt(hStr, 10)
-      const m = parseInt(mStr, 10)
-      if (h < 0 || h > 23 || m < 0 || m > 59) {
-        setTimesError(`Invalid time value: "${part}". Hours must be 00-23, minutes 00-59.`)
-        return
-      }
-      if (validTimes.includes(part)) {
-        setTimesError(`Duplicate time: "${part}".`)
-        return
-      }
-      validTimes.push(part)
-    }
-
-    validTimes.sort((a, b) => a.localeCompare(b))
-
-    const newTimedEditions: EditorEdition[] = validTimes.map(time => ({
-      id: makeId(),
-      type: 'timed' as const,
-      time,
-      name: '',
-      sections: [{ id: makeId(), name: '', patterns: [], collapsed: false }],
-      collapsed: false,
-    }))
-
-    let newState: EditorState
-    if (!layoutText.trim()) {
-      newState = {
-        editions: [makeEmptyCommon(), ...newTimedEditions, makeEmptyTail()],
-        warnings: [],
-      }
-    } else {
-      const existingCommon = state.editions.filter(e => e.type === 'common')
-      const existingTimed = state.editions.filter(e => e.type === 'timed')
-      const existingTail = state.editions.filter(e => e.type === 'tail')
-      const allTimed = [...existingTimed, ...newTimedEditions].sort((a, b) => a.time.localeCompare(b.time))
-      newState = { ...state, editions: [...existingCommon, ...allTimed, ...(existingTail.length > 0 ? existingTail : [makeEmptyTail()])] }
-    }
-
-    setState(newState)
-    setTimesInput('')
-  }
 
   const activeSuggestions = suggestTextPatterns ? suggestionsByHandle : undefined
 
   return (
     <div className="space-y-4">
-      {!hasTimedEditions ? (
-        /* Empty state: prompt for edition times */
-        <div className="space-y-3">
-          {/* Header content always shown */}
-          <div>{headerContent}</div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Enter one or more edition times (24-hr hh:mm format, comma-separated):
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={timesInput}
-              onChange={(e) => { setTimesInput(e.target.value); setTimesError('') }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleInitializeFromTimes() }}
-              placeholder="08:00, 18:00"
-              className="flex-1 px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 text-sm"
-            />
-            <button
-              type="button"
-              onClick={handleInitializeFromTimes}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-            >
-              Create Editions
-            </button>
-          </div>
-          {timesError && (
-            <p className="text-sm text-red-600 dark:text-red-400">{timesError}</p>
-          )}
-        </div>
-      ) : (
-        /* Full editor UI */
         <>
-          {/* Toolbar */}
-          <EditorToolbar
-            mode={mode}
-            onModeChange={setMode}
-            suggestTextPatterns={suggestTextPatterns}
-            onSuggestTextPatternsChange={setSuggestTextPatterns}
-            addEditionTime={addEditionTime}
-            onAddEditionTimeChange={setAddEditionTime}
-            showAddEditionForm={showAddEditionForm}
-            onToggleAddEditionForm={() => setShowAddEditionForm(!showAddEditionForm)}
-            onAddEdition={addEdition}
-            usedTimes={new Set(state.editions.filter(e => e.type === 'timed').map(e => e.time))}
-            headerContent={headerContent}
-          />
+          {/* Toolbar (hidden in readOnly mode) */}
+          {readOnly ? (
+            <div>{headerContent}</div>
+          ) : (
+            <EditorToolbar
+              mode={mode}
+              onModeChange={setMode}
+              suggestTextPatterns={suggestTextPatterns}
+              onSuggestTextPatternsChange={setSuggestTextPatterns}
+              addEditionTime={addEditionTime}
+              onAddEditionTimeChange={setAddEditionTime}
+              showAddEditionForm={showAddEditionForm}
+              onToggleAddEditionForm={() => setShowAddEditionForm(!showAddEditionForm)}
+              onAddEdition={addEdition}
+              usedTimes={new Set(state.editions.filter(e => e.type === 'timed').map(e => e.time))}
+              headerContent={headerContent}
+              fontClass={editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}
+            />
+          )}
 
           {/* Warnings */}
           {uniqueWarnings.length > 0 && (
@@ -1970,15 +1904,17 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
                 usedTimes={new Set(state.editions.filter(e => e.type === 'timed').map(e => e.time))}
                 insertPoint={insertPoint}
                 insertEditionId={insertEditionId}
-                plusMenuPoint={plusMenuPoint}
-                plusMenuEditionId={plusMenuEditionId}
                 sectionInsertPoint={sectionInsertPoint}
                 sectionInsertEditionId={sectionInsertEditionId}
                 onSetInsertPoint={(edId, point) => { setInsertEditionId(edId); setInsertPoint(point) }}
-                onSetPlusMenuPoint={(edId, point) => { setPlusMenuEditionId(edId); setPlusMenuPoint(point) }}
                 onSetSectionInsertPoint={(edId, point) => { setSectionInsertEditionId(edId); setSectionInsertPoint(point) }}
                 onAddPattern={addPatternToSection}
                 onImportList={handleImportList}
+                lists={lists}
+                loadingLists={loadingLists}
+                importingList={importingList}
+                onSelectList={handleSelectList}
+                onCancelListPicker={handleCancelListPicker}
                 onStartEditPattern={(patternId) => setEditingId(patternId)}
                 onSaveEditPattern={updatePatternInSection}
                 onCancelEditPattern={() => setEditingId(null)}
@@ -2016,46 +1952,8 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
             ))}
           </div>
 
-          {/* List Picker Overlay */}
-          {showListPicker && (
-            <div
-              ref={listPickerRef}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-xl max-h-80 overflow-y-auto min-w-[250px] p-2"
-            >
-              <div className="text-sm font-medium text-gray-700 dark:text-gray-300 px-2 py-1 mb-1">
-                Select a list to import:
-              </div>
-              {loadingLists || importingList ? (
-                <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
-                  {importingList ? 'Importing...' : 'Loading lists...'}
-                </div>
-              ) : lists.length === 0 ? (
-                <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
-                  No lists found
-                </div>
-              ) : (
-                lists.map(list => (
-                  <button
-                    key={list.uri}
-                    type="button"
-                    onClick={() => handleSelectList(list.uri, list.name)}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 rounded"
-                  >
-                    {list.name}
-                  </button>
-                ))
-              )}
-              <button
-                type="button"
-                onClick={() => setShowListPicker(false)}
-                className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded mt-1"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {/* Save button + feedback */}
+          {/* Save button (hidden in readOnly mode) */}
+          {!readOnly && (
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -2064,29 +1962,10 @@ export default function EditionLayoutEditor({ layoutText, onSave, onTextChange, 
             >
               Save Edition Layout
             </button>
-            {feedback && (
-              <span className={`text-sm ${feedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                {feedback.message}
-              </span>
-            )}
           </div>
-          {unfollowedWarning && unfollowedWarning.length > 0 && (
-            <div className="mt-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200 p-3 rounded-lg text-sm">
-              <div className="font-medium mb-1">
-                {unfollowedWarning.length} unfollowed user{unfollowedWarning.length !== 1 ? 's' : ''} in layout — their posts won't appear in editions:
-              </div>
-              <div className="flex flex-wrap gap-x-3 gap-y-1">
-                {unfollowedWarning.map(handle => (
-                  <a key={handle} href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noopener noreferrer"
-                     className="text-blue-600 dark:text-blue-400 hover:underline">
-                    @{handle}
-                  </a>
-                ))}
-              </div>
-            </div>
           )}
+
         </>
-      )}
     </div>
   )
 }

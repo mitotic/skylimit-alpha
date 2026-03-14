@@ -13,7 +13,7 @@ import {
   clearRecentData,
 } from './skylimitCache'
 import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary, getEditionTimeStrs } from './skylimitGeneral'
-import { CurationFeedViewPost, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync, FetchMode, FetchStopReason, SecondaryEntry, SecondaryFetchResult, SecondaryRepostIndex, addToRepostIndex } from './types'
+import { CurationFeedViewPost, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync, FetchMode, FetchStopReason, SecondaryEntry, SecondaryFetchResult, SecondaryRepostIndex, addToRepostIndex, SL_REPOST_PREFIX, SL_EDITION_PREFIX } from './types'
 import { curatePosts } from './skylimitTimeline'
 import { curateSinglePost } from './skylimitFilter'
 import { getMaxNumbersForDay } from './skylimitNumbering'
@@ -1112,7 +1112,7 @@ export async function transferSecondaryToPrimary(
       const syntheticEntries: typeof sorted[0][] = []
       for (const syntheticPost of syntheticPosts) {
         const insertTimestamp = getFeedViewPostTimestamp(syntheticPost).getTime()
-        const syntheticUniqueId = getPostUniqueId(syntheticPost)
+        const syntheticUniqueId = getPostUniqueId(syntheticPost).replace(SL_REPOST_PREFIX, SL_EDITION_PREFIX)
 
         // Follow repost convention: username = reposter (editor), orig_username = original author
         const editorBy = (syntheticPost.reason as any)?.by
@@ -1297,8 +1297,9 @@ export async function recurateFromCache(
 
   // Phase A: Read entries from feed cache before clearing
   log.info(topic, `Reading feed cache entries >= ${new Date(lookbackBoundaryMs).toISOString()}`)
-  const rawEntries = await getAllFeedCacheEntries(lookbackBoundaryMs)
-  log.info(topic, `Found ${rawEntries.length} entries to re-curate`)
+  const allEntries = await getAllFeedCacheEntries(lookbackBoundaryMs)
+  const rawEntries = allEntries.filter(e => !e.uniqueId.startsWith(SL_EDITION_PREFIX))
+  log.info(topic, `Found ${allEntries.length} entries (${allEntries.length - rawEntries.length} synthetic filtered out), ${rawEntries.length} to re-curate`)
 
   if (rawEntries.length === 0) {
     onProgress(100)

@@ -3,7 +3,7 @@
  */
 
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
-import { CurationMetadata, FeedPlatform, PostSummary, ENGAGEMENT_NONE, ENGAGEMENT_LIKED, ENGAGEMENT_BOOKMARKED, ENGAGEMENT_REPOSTED } from './types'
+import { CurationMetadata, FeedPlatform, PostSummary, ENGAGEMENT_NONE, ENGAGEMENT_LIKED, ENGAGEMENT_BOOKMARKED, ENGAGEMENT_REPOSTED, SL_REPOST_PREFIX } from './types'
 import { clientNow, clientDate } from '../utils/clientClock'
 import log from '../utils/logger'
 
@@ -425,7 +425,7 @@ export function getPostTimestamp(post: AppBskyFeedDefs.PostView): Date {
  * Get unique ID for a post (for looking up in summaries cache)
  * - Original posts: use post.post.uri
  * - Reposts: use reason.uri if available (AT Protocol repost URI),
- *   otherwise fallback to `sl://repost/${reposterDid}:${post.post.uri}`
+ *   otherwise fallback to `sl-rp://repost/${reposterDid}:${post.post.uri}`
  *
  * IMPORTANT: Must match how createPostSummary generates uniqueId
  */
@@ -439,9 +439,9 @@ export function getPostUniqueId(post: AppBskyFeedDefs.FeedViewPost): string {
     // Fallback: construct synthetic repost ID
     const reposter = (post.reason as any)?.by
     if (reposter?.did) {
-      return `sl://repost/${reposter.did}:${post.post.uri}`
+      return `${SL_REPOST_PREFIX}repost/${reposter.did}:${post.post.uri}`
     }
-    return `sl://repost/${post.post.author.did}:${post.post.uri}`
+    return `${SL_REPOST_PREFIX}repost/${post.post.author.did}:${post.post.uri}`
   }
   return post.post.uri
 }

@@ -620,7 +620,7 @@ export function findEditionMatchesForUser(editionLayout: string, handle: string)
 
   const lines = editionLayout.split('\n')
   const matches: EditionMatch[] = []
-  let currentEditionName = '(default)'
+  let currentEditionName = '(head)'
   let currentSectionName = '(default)'
 
   for (let i = 0; i < lines.length; i++) {
@@ -630,9 +630,9 @@ export function findEditionMatchesForUser(editionLayout: string, handle: string)
     // Edition header
     if (line.startsWith('# ') && !line.startsWith('## ')) {
       if (/^#\s+HEAD\s*$/i.test(line)) {
-        currentEditionName = '(default)'
+        currentEditionName = '(head)'
       } else if (/^#\s+TAIL\s*$/i.test(line)) {
-        currentEditionName = 'Tail'
+        currentEditionName = '(tail)'
       } else {
         const headerMatch = line.match(/^#\s+(\d{2}:\d{2})(?:\s+(.+))?/)
         if (headerMatch) {

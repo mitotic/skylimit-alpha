@@ -136,9 +136,14 @@ export default function SettingsPage() {
   const [originalSettings, setOriginalSettings] = useState<SkylimitSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [editionFeedback, setEditionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const [editionFeedback, setEditionFeedback] = useState<{ type: 'success' | 'error'; message: string; actionLabel?: string; onAction?: () => void } | null>(null)
   const [editionWarning, setEditionWarning] = useState<string[] | null>(null)
   const [visualEditorMode, setVisualEditorMode] = useState(true)
+  const [showExample, setShowExample] = useState(false)
+  const [showEditionHelp, setShowEditionHelp] = useState(() => {
+    const stored = localStorage.getItem('websky_beginner_mode')
+    return stored === null ? true : stored === 'true'
+  })
   const [feedCacheStats, setFeedCacheStats] = useState<FeedCacheStats | null>(null)
   const [summariesStats, setSummariesStats] = useState<PostSummariesCacheStats | null>(null)
   const [loadingStats, setLoadingStats] = useState(true)
@@ -1233,15 +1238,6 @@ This cannot be undone.`}
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setShowClearRecentModal(true)}
-                  disabled={isClearingRecent}
-                  className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-                >
-                  Refetch recent posts
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
                   onClick={() => setShowResetFeedModal(true)}
                   disabled={isResettingFeed}
                   className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
@@ -1280,6 +1276,15 @@ This cannot be undone.`}
             className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
           >
             Re-curate recent posts
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowClearRecentModal(true)}
+            disabled={isClearingRecent}
+            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+          >
+            Refetch recent posts
           </Button>
         </div>
 
@@ -1547,50 +1552,6 @@ This cannot be undone.`}
 
 
 
-        {/* Refetch Recent Posts Confirmation Modal */}
-        <ConfirmModal
-          isOpen={showClearRecentModal}
-          onClose={() => setShowClearRecentModal(false)}
-          onConfirm={handleClearRecent}
-          title="Refetch Recent Posts"
-          message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
-• Feed cache and pagination state (cleared entirely)
-• Post summaries newer than yesterday's midnight (removed)
-• Edition registry entries created within the lookback period (removed)
-
-Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
-
-Your Skylimit settings, follow list, and login session will be preserved.
-
-You will be redirected to the home page with a fresh lookback.`}
-          confirmText={isClearingRecent ? 'Refetching...' : 'Refetch Recent Posts'}
-          cancelText="Cancel"
-          isDangerous={false}
-          isLoading={isClearingRecent}
-        />
-
-        {/* Re-curate Recent Posts Confirmation Modal */}
-        <ConfirmModal
-          isOpen={showRecurateModal}
-          onClose={() => setShowRecurateModal(false)}
-          onConfirm={handleRecurate}
-          title="Re-curate Recent Posts"
-          message={`This will re-curate recent posts from the cache without re-fetching from the server:
-• Feed cache and pagination state (cleared entirely)
-• Post summaries newer than yesterday's midnight (removed and re-created)
-• Edition registry entries created within the lookback period (removed)
-
-Posts will be re-curated using your current curation settings, follow list, and statistics. This is faster than re-fetching since no server requests are needed.
-
-Your Skylimit settings, follow list, and login session will be preserved.
-
-You will be redirected to the home page with re-curated posts.`}
-          confirmText={isRecurating ? 'Re-curating...' : 'Re-curate Recent Posts'}
-          cancelText="Cancel"
-          isDangerous={false}
-          isLoading={isRecurating}
-        />
-
         {/* Refresh Post Display Confirmation Modal */}
         <ConfirmModal
           isOpen={showResetFeedModal}
@@ -1708,9 +1669,22 @@ You will be logged out and redirected to the login page.`}
       )
       const unfollowed = [...literalHandles].filter(h => !followedSet.has(h)).sort()
       setEditionWarning(unfollowed.length > 0 ? unfollowed : null)
+      const hasUnfollowed = unfollowed.length > 0
+      setEditionFeedback({
+        type: 'success',
+        message: `Edition layout updated: ${parts.join(', ')}.${debugInfo} To re-assemble editions using recent posts, `,
+        actionLabel: hasUnfollowed ? 'Refetch recent posts' : 'Re-curate recent posts',
+        onAction: hasUnfollowed ? () => setShowClearRecentModal(true) : () => setShowRecurateModal(true),
+      })
+    } else {
+      setEditionWarning(null)
+      setEditionFeedback({
+        type: 'success',
+        message: `Edition layout updated: ${parts.join(', ')}.${debugInfo} To re-assemble editions using recent posts, `,
+        actionLabel: 'Re-curate recent posts',
+        onAction: () => setShowRecurateModal(true),
+      })
     }
-
-    setEditionFeedback({ type: 'success', message: `Edition layout updated: ${parts.join(', ')}.${debugInfo} To re-assemble editions using recent posts, "Refetch recent posts" using the button in Settings/Curation.` })
   }
 
   const renderEditionsTab = () => {
@@ -1733,25 +1707,60 @@ You will be logged out and redirected to the login page.`}
     return (
       <div className="space-y-6">
           <div className="space-y-4">
+            {/* Title + help icon */}
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Edition Layout</h3>
+              <button
+                type="button"
+                onClick={() => setShowEditionHelp(!showEditionHelp)}
+                className={`w-6 h-6 rounded-full text-sm font-bold flex items-center justify-center transition-colors ${
+                  showEditionHelp
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-600'
+                }`}
+                title="Toggle help"
+              >
+                ?
+              </button>
+            </div>
+            {showEditionHelp && (
+              <div className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed border border-gray-200 dark:border-gray-700 rounded-md p-3 space-y-2">
+                {helpGlossary['Edition layout help'].split('\n\n').map((para, i) => (
+                  <p key={i}>{para}</p>
+                ))}
+              </div>
+            )}
             {visualEditorMode ? (
               <EditionLayoutEditor
-                layoutText={settings.editionLayout}
+                key={showExample ? 'example' : 'editor'}
+                layoutText={showExample ? helpGlossary['Edition layout placeholder'] : settings.editionLayout}
                 onSave={handleSaveEditionLayout}
-                onTextChange={(text) => updateSetting('editionLayout', text)}
-                feedback={editionFeedback}
-                unfollowedWarning={editionWarning}
+                onTextChange={showExample ? undefined : (text) => updateSetting('editionLayout', text)}
                 editionFont={settings.editionFont || 'serif'}
+                readOnly={showExample}
                 headerContent={
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setVisualEditorMode(false)
-                      setEditionFeedback(null)
-                    }}
-                    className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                  >
-                    Switch to Text Editor
-                  </button>
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVisualEditorMode(false)
+                        setShowExample(false)
+                        setEditionFeedback(null)
+                      }}
+                      className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                    >
+                      Switch to Text Editor
+                    </button>
+                    <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showExample}
+                        onChange={(e) => setShowExample(e.target.checked)}
+                        className="rounded"
+                      />
+                      Show example
+                    </label>
+                  </div>
                 }
               />
             ) : (
@@ -1777,7 +1786,7 @@ You will be logged out and redirected to the login page.`}
                   }}
                   className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
                   rows={28}
-                  placeholder={"# HEAD\n\n@*: #BreakingNews\n@quietposter.bsky.social\n\n## Workplace - common section for all editions\n@coworker1\n@coworker2\n\n# 08:00 Morning Edition\n@always.interesting.bsky.social\n@sometimes.interesting: topic, second topic\n\n## Substacks in the morning\n@author1.com: blogname1.substack.com\n@author2.bsky.social: blogname2.substack.com\n\n# 12:00 Noon Edition\n\n## Humor\n@xkcd.com\n\n# 18:00 Evening Edition\n\n## Coding\n@simonwillison.net\n\n# TAIL\n\n## Another common catchall section\n@author1.com"}
+                  placeholder={helpGlossary['Edition layout placeholder']}
                 />
                 {beginnerMode && (
                   <p className="text-sm text-gray-500 mt-1">
@@ -1791,31 +1800,45 @@ You will be logged out and redirected to the login page.`}
                   >
                     Update Edition Layout
                   </Button>
-                  {editionFeedback && (
-                    <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                      {editionFeedback.message}
-                    </span>
-                  )}
                 </div>
-                {editionWarning && editionWarning.length > 0 && (
-                  <div className="mt-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200 p-3 rounded-lg text-sm">
-                    <div className="font-medium mb-1">
-                      {editionWarning.length} unfollowed user{editionWarning.length !== 1 ? 's' : ''} in layout — their posts won't appear in editions:
-                    </div>
-                    <div className="flex flex-wrap gap-x-3 gap-y-1">
-                      {editionWarning.map(handle => (
-                        <a key={handle} href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noopener noreferrer"
-                           className="text-blue-600 dark:text-blue-400 hover:underline">
-                          @{handle}
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
         </div>
 
+        {/* Edition save feedback — shared by both editor modes */}
+        {editionFeedback && (
+          <span className={`text-sm ${editionFeedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+            {editionFeedback.message}
+            {editionFeedback.actionLabel && editionFeedback.onAction && (
+              <button
+                type="button"
+                onClick={editionFeedback.onAction}
+                className="underline hover:no-underline font-medium"
+              >
+                {editionFeedback.actionLabel}
+              </button>
+            )}
+          </span>
+        )}
+
+        {/* Unfollowed users warning — shared by both editor modes */}
+        {editionWarning && editionWarning.length > 0 && (
+          <div className="mt-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 text-yellow-800 dark:text-yellow-200 p-3 rounded-lg text-sm">
+            <div className="font-medium mb-1">
+              {editionWarning.length} unfollowed user{editionWarning.length !== 1 ? 's' : ''} in layout — follow them before refetching to have them appear in editions:
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {editionWarning.map(handle => (
+                <a key={handle} href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noopener noreferrer"
+                   className="text-blue-600 dark:text-blue-400 hover:underline">
+                  @{handle}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Edition Settings</h3>
         <div>
           <label className="flex items-center space-x-3">
             <input
@@ -1935,6 +1958,50 @@ You will be logged out and redirected to the login page.`}
         message="Are you sure you want to logout?"
         confirmText="Logout"
         cancelText="Cancel"
+      />
+
+      {/* Refetch Recent Posts Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showClearRecentModal}
+        onClose={() => setShowClearRecentModal(false)}
+        onConfirm={handleClearRecent}
+        title="Refetch Recent Posts"
+        message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
+• Feed cache and pagination state (cleared entirely)
+• Post summaries newer than yesterday's midnight (removed)
+• Edition registry entries created within the lookback period (removed)
+
+Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
+
+Your Skylimit settings, follow list, and login session will be preserved.
+
+You will be redirected to the home page with a fresh lookback.`}
+        confirmText={isClearingRecent ? 'Refetching...' : 'Refetch Recent Posts'}
+        cancelText="Cancel"
+        isDangerous={false}
+        isLoading={isClearingRecent}
+      />
+
+      {/* Re-curate Recent Posts Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showRecurateModal}
+        onClose={() => setShowRecurateModal(false)}
+        onConfirm={handleRecurate}
+        title="Re-curate Recent Posts"
+        message={`This will re-curate recent posts from the cache without re-fetching from the server:
+• Feed cache and pagination state (cleared entirely)
+• Post summaries newer than yesterday's midnight (removed and re-created)
+• Edition registry entries created within the lookback period (removed)
+
+Posts will be re-curated using your current curation settings, follow list, and statistics. This is faster than re-fetching since no server requests are needed.
+
+Your Skylimit settings, follow list, and login session will be preserved.
+
+You will be redirected to the home page with re-curated posts.`}
+        confirmText={isRecurating ? 'Re-curating...' : 'Re-curate Recent Posts'}
+        cancelText="Cancel"
+        isDangerous={false}
+        isLoading={isRecurating}
       />
 
       </div>

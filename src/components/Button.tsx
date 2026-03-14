@@ -5,7 +5,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   children: React.ReactNode
 }
 
-export default function Button({ variant = 'primary', ...props }: ButtonProps) {
+export default function Button({ variant = 'primary', className, ...props }: ButtonProps) {
   const baseClasses = 'btn'
   const variantClasses = {
     primary: 'btn-primary',
@@ -15,7 +15,7 @@ export default function Button({ variant = 'primary', ...props }: ButtonProps) {
 
   return (
     <button
-      className={`${baseClasses} ${variantClasses[variant]} ${props.className || ''}`}
+      className={`${baseClasses} ${variantClasses[variant]} ${className || ''}`}
       {...props}
     >
       {props.children}
