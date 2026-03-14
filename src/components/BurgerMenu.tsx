@@ -6,6 +6,7 @@ import { isRateLimited } from '../utils/rateLimitState'
 import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import ConfirmModal from './ConfirmModal'
+import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, PersonIcon, GearIcon } from './NavIcons'
 import log from '../utils/logger'
 
 export default function BurgerMenu() {
@@ -68,10 +69,10 @@ export default function BurgerMenu() {
   }, [location.pathname])
 
   const navItems = [
-    { path: '/', label: 'Home', icon: '🏠' },
-    { path: '/notifications', label: 'Notifications', icon: '🔔', badge: unreadCount > 0 ? unreadCount : undefined },
-    { path: '/search', label: 'Search', icon: '🔍' },
-    { path: '/saved', label: 'Saved', icon: '🏷️' },
+    { path: '/', label: 'Home', icon: <HomeIcon /> },
+    { path: '/notifications', label: 'Notifications', icon: <BellIcon />, badge: unreadCount > 0 ? unreadCount : undefined },
+    { path: '/search', label: 'Search', icon: <SearchIcon /> },
+    { path: '/saved', label: 'Saved', icon: <BookmarkIcon /> },
   ]
 
   const handleProfileClick = () => {
@@ -125,7 +126,7 @@ export default function BurgerMenu() {
                       : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
                   }`}
                 >
-                  <span className="text-xl">{item.icon}</span>
+                  {item.icon}
                   <span className="font-medium">{item.label}</span>
                   {item.badge !== undefined && item.badge > 0 && (
                     <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">
@@ -148,7 +149,7 @@ export default function BurgerMenu() {
                     {avatarUrl ? (
                       <img src={avatarUrl} alt="Profile" className="w-6 h-6 rounded-full object-cover" />
                     ) : (
-                      <span className="text-xl">👤</span>
+                      <PersonIcon />
                     )}
                     <span className="font-medium">Profile</span>
                   </button>
@@ -162,7 +163,7 @@ export default function BurgerMenu() {
                         : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
                     }`}
                   >
-                    <span className="text-xl">⚙️</span>
+                    <GearIcon />
                     <span className="font-medium">Settings</span>
                   </Link>
 

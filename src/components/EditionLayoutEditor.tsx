@@ -13,6 +13,7 @@ import { getAllFollows, getTextSuggestions } from '../curation/skylimitCache'
 import type { FollowInfo, SuggestionsMap, TextSuggestions } from '../curation/types'
 import { useSession } from '../auth/SessionContext'
 import { getUserLists, getListMembers } from '../api/social'
+import { PencilIcon, TrashIcon } from './NavIcons'
 
 // --- Editor State Types ---
 
@@ -831,8 +832,8 @@ function NewspaperPatternLine({
           {onMoveDown && (
             <button type="button" onClick={onMoveDown} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs px-1" title="Move down">▼</button>
           )}
-          <button type="button" onClick={onStartEdit} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit">✏️</button>
-          <button type="button" onClick={onDelete} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete">🗑️</button>
+          <button type="button" onClick={onStartEdit} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit"><PencilIcon className="w-3.5 h-3.5" /></button>
+          <button type="button" onClick={onDelete} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete"><TrashIcon className="w-3.5 h-3.5" /></button>
         </div>
       )}
     </div>
@@ -935,8 +936,8 @@ function NewspaperSection({
               {onMoveSectionDown && (
                 <button type="button" onClick={onMoveSectionDown} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs px-1" title="Move down">▼</button>
               )}
-              <button type="button" onClick={onStartEditSection} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit">✏️</button>
-              <button type="button" onClick={onDeleteSection} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete">🗑️</button>
+              <button type="button" onClick={onStartEditSection} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit"><PencilIcon className="w-3.5 h-3.5" /></button>
+              <button type="button" onClick={onDeleteSection} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete"><TrashIcon className="w-3.5 h-3.5" /></button>
             </div>
           )}
         </>
@@ -1191,8 +1192,8 @@ function NewspaperEdition({
         </span>
         {mode === 'edit-editions' && (
           <div className="flex items-center gap-0.5 ml-2">
-            <button type="button" onClick={onStartEditEdition} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit">✏️</button>
-            <button type="button" onClick={onDeleteEdition} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete">🗑️</button>
+            <button type="button" onClick={onStartEditEdition} className="text-gray-400 hover:text-blue-500 text-sm px-1" title="Edit"><PencilIcon className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={onDeleteEdition} className="text-gray-400 hover:text-red-500 text-sm px-1" title="Delete"><TrashIcon className="w-3.5 h-3.5" /></button>
           </div>
         )}
       </div>
@@ -1253,7 +1254,7 @@ function NewspaperEdition({
             isDefault={section.name === '' && sIdx === 0}
             displayNameMap={displayNameMap}
             mode={mode}
-            editingId={insertEditionId === edition.id ? editingId : null}
+            editingId={editingId}
             follows={follows}
             suggestionsByHandle={suggestionsByHandle}
             insertPoint={insertEditionId === edition.id ? insertPoint : null}
@@ -1439,10 +1440,10 @@ function EditorToolbar({
         {modeButton('Edit sections', 'edit-sections', 'text-base', 'font-semibold')}
       </div>
 
-      {/* Line 3: Add user + Edit users + Import Bluesky list + Suggest topics */}
+      {/* Line 3: Add author + Edit authors + Import Bluesky list + Suggest topics */}
       <div className="flex items-center gap-3 ml-8">
-        {modeButton('Add user', 'add-user', 'text-base')}
-        {modeButton('Edit users', 'edit-users', 'text-base')}
+        {modeButton('Add author', 'add-user', 'text-base')}
+        {modeButton('Edit authors', 'edit-users', 'text-base')}
         {modeButton('Import Bluesky list', 'import-list', 'text-base')}
         <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer ml-auto">
           <input
@@ -1458,7 +1459,7 @@ function EditorToolbar({
       {/* Help messages */}
       {mode === 'add-user' && (
         <div className="text-sm text-gray-500 dark:text-gray-400 italic ml-8">
-          Click on "+" to add user and topic
+          Click on "+" to add author and topic
         </div>
       )}
       {mode === 'import-list' && (

@@ -7,6 +7,7 @@ import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import log from '../utils/logger'
 import ConfirmModal from './ConfirmModal'
+import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, PersonIcon, GearIcon } from './NavIcons'
 import { clientInterval, clearClientInterval, clientTimeout } from '../utils/clientClock'
 
 export default function Navigation() {
@@ -89,7 +90,7 @@ export default function Navigation() {
   }, [location.pathname])
 
   const navItems = [
-    { path: '/', label: 'Home', icon: '🏠' },
+    { path: '/', label: 'Home', icon: 'home' as const },
   ]
 
   const handleSearchClick = () => {
@@ -143,7 +144,7 @@ export default function Navigation() {
               : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
           }`}
         >
-          <span className="text-xl">{item.icon}</span>
+          <HomeIcon />
           <span className="hidden md:inline font-medium">{item.label}</span>
         </Link>
       ))}
@@ -157,7 +158,7 @@ export default function Navigation() {
             : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
         }`}
       >
-        <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>🔍</span>
+        <SearchIcon className={`w-6 h-6 ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full p-0.5 box-content' : ''}`} />
         <span className="hidden md:inline font-medium">Search</span>
       </button>
 
@@ -170,7 +171,7 @@ export default function Navigation() {
             : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
         }`}
       >
-        <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>🏷️</span>
+        <BookmarkIcon className={`w-6 h-6 ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full p-0.5 box-content' : ''}`} />
         <span className="hidden md:inline font-medium">Saved</span>
       </button>
 
@@ -183,7 +184,7 @@ export default function Navigation() {
             : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
         }`}
       >
-        <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>🔔</span>
+        <BellIcon className={`w-6 h-6 ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full p-0.5 box-content' : ''}`} />
         <span className="hidden md:inline font-medium">Notifications</span>
         {unreadCount > 0 && (
           <span className="md:ml-auto absolute -top-1 -right-1 md:static bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">
@@ -205,7 +206,7 @@ export default function Navigation() {
             {avatarUrl ? (
               <img src={avatarUrl} alt="Profile" className={`w-6 h-6 rounded-full object-cover ${clickToBlueSky ? 'border-2 border-blue-500' : ''}`} />
             ) : (
-              <span className={`text-xl ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full px-0.5' : ''}`}>👤</span>
+              <PersonIcon className={`w-6 h-6 ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full p-0.5 box-content' : ''}`} />
             )}
             <span className="hidden md:inline font-medium">Profile</span>
           </button>
@@ -218,7 +219,7 @@ export default function Navigation() {
                 : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
             }`}
           >
-            <span className="text-xl">⚙️</span>
+            <GearIcon />
             <span className="hidden md:inline font-medium">Settings</span>
           </Link>
 

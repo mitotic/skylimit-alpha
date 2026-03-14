@@ -6,6 +6,7 @@ import { onSkyspeedCommand, offSkyspeedCommand, type SkyspeedCommand } from '../
 import PostCard from '../components/PostCard'
 import EditionView from '../components/EditionView'
 import Compose from '../components/Compose'
+import { PencilIcon } from '../components/NavIcons'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import RateLimitIndicator from '../components/RateLimitIndicator'
@@ -1422,7 +1423,7 @@ export default function HomePage() {
           className="fixed bottom-20 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
           aria-label="Compose new post"
         >
-          <span className="text-2xl">✏️</span>
+          <PencilIcon className="w-7 h-7" />
           {isReadOnlyMode() && (
             <span className="absolute inset-0 flex items-center justify-center text-red-500 text-6xl font-thin pointer-events-none -mt-1">&times;</span>
           )}
