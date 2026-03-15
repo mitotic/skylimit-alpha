@@ -13,6 +13,8 @@ import {
   unmuteConversation,
   leaveConversation,
   acceptConversation,
+  isAppPasswordDMError,
+  APP_PASSWORD_DM_MESSAGE,
   ConvoView,
 } from '../api/chat'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
@@ -33,6 +35,7 @@ export default function ChatPage() {
   const { convoId } = useParams<{ convoId?: string }>()
   const { rateLimitStatus, setRateLimitStatus } = useRateLimit()
   const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const [dmAccessError, setDmAccessError] = useState(false)
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now().toString()
@@ -50,6 +53,18 @@ export default function ChatPage() {
     })
   }, [setRateLimitStatus])
 
+  if (dmAccessError) {
+    return (
+      <div className="pb-20 md:pb-0">
+        <div className="mx-4 mt-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded-lg">
+          <p className="text-yellow-800 dark:text-yellow-200" style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>
+            {APP_PASSWORD_DM_MESSAGE}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="pb-20 md:pb-0">
       <RateLimitIndicator status={rateLimitStatus} />
@@ -59,11 +74,13 @@ export default function ChatPage() {
           convoId={convoId}
           addToast={addToast}
           onRateLimit={onRateLimit}
+          onDmAccessError={() => setDmAccessError(true)}
         />
       ) : (
         <ChatList
           addToast={addToast}
           onRateLimit={onRateLimit}
+          onDmAccessError={() => setDmAccessError(true)}
         />
       )}
     </div>
@@ -75,9 +92,10 @@ export default function ChatPage() {
 interface ChatListProps {
   addToast: (message: string, type: 'success' | 'error' | 'info') => void
   onRateLimit: (info: { retryAfter?: number; message?: string }) => void
+  onDmAccessError: () => void
 }
 
-function ChatList({ addToast, onRateLimit }: ChatListProps) {
+function ChatList({ addToast, onRateLimit, onDmAccessError }: ChatListProps) {
   const navigate = useNavigate()
   const { agent, session } = useSession()
   const { setRateLimitStatus } = useRateLimit()
@@ -115,12 +133,16 @@ function ChatList({ addToast, onRateLimit }: ChatListProps) {
       setCursor(newCursor)
     } catch (error) {
       log.error('ChatList', 'Failed to load conversations:', error)
+      if (isAppPasswordDMError(error)) {
+        onDmAccessError()
+        return
+      }
       addToast(error instanceof Error ? error.message : 'Failed to load conversations', 'error')
     } finally {
       setIsLoading(false)
       setIsLoadingMore(false)
     }
-  }, [agent, session, activeTab, onRateLimit, setRateLimitStatus, addToast])
+  }, [agent, session, activeTab, onRateLimit, setRateLimitStatus, addToast, onDmAccessError])
 
   useEffect(() => {
     setIsLoading(true)
@@ -203,21 +225,23 @@ function ChatList({ addToast, onRateLimit }: ChatListProps) {
       <div className="flex border-b border-gray-200 dark:border-gray-700">
         <button
           onClick={() => handleTabChange('accepted')}
-          className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
+          className={`flex-1 py-3 text-center font-medium transition-colors ${
             activeTab === 'accepted'
               ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
           }`}
+          style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
         >
           Messages
         </button>
         <button
           onClick={() => handleTabChange('request')}
-          className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
+          className={`flex-1 py-3 text-center font-medium transition-colors ${
             activeTab === 'request'
               ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
           }`}
+          style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
         >
           Requests
         </button>
@@ -400,9 +424,10 @@ interface ChatDetailProps {
   convoId: string
   addToast: (message: string, type: 'success' | 'error' | 'info') => void
   onRateLimit: (info: { retryAfter?: number; message?: string }) => void
+  onDmAccessError: () => void
 }
 
-function ChatDetail({ convoId, addToast, onRateLimit }: ChatDetailProps) {
+function ChatDetail({ convoId, addToast, onRateLimit, onDmAccessError }: ChatDetailProps) {
   const navigate = useNavigate()
   const { agent, session } = useSession()
   const { setRateLimitStatus } = useRateLimit()
@@ -472,11 +497,15 @@ function ChatDetail({ convoId, addToast, onRateLimit }: ChatDetailProps) {
       }
     } catch (error) {
       log.error('ChatDetail', 'Failed to load messages:', error)
+      if (isAppPasswordDMError(error)) {
+        onDmAccessError()
+        return
+      }
       addToast(error instanceof Error ? error.message : 'Failed to load messages', 'error')
     } finally {
       setIsLoadingMessages(false)
     }
-  }, [agent, convoId, onRateLimit, setRateLimitStatus, addToast])
+  }, [agent, convoId, onRateLimit, setRateLimitStatus, addToast, onDmAccessError])
 
   useEffect(() => {
     loadMessages()
@@ -712,11 +741,11 @@ function ChatDetail({ convoId, addToast, onRateLimit }: ChatDetailProps) {
             size="sm"
           />
           <div className="text-left">
-            <div className="text-sm font-medium text-gray-900 dark:text-white">
+            <div className="font-medium text-gray-900 dark:text-white" style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>
               {displayMember?.displayName || displayMember?.handle || 'Unknown'}
             </div>
             {displayMember?.displayName && displayMember?.handle && (
-              <div className="text-xs text-gray-500 dark:text-gray-400">
+              <div className="text-gray-500 dark:text-gray-400" style={{ fontSize: 'calc(var(--post-text-size) - 2px)' }}>
                 @{displayMember.handle}
               </div>
             )}

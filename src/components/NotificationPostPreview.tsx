@@ -9,7 +9,6 @@ import { AppBskyFeedDefs } from '@atproto/api'
 import { formatDistance } from 'date-fns'
 import { clientDate } from '../utils/clientClock'
 import { useNavigate } from 'react-router-dom'
-import Avatar from './Avatar'
 
 interface NotificationPostPreviewProps {
   post: AppBskyFeedDefs.PostView
@@ -48,40 +47,31 @@ export default function NotificationPostPreview({ post, onClick }: NotificationP
   return (
     <div
       onClick={handleClick}
-      className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors rounded-lg p-3 mt-2 border border-gray-200 dark:border-gray-700"
+      className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors rounded-lg p-3 border border-gray-200 dark:border-gray-700"
     >
-      <div className="flex gap-2">
-        <div onClick={handleAuthorClick} className="flex-shrink-0 cursor-pointer">
-          <Avatar
-            src={author.avatar}
-            alt={author.displayName || author.handle}
-            size="sm"
-          />
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <span
+            onClick={handleAuthorClick}
+            className="font-semibold text-sm hover:underline cursor-pointer"
+          >
+            {author.displayName || author.handle}
+          </span>
+          <span
+            onClick={handleAuthorClick}
+            className="text-gray-500 dark:text-gray-400 text-xs hover:underline cursor-pointer"
+          >
+            @{author.handle}
+          </span>
+          <span className="text-gray-500 dark:text-gray-400 text-xs">·</span>
+          <span className="text-gray-500 dark:text-gray-400 text-xs">{timeAgo}</span>
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span
-              onClick={handleAuthorClick}
-              className="font-semibold text-sm hover:underline cursor-pointer"
-            >
-              {author.displayName || author.handle}
-            </span>
-            <span
-              onClick={handleAuthorClick}
-              className="text-gray-500 dark:text-gray-400 text-xs hover:underline cursor-pointer"
-            >
-              @{author.handle}
-            </span>
-            <span className="text-gray-500 dark:text-gray-400 text-xs">·</span>
-            <span className="text-gray-500 dark:text-gray-400 text-xs">{timeAgo}</span>
+
+        {truncatedText && (
+          <div className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words line-clamp-3">
+            {truncatedText}
           </div>
-          
-          {truncatedText && (
-            <div className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words line-clamp-3">
-              {truncatedText}
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   )

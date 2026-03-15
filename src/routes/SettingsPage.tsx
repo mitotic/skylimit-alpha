@@ -13,6 +13,7 @@ import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { SkylimitSettings } from '../curation/types'
 import { getBrowserTimezone } from '../utils/timezoneUtils'
 import Button from '../components/Button'
+import { version } from '../../package.json'
 import log from '../utils/logger'
 import SkylimitStatistics from '../components/SkylimitStatistics'
 import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout, getAllFollows, getStorageUsage, formatBytes, type StorageUsage } from '../curation/skylimitCache'
@@ -686,7 +687,7 @@ export default function SettingsPage() {
             <span className="font-medium">Click to <span className="text-blue-500">Bluesky</span></span>
             {beginnerMode && (
               <div className="text-sm text-gray-500 dark:text-gray-400">
-                Open threads, search, saved posts, notifications, and profiles in Bluesky. You can return to Skylimit by using back navigation repeatedly (i.e., clicking back once more after returning to the Bluesky home page).
+                Open threads, search, saved posts, notifications, and profiles in Bluesky. Use back navigation to return to Skylimit.
               </div>
             )}
           </div>
@@ -784,15 +785,9 @@ This cannot be undone.`}
         onClose={() => setShowResetAllModal(false)}
         onConfirm={handleResetAll}
         title="Reset All Data"
-        message={`WARNING: This will completely wipe all Websky data:
-• All cached posts and summaries
-• All Skylimit settings
-• Follow list data
-• Login session (you will be logged out)
+        message={`WARNING: This will completely wipe all Websky data — settings, caches, and login.
 
-This is a complete reset to factory state. Use this only if the app is not working correctly.
-
-This cannot be undone.`}
+Use this only if the app is not working correctly. This cannot be undone.`}
         confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
         cancelText="Cancel"
         isDangerous={true}
@@ -803,6 +798,7 @@ This cannot be undone.`}
         <h2 className="text-lg font-semibold">About</h2>
         <div className="text-sm text-gray-500 dark:text-gray-400 space-y-2">
           <p>Skylimit – A curating Bluesky client (alpha version)</p>
+          <p>Version {version}</p>
           <p>
             Built with Vite, React, TypeScript, and Tailwind CSS
           </p>
@@ -1576,15 +1572,11 @@ This cannot be undone.`}
           onClose={() => setShowResetFeedModal(false)}
           onConfirm={handleResetFeed}
           title="Refresh Post Display"
-          message={`This will clear the feed and reload posts using existing curation data:
-• Feed posts and pagination state
-• Session storage state
+          message={`Clear the feed and reload posts using existing curation data.
 
-Curation summaries will be preserved, so posts will be curated on-the-fly without a full lookback.
+All settings, summaries, and login are preserved.
 
-Your Skylimit settings, follow list, and login session will be preserved.
-
-You will be redirected to the home page with a refreshed feed.`}
+You will be redirected to the home page.`}
           confirmText={isResettingFeed ? 'Resetting...' : 'Refresh Post Display'}
           cancelText="Cancel"
           isDangerous={false}
@@ -1597,15 +1589,9 @@ You will be redirected to the home page with a refreshed feed.`}
           onClose={() => setShowResetDataModal(false)}
           onConfirm={handleResetData}
           title="Reset Post Archive"
-          message={`This will clear all time-variant cached data and log you out:
-• Feed posts, pagination state, and session storage
-• Curation summaries and filter/stats cache
-• Parent posts cache and follow list cache
-• Browser timezone setting
+          message={`Clear all cached data (posts, summaries, stats, follow list) and log you out.
 
-Your Skylimit settings (viewsPerDay, edition layout, etc.) will be preserved.
-
-You will be logged out and redirected to the login page.`}
+Your Skylimit settings will be preserved.`}
           confirmText={isResettingData ? 'Resetting...' : 'Reset Post Archive & Logout'}
           cancelText="Cancel"
           isDangerous={true}
@@ -1996,16 +1982,12 @@ You will be logged out and redirected to the login page.`}
         onClose={() => setShowClearRecentModal(false)}
         onConfirm={handleClearRecent}
         title="Refetch Recent Posts"
-        message={`This will clear recent curation data within the lookback period and re-fetch posts from the server:
-• Feed cache and pagination state (cleared entirely)
-• Post summaries newer than yesterday's midnight (removed)
-• Edition registry entries created within the lookback period (removed)
+        message={`Clear recent curation data and re-fetch posts from the server.
 
-Older post summaries and edition entries will be preserved. This allows editions to be re-created when posts are re-fetched.
+• Recent post summaries and edition entries will be re-created
+• Older data, settings, follow list, and login are preserved
 
-Your Skylimit settings, follow list, and login session will be preserved.
-
-You will be redirected to the home page with a fresh lookback.`}
+You will be redirected to the home page.`}
         confirmText={isClearingRecent ? 'Refetching...' : 'Refetch Recent Posts'}
         cancelText="Cancel"
         isDangerous={false}
@@ -2018,16 +2000,12 @@ You will be redirected to the home page with a fresh lookback.`}
         onClose={() => setShowRecurateModal(false)}
         onConfirm={handleRecurate}
         title="Re-curate Recent Posts"
-        message={`This will re-curate recent posts from the cache without re-fetching from the server:
-• Feed cache and pagination state (cleared entirely)
-• Post summaries newer than yesterday's midnight (removed and re-created)
-• Edition registry entries created within the lookback period (removed)
+        message={`Re-curate recent posts from the cache (no server fetch needed).
 
-Posts will be re-curated using your current curation settings, follow list, and statistics. This is faster than re-fetching since no server requests are needed.
+• Recent post summaries and editions will be re-created
+• Settings, follow list, and login are preserved
 
-Your Skylimit settings, follow list, and login session will be preserved.
-
-You will be redirected to the home page with re-curated posts.`}
+You will be redirected to the home page.`}
         confirmText={isRecurating ? 'Re-curating...' : 'Re-curate Recent Posts'}
         cancelText="Cancel"
         isDangerous={false}

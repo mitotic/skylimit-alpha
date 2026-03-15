@@ -14,6 +14,7 @@ import NotificationPostPreview from './NotificationPostPreview'
 import PostCard from './PostCard'
 import Button from './Button'
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useSession } from '../auth/SessionContext'
 import { checkFollowStatus, follow } from '../api/social'
 import ToastContainer, { ToastMessage } from './ToastContainer'
@@ -33,6 +34,8 @@ export default function AggregatedNotificationComponent({
   const [isFollowing, setIsFollowing] = useState<boolean | null>(null)
   const [isFollowingLoading, setIsFollowingLoading] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const [showUserMenu, setShowUserMenu] = useState(false)
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 })
   
   const isRead = notification.isRead
   const reason = notification.reason
@@ -74,7 +77,16 @@ export default function AggregatedNotificationComponent({
         })
     }
   }, [reason, mostRecent.author.did, agent, session])
-  
+
+  useEffect(() => {
+    if (!showUserMenu) return
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowUserMenu(false)
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [showUserMenu])
+
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now().toString()
     setToasts(prev => [...prev, { id, message, type }])
@@ -212,29 +224,45 @@ export default function AggregatedNotificationComponent({
         className="px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
       >
         <div className="flex items-start gap-3">
-          {/* Avatar group */}
-          <div className="flex-shrink-0 flex -space-x-2">
-            {displayAvatars.map((author, index) => (
-              <div
-                key={author.did}
-                onClick={(e) => handleAuthorClick(author.did, e)}
-                className="cursor-pointer"
-                style={{ zIndex: displayAvatars.length - index }}
+          {/* Avatar group with optional chevron */}
+          <div className="flex-shrink-0 flex items-center">
+            <div className="flex -space-x-2">
+              {displayAvatars.map((author, index) => (
+                <div
+                  key={author.did}
+                  onClick={(e) => handleAuthorClick(author.did, e)}
+                  className="cursor-pointer"
+                  style={{ zIndex: displayAvatars.length - index }}
+                >
+                  <Avatar
+                    src={author.avatar}
+                    alt={author.displayName || author.handle}
+                    size="sm"
+                  />
+                </div>
+              ))}
+              {remainingCount > 0 && (
+                <div className="w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-xs font-semibold text-gray-700 dark:text-gray-300 border-2 border-white dark:border-gray-900">
+                  +{remainingCount}
+                </div>
+              )}
+            </div>
+            {authors.length > 1 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  setMenuPosition({ x: rect.left, y: rect.bottom + 4 })
+                  setShowUserMenu(prev => !prev)
+                }}
+                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ml-1 px-0.5"
+                aria-label="Show all users"
               >
-                <Avatar
-                  src={author.avatar}
-                  alt={author.displayName || author.handle}
-                  size="md"
-                />
-              </div>
-            ))}
-            {remainingCount > 0 && (
-              <div className="w-10 h-10 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-xs font-semibold text-gray-700 dark:text-gray-300 border-2 border-white dark:border-gray-900">
-                +{remainingCount}
-              </div>
+                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+              </button>
             )}
           </div>
-          
+
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               {getNotificationIcon(reason)}
@@ -295,10 +323,53 @@ export default function AggregatedNotificationComponent({
               } as any,
             }}
             showRootPost={false}
+            hideAvatar={true}
           />
         </div>
       )}
       
+      {showUserMenu && createPortal(
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={(e) => { e.stopPropagation(); setShowUserMenu(false) }}
+          />
+          <div
+            className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[200px] max-w-[280px] max-h-60 overflow-y-auto"
+            style={{
+              left: `${Math.max(8, Math.min(menuPosition.x, window.innerWidth - 288))}px`,
+              top: `${menuPosition.y}px`,
+            }}
+            role="menu"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {authors.map(author => (
+              <button
+                key={author.did}
+                className="w-full px-3 py-2 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowUserMenu(false)
+                  navigate(`/profile/${author.handle}`)
+                }}
+                role="menuitem"
+              >
+                <Avatar src={author.avatar} alt={author.displayName || author.handle} size="xs" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                    {author.displayName || author.handle}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    @{author.handle}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body
+      )}
+
       <ToastContainer toasts={toasts} onRemove={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />
     </div>
   )

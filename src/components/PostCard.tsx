@@ -61,9 +61,11 @@ interface PostCardProps {
   newspaperView?: boolean
   /** Font family for edition layout display */
   editionFont?: 'serif' | 'sans-serif'
+  /** If true, hide the author avatar (used in notification embeds) */
+  hideAvatar?: boolean
 }
 
-export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, onDeletePost, onPinPost, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false, newspaperView = false, editionFont }: PostCardProps) {
+export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, onDeletePost, onPinPost, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false, newspaperView = false, editionFont, hideAvatar = false }: PostCardProps) {
   const navigate = useNavigate()
   const { session, agent } = useSession()
   const { theme } = useTheme()
@@ -730,13 +732,15 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
         {/* Header row: avatar + author info. In stacked layout, this is a flex row within the vertical column */}
         {stackedLayout ? (
           <div className="flex gap-3 items-center mb-2">
-            <div className="flex-shrink-0" onClick={handleAuthorClick} style={{ cursor: 'pointer' }}>
-              <Avatar
-                src={author.avatar}
-                alt={author.displayName || author.handle}
-                size="md"
-              />
-            </div>
+            {!hideAvatar && (
+              <div className="flex-shrink-0" onClick={handleAuthorClick} style={{ cursor: 'pointer' }}>
+                <Avatar
+                  src={author.avatar}
+                  alt={author.displayName || author.handle}
+                  size="md"
+                />
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <div className={`flex items-center gap-2 relative min-w-0${showCounterDisplay && !isReposted && !isReply ? ' pr-28' : ''}`}>
                 <span className="truncate min-w-0">
@@ -764,13 +768,15 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           </div>
         ) : (
           <>
-            <div className="flex-shrink-0" onClick={handleAuthorClick} style={{ cursor: 'pointer' }}>
-              <Avatar
-                src={author.avatar}
-                alt={author.displayName || author.handle}
-                size="md"
-              />
-            </div>
+            {!hideAvatar && (
+              <div className="flex-shrink-0" onClick={handleAuthorClick} style={{ cursor: 'pointer' }}>
+                <Avatar
+                  src={author.avatar}
+                  alt={author.displayName || author.handle}
+                  size="md"
+                />
+              </div>
+            )}
           </>
         )}
         <div className={stackedLayout ? '' : 'flex-1 min-w-0'}>

@@ -22,13 +22,19 @@ function getChatAgent(agent: BskyAgent): BskyAgent {
  * Bluesky app passwords can be created without "Direct Messages" access,
  * which causes the chat proxy to reject the token with "Bad token method".
  */
-function isAppPasswordDMError(error: unknown): boolean {
+export function isAppPasswordDMError(error: unknown): boolean {
   if (error instanceof Error) {
     const msg = error.message.toLowerCase()
     return msg.includes('bad token method') || msg.includes('bad token scope')
+      || msg.includes('does not have direct message access')
   }
   return false
 }
+
+export const APP_PASSWORD_DM_MESSAGE =
+  'Your app password does not have Direct Message access. ' +
+  'Create a new app password in Bluesky Settings → Privacy and Security → App Passwords ' +
+  'with the "Allow access to your direct messages" option enabled.'
 
 /**
  * Wraps a chat API error with a user-friendly message when the cause

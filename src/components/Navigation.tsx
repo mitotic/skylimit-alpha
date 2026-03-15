@@ -277,15 +277,9 @@ export default function Navigation() {
           onClose={() => setShowResetAllModal(false)}
           onConfirm={handleResetAll}
           title="Reset All Data"
-          message={`WARNING: This will completely wipe all Websky data:
-• All cached posts and summaries
-• All Skylimit settings
-• Follow list data
-• Login session (you will be logged out)
+          message={`WARNING: This will completely wipe all Websky data — settings, caches, and login.
 
-This is a complete reset to factory state. Use this only if the app is not working correctly.
-
-This cannot be undone.`}
+Use this only if the app is not working correctly. This cannot be undone.`}
           confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
           cancelText="Cancel"
           isDangerous={true}
