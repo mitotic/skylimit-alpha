@@ -17,6 +17,10 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useSession } from '../auth/SessionContext'
 import { checkFollowStatus, follow } from '../api/social'
+import { getProfile } from '../api/profile'
+import { saveFollow } from '../curation/skylimitCache'
+import { extractPriorityPatternsFromProfile, extractTimezone } from '../curation/skylimitGeneral'
+import { isReadOnlyMode } from '../utils/readOnlyMode'
 import ToastContainer, { ToastMessage } from './ToastContainer'
 import log from '../utils/logger'
 
@@ -31,8 +35,8 @@ export default function AggregatedNotificationComponent({
 }: AggregatedNotificationProps) {
   const navigate = useNavigate()
   const { agent, session } = useSession()
-  const [isFollowing, setIsFollowing] = useState<boolean | null>(null)
-  const [isFollowingLoading, setIsFollowingLoading] = useState(false)
+  const [followStatusMap, setFollowStatusMap] = useState<Record<string, boolean | null>>({})
+  const [followLoadingMap, setFollowLoadingMap] = useState<Record<string, boolean>>({})
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 })
@@ -64,19 +68,21 @@ export default function AggregatedNotificationComponent({
   const authors = notification.authors
   const mostRecent = notification.mostRecent
   
-  // Check follow status for follow notifications
+  // Check follow status for all authors in follow notifications
   useEffect(() => {
     if (normalizedReason === 'follow' && agent && session) {
-      checkFollowStatus(agent, mostRecent.author.did)
-        .then(followUri => {
-          setIsFollowing(!!followUri)
-        })
-        .catch(error => {
-          log.warn('Notifications', 'Failed to check follow status:', error)
-          setIsFollowing(null)
-        })
+      authors.forEach(author => {
+        checkFollowStatus(agent, author.did)
+          .then(followUri => {
+            setFollowStatusMap(prev => ({ ...prev, [author.did]: !!followUri }))
+          })
+          .catch(error => {
+            log.warn('Notifications', 'Failed to check follow status:', error)
+            setFollowStatusMap(prev => ({ ...prev, [author.did]: null }))
+          })
+      })
     }
-  }, [reason, mostRecent.author.did, agent, session])
+  }, [normalizedReason, authors, agent, session])
 
   useEffect(() => {
     if (!showUserMenu) return
@@ -95,26 +101,47 @@ export default function AggregatedNotificationComponent({
     }, 5000)
   }
   
-  const handleFollowBack = async (e: React.MouseEvent) => {
+  const handleFollowBack = async (e: React.MouseEvent, authorDid?: string) => {
     e.stopPropagation()
-    if (!agent || isFollowingLoading || isFollowing) return
-    
-    setIsFollowingLoading(true)
+    const targetDid = authorDid || mostRecent.author.did
+    if (!agent || followLoadingMap[targetDid] || followStatusMap[targetDid]) return
+    if (isReadOnlyMode()) {
+      addToast('Disable Read-only mode in Settings to do this', 'error')
+      return
+    }
+
+    setFollowLoadingMap(prev => ({ ...prev, [targetDid]: true }))
     try {
-      await follow(agent, mostRecent.author.did)
-      setIsFollowing(true)
+      await follow(agent, targetDid)
+      // Fetch full profile for curation cache
+      const profile = await getProfile(agent, targetDid)
+      const priorityPatterns = extractPriorityPatternsFromProfile(profile)
+      const timezone = extractTimezone(profile)
+      await saveFollow({
+        username: profile.handle,
+        accountDid: profile.did,
+        displayName: profile.displayName || undefined,
+        followed_at: new Date().toISOString(),
+        amp_factor: 1,
+        priorityPatterns: priorityPatterns || undefined,
+        timezone,
+      })
+      setFollowStatusMap(prev => ({ ...prev, [targetDid]: true }))
       addToast('Now following', 'success')
     } catch (error) {
       log.error('Notifications', 'Failed to follow:', error)
       addToast(error instanceof Error ? error.message : 'Failed to follow user', 'error')
     } finally {
-      setIsFollowingLoading(false)
+      setFollowLoadingMap(prev => ({ ...prev, [targetDid]: false }))
     }
   }
   
   const handleClick = () => {
-    if (normalizedReason === 'follow') {
+    if (normalizedReason === 'follow' && authors.length === 1) {
       navigate(`/profile/${mostRecent.author.handle}`)
+    } else if (normalizedReason === 'follow' && authors.length > 1) {
+      // For bunched follows, toggle the dropdown instead of navigating
+      return
     } else {
       // Use post.uri if available (resolved), fallback to reasonSubject
       const targetUri = notification.post?.uri || notification.reasonSubject || mostRecent.uri
@@ -224,109 +251,169 @@ export default function AggregatedNotificationComponent({
         className="px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
       >
         <div className="flex items-start gap-3">
-          {/* Avatar group with optional chevron */}
-          <div className="flex-shrink-0 flex items-center">
-            <div className="flex -space-x-2">
-              {displayAvatars.map((author, index) => (
-                <div
-                  key={author.did}
-                  onClick={(e) => handleAuthorClick(author.did, e)}
-                  className="cursor-pointer"
-                  style={{ zIndex: displayAvatars.length - index }}
-                >
-                  <Avatar
-                    src={author.avatar}
-                    alt={author.displayName || author.handle}
-                    size="sm"
-                  />
-                </div>
-              ))}
-              {remainingCount > 0 && (
-                <div className="w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-xs font-semibold text-gray-700 dark:text-gray-300 border-2 border-white dark:border-gray-900">
-                  +{remainingCount}
-                </div>
-              )}
-            </div>
-            {authors.length > 1 && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                  setMenuPosition({ x: rect.left, y: rect.bottom + 4 })
-                  setShowUserMenu(prev => !prev)
-                }}
-                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ml-1 px-0.5"
-                aria-label="Show all users"
-              >
-                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-              </button>
-            )}
+          {/* Icon column - fixed width for consistent indentation */}
+          <div className="flex-shrink-0 w-5 pt-0.5">
+            {getNotificationIcon(reason)}
           </div>
 
+          {/* Content column - everything indented after icon */}
           <div className="flex-1 min-w-0">
+            {/* Row: avatars + text + time */}
             <div className="flex items-center gap-2 flex-wrap">
-              {getNotificationIcon(reason)}
+              {/* Avatar group with optional chevron */}
+              <div className="flex-shrink-0 flex items-center">
+                <div className="flex -space-x-2">
+                  {displayAvatars.map((author, index) => (
+                    <div
+                      key={author.did}
+                      onClick={(e) => handleAuthorClick(author.did, e)}
+                      className="cursor-pointer"
+                      style={{ zIndex: displayAvatars.length - index }}
+                    >
+                      <Avatar
+                        src={author.avatar}
+                        alt={author.displayName || author.handle}
+                        size="sm"
+                      />
+                    </div>
+                  ))}
+                  {remainingCount > 0 && (
+                    <div className="w-8 h-8 rounded-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-xs font-semibold text-gray-700 dark:text-gray-300 border-2 border-white dark:border-gray-900">
+                      +{remainingCount}
+                    </div>
+                  )}
+                </div>
+                {authors.length > 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                      setMenuPosition({ x: rect.left, y: rect.bottom + 4 })
+                      setShowUserMenu(prev => !prev)
+                    }}
+                    className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ml-1 px-0.5"
+                    aria-label="Show all users"
+                  >
+                    <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                  </button>
+                )}
+              </div>
               <span className="font-medium text-gray-900 dark:text-gray-100 text-sm">
-                {notificationText}
+                {normalizedReason === 'reply' && notification.replyParentAuthor ? (
+                  <>
+                    {notificationText.replace(/replied to you$/, 'replied to ')}
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        navigate(`/profile/${notification.replyParentAuthor!.handle}`)
+                      }}
+                      className="text-blue-500 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      {notification.replyParentAuthor.displayName || notification.replyParentAuthor.handle}
+                    </span>
+                  </>
+                ) : (
+                  notificationText
+                )}
               </span>
               <span className="text-gray-400 dark:text-gray-500 text-xs ml-auto">
                 {timeAgo}
               </span>
             </div>
-            
-            {/* Follow back button */}
-            {normalizedReason === 'follow' && isFollowing === false && (
+
+            {/* Follow back button - only for single follow notifications */}
+            {normalizedReason === 'follow' && authors.length === 1 && followStatusMap[mostRecent.author.did] === false && (
               <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                 <Button
-                  onClick={handleFollowBack}
-                  disabled={isFollowingLoading}
+                  onClick={(e) => handleFollowBack(e)}
+                  disabled={followLoadingMap[mostRecent.author.did]}
                   className="text-sm px-4 py-1.5"
                 >
-                  {isFollowingLoading ? 'Following...' : '+ Follow back'}
+                  {followLoadingMap[mostRecent.author.did] ? 'Following...' : '+ Follow back'}
                 </Button>
+              </div>
+            )}
+
+            {/* Post preview for likes/reposts */}
+            {notification.post && (normalizedReason === 'like' || normalizedReason === 'repost') && (
+              <div onClick={(e) => e.stopPropagation()} className="mt-2">
+                <NotificationPostPreview
+                  post={notification.post}
+                  onClick={() => {
+                    const targetUri = notification.post?.uri || notification.reasonSubject
+                    if (targetUri) {
+                      if (onPostClick) {
+                        onPostClick(targetUri)
+                      } else {
+                        const encodedUri = encodeURIComponent(targetUri)
+                        navigate(`/post/${encodedUri}`)
+                      }
+                    }
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Reply notification: reply text + "replied to" indicator + indented original */}
+            {notification.post && normalizedReason === 'reply' && (
+              <div onClick={(e) => e.stopPropagation()} className="mt-2">
+                {/* Reply text */}
+                <NotificationPostPreview
+                  post={notification.post}
+                  onClick={() => {
+                    const targetUri = notification.post?.uri || notification.reasonSubject
+                    if (targetUri) {
+                      if (onPostClick) {
+                        onPostClick(targetUri)
+                      } else {
+                        const encodedUri = encodeURIComponent(targetUri)
+                        navigate(`/post/${encodedUri}`)
+                      }
+                    }
+                  }}
+                />
+                {/* Original post, indented + smaller font */}
+                {notification.parentPost && (
+                  <div className="mt-1 pl-4 border-l-2 border-gray-200 dark:border-gray-600">
+                    <NotificationPostPreview
+                      post={notification.parentPost}
+                      size="small"
+                      onClick={() => {
+                        const targetUri = notification.parentPost?.uri || notification.reasonSubject
+                        if (targetUri) {
+                          if (onPostClick) {
+                            onPostClick(targetUri)
+                          } else {
+                            const encodedUri = encodeURIComponent(targetUri)
+                            navigate(`/post/${encodedUri}`)
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Full post card for mentions/quotes */}
+            {notification.post && (normalizedReason === 'mention' || normalizedReason === 'quote') && (
+              <div onClick={(e) => e.stopPropagation()} className="mt-2">
+                <PostCard
+                  post={{
+                    post: notification.post,
+                    reason: {
+                      $type: `app.bsky.feed.defs#reason${reason.charAt(0).toUpperCase() + reason.slice(1)}`,
+                      by: mostRecent.author,
+                    } as any,
+                  }}
+                  showRootPost={false}
+                  hideAvatar={true}
+                />
               </div>
             )}
           </div>
         </div>
       </div>
-      
-      {/* Post preview for likes/reposts */}
-      {notification.post && (normalizedReason === 'like' || normalizedReason === 'repost') && (
-        <div onClick={(e) => e.stopPropagation()} className="px-4 pb-3">
-          <NotificationPostPreview
-            post={notification.post}
-            onClick={() => {
-              // Use post.uri (resolved) instead of reasonSubject (may be repost URI)
-              const targetUri = notification.post?.uri || notification.reasonSubject
-              if (targetUri) {
-                if (onPostClick) {
-                  onPostClick(targetUri)
-                } else {
-                  const encodedUri = encodeURIComponent(targetUri)
-                  navigate(`/post/${encodedUri}`)
-                }
-              }
-            }}
-          />
-        </div>
-      )}
-
-      {/* Full post card for replies/mentions/quotes */}
-      {notification.post && (normalizedReason === 'reply' || normalizedReason === 'mention' || normalizedReason === 'quote') && (
-        <div onClick={(e) => e.stopPropagation()} className="px-4 pb-3">
-          <PostCard
-            post={{
-              post: notification.post,
-              reason: {
-                $type: `app.bsky.feed.defs#reason${reason.charAt(0).toUpperCase() + reason.slice(1)}`,
-                by: mostRecent.author,
-              } as any,
-            }}
-            showRootPost={false}
-            hideAvatar={true}
-          />
-        </div>
-      )}
       
       {showUserMenu && createPortal(
         <>
@@ -343,28 +430,52 @@ export default function AggregatedNotificationComponent({
             role="menu"
             onClick={(e) => e.stopPropagation()}
           >
-            {authors.map(author => (
-              <button
+            {authors.slice(0, 25).map(author => (
+              <div
                 key={author.did}
-                className="w-full px-3 py-2 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowUserMenu(false)
-                  navigate(`/profile/${author.handle}`)
-                }}
+                className="w-full px-3 py-2 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 role="menuitem"
               >
-                <Avatar src={author.avatar} alt={author.displayName || author.handle} size="xs" />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-                    {author.displayName || author.handle}
+                <button
+                  className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowUserMenu(false)
+                    navigate(`/profile/${author.handle}`)
+                  }}
+                >
+                  <Avatar src={author.avatar} alt={author.displayName || author.handle} size="xs" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                      {author.displayName || author.handle}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      @{author.handle}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    @{author.handle}
+                </button>
+                {normalizedReason === 'follow' && (
+                  <div className="flex-shrink-0 ml-auto">
+                    {followStatusMap[author.did] === false ? (
+                      <button
+                        className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 font-medium whitespace-nowrap"
+                        onClick={(e) => handleFollowBack(e, author.did)}
+                        disabled={followLoadingMap[author.did]}
+                      >
+                        {followLoadingMap[author.did] ? 'Following...' : 'Follow back'}
+                      </button>
+                    ) : followStatusMap[author.did] === true ? (
+                      <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">Following</span>
+                    ) : null}
                   </div>
-                </div>
-              </button>
+                )}
+              </div>
             ))}
+            {authors.length > 25 && (
+              <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 text-center">
+                and {authors.length - 25} more
+              </div>
+            )}
           </div>
         </>,
         document.body

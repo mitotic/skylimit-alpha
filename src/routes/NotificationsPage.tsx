@@ -17,6 +17,8 @@ type Notification = AppBskyNotificationListNotifications.Notification
 
 interface NotificationWithPost extends Notification {
   post?: AppBskyFeedDefs.PostView
+  parentPost?: AppBskyFeedDefs.PostView
+  replyParentAuthor?: { displayName?: string; handle: string }
 }
 
 export default function NotificationsPage() {
@@ -74,6 +76,7 @@ export default function NotificationsPage() {
       // Step 1: Separate direct URIs (can fetch immediately) from repost URIs (need resolution)
       const directPostUris = new Set<string>()
       const directReplyMentionUris = new Set<string>()
+      const replyPostUris = new Set<string>()  // URIs of actual reply posts (notification.uri)
       const repostUrisToResolve: Array<{ reasonSubject: string; repo: string; rkey: string }> = []
 
       for (const notification of newNotifications) {
@@ -81,6 +84,12 @@ export default function NotificationsPage() {
         const normalizedReason = normalizeReason(reason)
 
         if (!notification.reasonSubject || reason === 'follow') continue
+
+        // Collect reply post URIs for ALL reply/mention notifications (not just first per reasonSubject)
+        if (normalizedReason === 'reply' || normalizedReason === 'mention') {
+          replyPostUris.add(notification.uri)
+        }
+
         if (uriResolutionMap.has(notification.reasonSubject)) continue
 
         const postUri = notification.reasonSubject
@@ -135,6 +144,19 @@ export default function NotificationsPage() {
         })
 
         await Promise.all(threadFetches)
+
+        // Batch fetch the actual reply posts by their URIs (notification.uri)
+        // This ensures we get the reply text even for indirect replies
+        if (replyPostUris.size > 0) {
+          try {
+            const response = await agent.getPosts({ uris: Array.from(replyPostUris) })
+            for (const post of response.data.posts) {
+              postCache.set(post.uri, post)
+            }
+          } catch (error) {
+            log.warn('Notifications', 'Batch fetch reply posts failed:', error)
+          }
+        }
       }
 
       const resolveRepostUris = async () => {
@@ -199,20 +221,50 @@ export default function NotificationsPage() {
         }
 
         if (normalizedReason === 'reply' || normalizedReason === 'mention') {
-          // For replies, try to find the actual reply in the thread
+          // Get the root/original post (the user's post that was replied to)
+          const rootPost = postCache.get(resolvedUri)
+
+          // Try to get the actual reply post directly (fetched by notification.uri)
+          const replyPost = postCache.get(notification.uri)
+          if (replyPost) {
+            // Determine reply-to author for indirect replies
+            // An indirect reply is when the replier responded to someone other than the user
+            // Compare parent URI with reasonSubject (the user's post) to detect this
+            const record = notification.record as any
+            const parentUri = record?.reply?.parent?.uri
+            let replyParentAuthor: { displayName?: string; handle: string } | undefined
+            if (parentUri && parentUri !== resolvedUri) {
+              // Indirect reply: the reply is to a different post than the user's
+              // Try to get parent post author from cache
+              const parentPost = postCache.get(parentUri)
+              if (parentPost?.author) {
+                replyParentAuthor = {
+                  displayName: parentPost.author.displayName,
+                  handle: parentPost.author.handle
+                }
+              }
+            }
+            return {
+              ...notification,
+              post: replyPost,
+              parentPost: rootPost,
+              replyParentAuthor
+            }
+          }
+
+          // Fallback: try thread-based lookup for direct replies
           const thread = threadCache.get(resolvedUri)
           if (thread?.replies && Array.isArray(thread.replies)) {
             const reply = thread.replies.find(
               (r: any) => r.post?.author.did === notification.author.did
             )
             if (reply?.post) {
-              return { ...notification, post: reply.post as AppBskyFeedDefs.PostView }
+              return { ...notification, post: reply.post as AppBskyFeedDefs.PostView, parentPost: rootPost }
             }
           }
-          // Fallback to parent post
-          const post = postCache.get(resolvedUri)
-          if (post) {
-            return { ...notification, post }
+          // Last fallback to root post
+          if (rootPost) {
+            return { ...notification, post: rootPost }
           }
         } else {
           // For like/repost/quote, use the cached post
@@ -302,7 +354,12 @@ export default function NotificationsPage() {
             n => n.uri === agg.mostRecent.uri && n.post
           )
           if (notificationWithPost?.post) {
-            return { ...agg, post: notificationWithPost.post }
+            return {
+              ...agg,
+              post: notificationWithPost.post,
+              parentPost: notificationWithPost.parentPost,
+              replyParentAuthor: notificationWithPost.replyParentAuthor
+            }
           }
         }
         return agg

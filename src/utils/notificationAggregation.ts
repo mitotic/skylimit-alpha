@@ -22,18 +22,36 @@ export interface AggregatedNotification {
   // Post data (for likes/reposts/quotes)
   post?: AppBskyFeedDefs.PostView
   isRepost?: boolean                        // True if the post being liked/reposted is itself a repost
+  parentPost?: AppBskyFeedDefs.PostView     // Root/original post for reply notifications
+  replyParentAuthor?: { displayName?: string; handle: string }  // Person being replied to (for indirect replies)
   
   // Individual notifications (for replies/mentions that shouldn't be aggregated)
   notifications?: Notification[]
 }
 
+/** Options for controlling notification aggregation */
+export interface AggregationOptions {
+  /** Time window for grouping: 'day' groups by calendar date (default: 'day') */
+  timeWindow?: 'day'
+  /** Maximum notifications per aggregated group (default: 25) */
+  maxGroupSize?: number
+}
+
+const DEFAULT_AGGREGATION_OPTIONS: Required<AggregationOptions> = {
+  timeWindow: 'day',
+  maxGroupSize: 25,
+}
+
 /**
  * Groups notifications by reasonSubject + reason
- * Likes and reposts are aggregated, replies/mentions/quotes are kept separate
+ * Likes and reposts are aggregated by subject + date, follows by date
+ * Replies/mentions/quotes are kept separate
  */
 export function aggregateNotifications(
-  notifications: Notification[]
+  notifications: Notification[],
+  options?: AggregationOptions
 ): AggregatedNotification[] {
+  const { maxGroupSize } = { ...DEFAULT_AGGREGATION_OPTIONS, ...options }
   // Group notifications by key: reasonSubject + reason
   const groups = new Map<string, Notification[]>()
   
@@ -74,15 +92,15 @@ export function aggregateNotifications(
     }
     
     
-    // Only aggregate likes and reposts
-    // Keep replies, mentions, quotes, and follows separate
+    // Aggregate likes, reposts, and follows
+    // Keep replies, mentions, quotes separate
     // Note: "like-via-repost" is normalized to "like" for aggregation purposes
     // so likes on reposts are aggregated with other likes on the same repost
     if (reason === 'like' || reason === 'repost') {
-      // For reposts, we need reasonSubject to aggregate properly
-      // If no reasonSubject, we can't aggregate, so keep it separate
+      // Aggregate by reasonSubject + date, no size cap (dropdown display is capped separately)
       if (notification.reasonSubject) {
-        const key = `${notification.reasonSubject}:${reason}`
+        const notifDate = new Date(notification.indexedAt).toISOString().slice(0, 10) // YYYY-MM-DD
+        const key = `${notification.reasonSubject}:${reason}:${notifDate}`
         if (!groups.has(key)) {
           groups.set(key, [])
         }
@@ -92,6 +110,21 @@ export function aggregateNotifications(
         const key = `single:${notification.uri}`
         groups.set(key, [notification])
       }
+    } else if (reason === 'follow') {
+      // Bunch follow notifications by date (same day), with max group size
+      const followDate = new Date(notification.indexedAt).toISOString().slice(0, 10) // YYYY-MM-DD
+      const baseKey = `follow:${followDate}`
+      // Find a group for this date that isn't full
+      let groupKey = baseKey
+      let groupIndex = 0
+      while (groups.has(groupKey) && groups.get(groupKey)!.length >= maxGroupSize) {
+        groupIndex++
+        groupKey = `${baseKey}:${groupIndex}`
+      }
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, [])
+      }
+      groups.get(groupKey)!.push(notification)
     } else {
       // Keep other types separate - use URI as unique key
       const key = `single:${notification.uri}`
@@ -160,7 +193,7 @@ export function aggregateNotifications(
     const isRead = groupNotifications.every(n => n.isRead !== false)
     
     // Check if this is a like or repost for aggregation purposes
-    const isAggregatable = reason === 'like' || reason === 'repost'
+    const isAggregatable = reason === 'like' || reason === 'repost' || reason === 'follow'
     
     // Check if any notification in the group is a like-via-repost or repost-via-repost
     // This indicates the like/repost is on a repost record
