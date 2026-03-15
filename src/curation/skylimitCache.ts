@@ -8,7 +8,7 @@ import { clientNow } from '../utils/clientClock'
 import log from '../utils/logger'
 
 const DB_NAME = 'skylimit_db'
-const DB_VERSION = 9 // Increment version: migrated summaries to post_summaries store keyed by uniqueId
+const DB_VERSION = 1 // Reset to 1 for beta release (all test sites cleared via clobber=1)
 
 // Store names
 const STORE_POST_SUMMARIES = 'post_summaries'
@@ -54,11 +54,6 @@ function openDB(): Promise<IDBDatabase> {
     // so the handler must be registered immediately after opening the request
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result
-
-      // Delete old summaries store if it exists (migrating to post_summaries)
-      if (database.objectStoreNames.contains('summaries')) {
-        database.deleteObjectStore('summaries')
-      }
 
       // Post summaries store: keyed by uniqueId with postTimestamp index
       if (!database.objectStoreNames.contains(STORE_POST_SUMMARIES)) {
@@ -108,10 +103,6 @@ function openDB(): Promise<IDBDatabase> {
       rootPostsStore.createIndex('cachedAt', 'cachedAt', { unique: false })
       rootPostsStore.createIndex('lastAccessed', 'lastAccessed', { unique: false })
 
-      // Clean up deprecated secondary feed cache store (now using in-memory secondary cache)
-      if (database.objectStoreNames.contains(STORE_FEED_CACHE_SECONDARY)) {
-        database.deleteObjectStore(STORE_FEED_CACHE_SECONDARY)
-      }
     }
 
     request.onblocked = () => {
