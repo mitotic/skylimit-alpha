@@ -210,10 +210,10 @@ export default function Navigation() {
         <span className="hidden md:inline font-medium">Saved</span>
       </button>
 
-      {/* Chat - hidden on mobile bottom bar */}
+      {/* Chat */}
       <button
         onClick={handleChatClick}
-        className={`hidden md:flex items-center gap-3 px-4 py-3 transition-colors relative ${
+        className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
           isActive('/chat') || location.pathname.startsWith('/chat/')
             ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
             : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
