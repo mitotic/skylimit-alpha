@@ -968,24 +968,6 @@ This cannot be undone.`}
 
               <div>
                 <label className="block mb-2 font-medium">
-                  Popularity Amplifier:
-                </label>
-                <select
-                  value={settings.popAmp ?? 1}
-                  onChange={(e) => updateSetting('popAmp', parseInt(e.target.value))}
-                  className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                >
-                  {[1, 2, 3, 4, 5].map(v => (
-                    <option key={v} value={v}>{v}{v === 1 ? ' (disabled)' : ''}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Higher values boost popular posts and reduce less popular ones. 1 = no popularity weighting.
-                </p>
-              </div>
-
-              <div>
-                <label className="block mb-2 font-medium">
                   Days of data to analyze:
                 </label>
                 <input
@@ -1196,6 +1178,24 @@ This cannot be undone.`}
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     Multiplier for raw posts to fetch (accounts for filtering variability). Higher = more reliable page fill. Range: 1-3.
+                  </p>
+                </div>
+
+                <div className="mt-6">
+                  <label className="block mb-2 font-medium">
+                    Popularity Amplifier:
+                  </label>
+                  <select
+                    value={settings.popAmp ?? 1}
+                    onChange={(e) => updateSetting('popAmp', parseInt(e.target.value))}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  >
+                    {[1, 2, 3, 4, 5].map(v => (
+                      <option key={v} value={v}>{v}{v === 1 ? ' (disabled)' : ''}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Higher values boost popular posts and reduce less popular ones. 1 = no popularity weighting.
                   </p>
                 </div>
 
@@ -1762,7 +1762,6 @@ You will be logged out and redirected to the login page.`}
                       type="button"
                       onClick={() => {
                         setVisualEditorMode(false)
-                        setShowExample(false)
                         setEditionFeedback(null)
                       }}
                       className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30"
@@ -1783,25 +1782,36 @@ You will be logged out and redirected to the login page.`}
               />
             ) : (
               <div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVisualEditorMode(true)
-                    setEditionFeedback(null)
-                  }}
-                  className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30 mb-2"
-                >
-                  Switch to Visual Editor
-                </button>
-                <label className="block mb-2 font-medium">
-                  Edition layout:
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisualEditorMode(true)
+                      setEditionFeedback(null)
+                    }}
+                    className="px-3 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 border border-blue-600 dark:border-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  >
+                    Switch to Visual Editor
+                  </button>
+                  <label className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showExample}
+                      onChange={(e) => setShowExample(e.target.checked)}
+                      className="rounded"
+                    />
+                    Show example
+                  </label>
+                </div>
                 <textarea
-                  value={settings.editionLayout}
+                  value={showExample ? helpGlossary['Edition layout placeholder'] : settings.editionLayout}
                   onChange={(e) => {
-                    updateSetting('editionLayout', e.target.value)
-                    setEditionFeedback(null)
+                    if (!showExample) {
+                      updateSetting('editionLayout', e.target.value)
+                      setEditionFeedback(null)
+                    }
                   }}
+                  readOnly={showExample}
                   className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 font-mono text-sm"
                   rows={28}
                   placeholder={helpGlossary['Edition layout placeholder']}
@@ -1811,14 +1821,16 @@ You will be logged out and redirected to the login page.`}
                     Configure edition layout patterns. {helpGlossary['Edition layout']}
                   </p>
                 )}
-                <div className="mt-2 flex items-center gap-3">
-                  <Button
-                    variant="primary"
-                    onClick={() => handleSaveEditionLayout(settings.editionLayout)}
-                  >
-                    Update Edition Layout
-                  </Button>
-                </div>
+                {!showExample && (
+                  <div className="mt-2 flex items-center gap-3">
+                    <Button
+                      variant="primary"
+                      onClick={() => handleSaveEditionLayout(settings.editionLayout)}
+                    >
+                      Update Edition Layout
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
         </div>

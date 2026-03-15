@@ -2,11 +2,13 @@ import { useState, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useSession } from '../auth/SessionContext'
 import { getUnreadCount } from '../api/notifications'
+import { getUnreadChatCount } from '../api/chat'
 import { isRateLimited } from '../utils/rateLimitState'
+import { getNonStandardServerName } from '../api/atproto-client'
 import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import ConfirmModal from './ConfirmModal'
-import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, PersonIcon, GearIcon } from './NavIcons'
+import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, ChatIcon, PersonIcon, GearIcon } from './NavIcons'
 import log from '../utils/logger'
 
 export default function BurgerMenu() {
@@ -15,6 +17,7 @@ export default function BurgerMenu() {
   const navigate = useNavigate()
   const { session, agent, avatarUrl } = useSession()
   const [unreadCount, setUnreadCount] = useState<number>(0)
+  const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
 
@@ -53,8 +56,12 @@ export default function BurgerMenu() {
     const fetchUnreadCount = async () => {
       if (isRateLimited()) return
       try {
-        const count = await getUnreadCount(agent)
+        const [count, chatCount] = await Promise.all([
+          getUnreadCount(agent),
+          getUnreadChatCount(agent).catch(() => 0),
+        ])
         setUnreadCount(count)
+        setUnreadChatCount(chatCount)
       } catch (error) {
         log.warn('Navigation', 'Failed to fetch unread count:', error)
       }
@@ -70,9 +77,10 @@ export default function BurgerMenu() {
 
   const navItems = [
     { path: '/', label: 'Home', icon: <HomeIcon /> },
-    { path: '/notifications', label: 'Notifications', icon: <BellIcon />, badge: unreadCount > 0 ? unreadCount : undefined },
     { path: '/search', label: 'Search', icon: <SearchIcon /> },
+    { path: '/notifications', label: 'Notifications', icon: <BellIcon />, badge: unreadCount > 0 ? unreadCount : undefined },
     { path: '/saved', label: 'Saved', icon: <BookmarkIcon /> },
+    { path: '/chat', label: 'Chat', icon: <ChatIcon />, badge: unreadChatCount > 0 ? unreadChatCount : undefined },
   ]
 
   const handleProfileClick = () => {
@@ -167,7 +175,7 @@ export default function BurgerMenu() {
                     <span className="font-medium">Settings</span>
                   </Link>
 
-                  {debugMode && (
+                  {debugMode && getNonStandardServerName() && (
                     <button
                       onClick={() => setShowResetAllModal(true)}
                       className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -184,7 +192,7 @@ export default function BurgerMenu() {
       )}
 
       {/* Reset All Confirmation Modal */}
-      {debugMode && (
+      {debugMode && getNonStandardServerName() && (
         <ConfirmModal
           isOpen={showResetAllModal}
           onClose={() => setShowResetAllModal(false)}

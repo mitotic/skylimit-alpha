@@ -361,11 +361,11 @@ function ConversationItem({ convo, currentDid, onClick }: ConversationItemProps)
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
-          <span className={`text-sm truncate ${
+          <span className={`truncate ${
             convo.unreadCount > 0
               ? 'font-bold text-gray-900 dark:text-white'
               : 'font-medium text-gray-900 dark:text-white'
-          }`}>
+          }`} style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>
             {displayMember?.displayName || displayMember?.handle || 'Unknown'}
           </span>
           <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -378,11 +378,11 @@ function ConversationItem({ convo, currentDid, onClick }: ConversationItemProps)
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <p className={`text-sm truncate ${
+          <p className={`truncate ${
             convo.unreadCount > 0
               ? 'font-medium text-gray-700 dark:text-gray-300'
               : 'text-gray-500 dark:text-gray-400'
-          }`}>
+          }`} style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}>
             {lastMessageText || 'No messages yet'}
           </p>
           {convo.unreadCount > 0 && (
@@ -804,13 +804,14 @@ function ChatDetail({ convoId, addToast, onRateLimit }: ChatDetailProps) {
               <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} ${showSender ? 'mt-2' : 'mt-0.5'}`}>
                 <div className={`max-w-[75%] ${isSelf ? 'order-1' : ''}`}>
                   <div
-                    className={`px-3 py-2 rounded-2xl text-sm break-words ${
+                    className={`px-3 py-2 rounded-2xl break-words ${
                       isDeleted
                         ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 italic'
                         : isSelf
                           ? 'bg-blue-500 text-white'
                           : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
                     } ${isOptimistic ? 'opacity-60' : ''}`}
+                    style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
                   >
                     {isDeleted ? (
                       '[Message deleted]'
@@ -871,7 +872,8 @@ function ChatDetail({ convoId, addToast, onRateLimit }: ChatDetailProps) {
                 onKeyDown={handleKeyDown}
                 placeholder="Type a message..."
                 rows={1}
-                className="flex-1 resize-none bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-2xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-h-[120px]"
+                className="flex-1 resize-none bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-2xl px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 max-h-[120px]"
+                style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
               />
               <button
                 onClick={handleSend}

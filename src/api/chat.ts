@@ -17,6 +17,37 @@ function getChatAgent(agent: BskyAgent): BskyAgent {
   return agent.withProxy('bsky_chat' as any, CHAT_SERVICE_DID) as BskyAgent
 }
 
+/**
+ * Checks if an error is due to app password lacking DM permissions.
+ * Bluesky app passwords can be created without "Direct Messages" access,
+ * which causes the chat proxy to reject the token with "Bad token method".
+ */
+function isAppPasswordDMError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return msg.includes('bad token method') || msg.includes('bad token scope')
+  }
+  return false
+}
+
+/**
+ * Wraps a chat API error with a user-friendly message when the cause
+ * is an app password without DM permission.
+ */
+function friendlyChatError(error: unknown, fallbackMsg: string): Error {
+  if (isAppPasswordDMError(error)) {
+    return new Error(
+      'Your app password does not have Direct Message access. ' +
+      'Create a new app password in Bluesky Settings → Privacy and Security → App Passwords ' +
+      'with the "Allow access to your direct messages" option enabled.'
+    )
+  }
+  if (error instanceof Error) {
+    return new Error(`${fallbackMsg}: ${error.message}`)
+  }
+  return new Error(`${fallbackMsg}: Unknown error`)
+}
+
 export type ConvoView = ChatBskyConvoDefs.ConvoView
 export type MessageView = ChatBskyConvoDefs.MessageView
 export type DeletedMessageView = ChatBskyConvoDefs.DeletedMessageView
@@ -67,10 +98,7 @@ export async function listConversations(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to fetch conversations: ${error.message}`)
-    }
-    throw new Error('Failed to fetch conversations: Unknown error')
+    throw friendlyChatError(error, 'Failed to fetch conversations')
   })
 }
 
@@ -105,10 +133,7 @@ export async function getConversation(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to fetch conversation: ${error.message}`)
-    }
-    throw new Error('Failed to fetch conversation: Unknown error')
+    throw friendlyChatError(error, 'Failed to fetch conversation')
   })
 }
 
@@ -169,10 +194,7 @@ export async function getMessages(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to fetch messages: ${error.message}`)
-    }
-    throw new Error('Failed to fetch messages: Unknown error')
+    throw friendlyChatError(error, 'Failed to fetch messages')
   })
 }
 
@@ -214,10 +236,7 @@ export async function sendMessage(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to send message: ${error.message}`)
-    }
-    throw new Error('Failed to send message: Unknown error')
+    throw friendlyChatError(error, 'Failed to send message')
   })
 }
 
@@ -254,10 +273,7 @@ export async function getOrCreateConversation(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to get/create conversation: ${error.message}`)
-    }
-    throw new Error('Failed to get/create conversation: Unknown error')
+    throw friendlyChatError(error, 'Failed to get/create conversation')
   })
 }
 
@@ -296,10 +312,7 @@ export async function markConversationRead(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to mark conversation read: ${error.message}`)
-    }
-    throw new Error('Failed to mark conversation read: Unknown error')
+    throw friendlyChatError(error, 'Failed to mark conversation read')
   })
 }
 
@@ -334,10 +347,7 @@ export async function muteConversation(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to mute conversation: ${error.message}`)
-    }
-    throw new Error('Failed to mute conversation: Unknown error')
+    throw friendlyChatError(error, 'Failed to mute conversation')
   })
 }
 
@@ -372,10 +382,7 @@ export async function unmuteConversation(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to unmute conversation: ${error.message}`)
-    }
-    throw new Error('Failed to unmute conversation: Unknown error')
+    throw friendlyChatError(error, 'Failed to unmute conversation')
   })
 }
 
@@ -409,10 +416,7 @@ export async function leaveConversation(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to leave conversation: ${error.message}`)
-    }
-    throw new Error('Failed to leave conversation: Unknown error')
+    throw friendlyChatError(error, 'Failed to leave conversation')
   })
 }
 
@@ -446,10 +450,7 @@ export async function acceptConversation(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to accept conversation: ${error.message}`)
-    }
-    throw new Error('Failed to accept conversation: Unknown error')
+    throw friendlyChatError(error, 'Failed to accept conversation')
   })
 }
 
@@ -485,9 +486,6 @@ export async function getUnreadChatCount(
         `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
       )
     }
-    if (error instanceof Error) {
-      throw new Error(`Failed to fetch unread chat count: ${error.message}`)
-    }
-    throw new Error('Failed to fetch unread chat count: Unknown error')
+    throw friendlyChatError(error, 'Failed to fetch unread chat count')
   })
 }

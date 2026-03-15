@@ -4,6 +4,7 @@ import { useSession } from '../auth/SessionContext'
 import { getUnreadCount } from '../api/notifications'
 import { getUnreadChatCount } from '../api/chat'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
+import { getNonStandardServerName } from '../api/atproto-client'
 import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import log from '../utils/logger'
@@ -178,19 +179,6 @@ export default function Navigation() {
         <span className="hidden md:inline font-medium">Search</span>
       </button>
 
-      {/* Saved - uses button for Click to Bluesky support */}
-      <button
-        onClick={handleSavedClick}
-        className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
-          isActive('/saved')
-            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-            : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-        }`}
-      >
-        <BookmarkIcon className={`w-6 h-6 ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full p-0.5 box-content' : ''}`} />
-        <span className="hidden md:inline font-medium">Saved</span>
-      </button>
-
       {/* Notifications - uses button for Click to Bluesky support */}
       <button
         onClick={handleNotificationsClick}
@@ -209,10 +197,23 @@ export default function Navigation() {
         )}
       </button>
 
-      {/* Chat - uses button for Click to Bluesky support */}
+      {/* Saved - hidden on mobile bottom bar */}
+      <button
+        onClick={handleSavedClick}
+        className={`hidden md:flex items-center gap-3 px-4 py-3 transition-colors relative ${
+          isActive('/saved')
+            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+            : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+        }`}
+      >
+        <BookmarkIcon className={`w-6 h-6 ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full p-0.5 box-content' : ''}`} />
+        <span className="hidden md:inline font-medium">Saved</span>
+      </button>
+
+      {/* Chat - hidden on mobile bottom bar */}
       <button
         onClick={handleChatClick}
-        className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
+        className={`hidden md:flex items-center gap-3 px-4 py-3 transition-colors relative ${
           isActive('/chat') || location.pathname.startsWith('/chat/')
             ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
             : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
@@ -257,7 +258,7 @@ export default function Navigation() {
             <span className="hidden md:inline font-medium">Settings</span>
           </Link>
 
-          {debugMode && (
+          {debugMode && getNonStandardServerName() && (
             <button
               onClick={() => setShowResetAllModal(true)}
               className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -270,7 +271,7 @@ export default function Navigation() {
       )}
 
       {/* Reset All Confirmation Modal */}
-      {debugMode && (
+      {debugMode && getNonStandardServerName() && (
         <ConfirmModal
           isOpen={showResetAllModal}
           onClose={() => setShowResetAllModal(false)}
