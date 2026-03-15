@@ -31,6 +31,7 @@ import { useScrollManagement } from '../hooks/useScrollManagement'
 import { usePullToRefresh } from '../hooks/usePullToRefresh'
 import { useViewTracking } from '../hooks/useViewTracking'
 import { useFeedPipeline } from '../hooks/useFeedPipeline'
+import { checkForAppUpdate } from '../utils/versionCheck'
 import log from '../utils/logger'
 
 export default function HomePage() {
@@ -54,6 +55,8 @@ export default function HomePage() {
   const [timezoneBannerDismissed, setTimezoneBannerDismissed] = useState(false)
   const [showIntroMessage, setShowIntroMessage] = useState(() => !localStorage.getItem('skylimit_intro_shown'))
   const [showIntroModal, setShowIntroModal] = useState(false)
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  const [showUpdateModal, setShowUpdateModal] = useState(false)
 
   // Tab state - initialize from sessionStorage
   const getInitialTab = (): HomeTab => {
@@ -170,6 +173,14 @@ export default function HomePage() {
 
   // View tracking hook
   useViewTracking({ feed, setFeed })
+
+  // Check for app updates on mount and periodically
+  useEffect(() => {
+    const check = () => checkForAppUpdate().then(v => { if (v) setUpdateVersion(v) })
+    const timer = setTimeout(check, 5000) // initial check after 5s
+    const interval = setInterval(check, 30 * 60 * 1000) // re-check every 30 min
+    return () => { clearTimeout(timer); clearInterval(interval) }
+  }, [])
 
   // Save active tab to sessionStorage when it changes
   useEffect(() => {
@@ -1001,6 +1012,14 @@ export default function HomePage() {
                     About
                   </a>
                   <InstallHelp />
+                  {updateVersion && (
+                    <span
+                      onClick={() => setShowUpdateModal(true)}
+                      className="text-red-600 dark:text-red-400 hover:underline font-semibold cursor-pointer"
+                    >
+                      Update available
+                    </span>
+                  )}
                 </>
               )}
               <div className="flex items-center gap-4 ml-auto">
@@ -1470,6 +1489,12 @@ export default function HomePage() {
         title={refreshResultTitle}
         verb={refreshResultTitle === 'Refetch complete' ? 'Refetched' : 'Re-curated'}
       />
+
+      <Modal isOpen={showUpdateModal} onClose={() => setShowUpdateModal(false)} title="Update Available" size="md">
+        <p className="text-gray-700 dark:text-gray-300 text-base leading-relaxed">
+          Pull-to-refresh on mobile phone or hard refresh on desktop (usually Ctrl/Cmd-Shift-R) to update the web app to version {updateVersion}.
+        </p>
+      </Modal>
 
       <Modal isOpen={showIntroModal} onClose={() => setShowIntroModal(false)} title="About Skylimit" size="md">
         <div className="text-gray-700 dark:text-gray-300 text-base leading-relaxed">

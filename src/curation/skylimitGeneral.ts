@@ -338,8 +338,15 @@ export function extractPriorityPatternsFromProfile(profile: AppBskyActorDefs.Pro
     rest = rest.substring(numMatch[0].length)
   }
 
-  // Return remaining comma-separated patterns (trimmed)
-  const patterns = rest.split(',').map(p => p.trim()).filter(p => p.length > 0)
+  // Return remaining comma-separated patterns (trimmed), with URL patterns normalized
+  const patterns = rest.split(',').map(p => p.trim()).filter(p => p.length > 0).map(p => {
+    // Support URL patterns: "[prefix words] https://domain/path" → "domain/path"
+    const urlMatch = p.match(/https?:\/\/([^\s]+)/)
+    if (urlMatch) {
+      return urlMatch[1].replace(/\/+$/, '') // strip trailing slashes
+    }
+    return p
+  })
   return patterns.join(', ')
 }
 
