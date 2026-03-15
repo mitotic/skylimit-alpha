@@ -14,6 +14,7 @@ import NotificationsPage from './routes/NotificationsPage'
 import SavedPage from './routes/SavedPage'
 import FeedPage from './routes/FeedPage'
 import ChatPage from './routes/ChatPage'
+import FollowListPage from './routes/FollowListPage'
 
 function App() {
   const { session, isLoading } = useSession()
@@ -41,6 +42,8 @@ function App() {
                   <Route path="/notifications" element={<NotificationsPage />} />
                   <Route path="/search" element={<SearchPage />} />
                   <Route path="/saved" element={<SavedPage />} />
+                  <Route path="/profile/:actor/followers" element={<FollowListPage />} />
+                  <Route path="/profile/:actor/following" element={<FollowListPage />} />
                   <Route path="/profile/:actor" element={<ProfilePage />} />
                   <Route path="/post/:uri" element={<ThreadPage />} />
                   <Route path="/feed/:feedUri" element={<FeedPage />} />

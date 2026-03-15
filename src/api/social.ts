@@ -2,7 +2,7 @@
  * Social operations (follow/unfollow)
  */
 
-import { BskyAgent } from '@atproto/api'
+import { BskyAgent, AppBskyActorDefs } from '@atproto/api'
 import { retryWithBackoff, isRateLimitError, getRateLimitInfo } from '../utils/rateLimit'
 
 export interface SocialOptions {
@@ -123,6 +123,96 @@ export async function checkFollowStatus(
       throw new Error(`Failed to check follow status: ${error.message}`)
     }
     throw new Error('Failed to check follow status: Unknown error')
+  })
+}
+
+/**
+ * Fetches followers of a user with pagination and rate limit handling
+ */
+export async function getFollowers(
+  agent: BskyAgent,
+  actor: string,
+  options?: SocialOptions & { limit?: number; cursor?: string }
+): Promise<{ followers: AppBskyActorDefs.ProfileView[]; cursor?: string }> {
+  return retryWithBackoff(
+    async () => {
+      const response = await agent.app.bsky.graph.getFollowers({
+        actor,
+        limit: options?.limit ?? 25,
+        cursor: options?.cursor,
+      })
+      return {
+        followers: response.data.followers,
+        cursor: response.data.cursor,
+      }
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options?.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to fetch followers: ${error.message}`)
+    }
+    throw new Error('Failed to fetch followers: Unknown error')
+  })
+}
+
+/**
+ * Fetches users that a user is following with pagination and rate limit handling
+ */
+export async function getFollowing(
+  agent: BskyAgent,
+  actor: string,
+  options?: SocialOptions & { limit?: number; cursor?: string }
+): Promise<{ follows: AppBskyActorDefs.ProfileView[]; cursor?: string }> {
+  return retryWithBackoff(
+    async () => {
+      const response = await agent.app.bsky.graph.getFollows({
+        actor,
+        limit: options?.limit ?? 25,
+        cursor: options?.cursor,
+      })
+      return {
+        follows: response.data.follows,
+        cursor: response.data.cursor,
+      }
+    },
+    3,
+    1000,
+    (rateLimitInfo) => {
+      if (options?.onRateLimit) {
+        options.onRateLimit({
+          retryAfter: rateLimitInfo.retryAfter,
+          message: rateLimitInfo.message
+        })
+      }
+    }
+  ).catch(error => {
+    if (isRateLimitError(error)) {
+      const info = getRateLimitInfo(error)
+      throw new Error(
+        info.message ||
+        `Rate limit exceeded. Please wait ${info.retryAfter || 60} seconds before trying again.`
+      )
+    }
+    if (error instanceof Error) {
+      throw new Error(`Failed to fetch following: ${error.message}`)
+    }
+    throw new Error('Failed to fetch following: Unknown error')
   })
 }
 

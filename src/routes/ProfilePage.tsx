@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { AppBskyFeedDefs, AppBskyRichtextFacet, RichText as RichTextAPI } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { getProfile, updateProfile } from '../api/profile'
@@ -861,8 +861,8 @@ export default function ProfilePage() {
               </div>
             )}
             <div className="flex gap-4 mt-4 text-sm text-gray-500 dark:text-gray-400">
-              <span>{profile.followsCount || 0} Following</span>
-              <span>{profile.followersCount || 0} Followers</span>
+              <Link to={`/profile/${profile.handle}/following`} className="hover:underline hover:text-gray-700 dark:hover:text-gray-200">{profile.followsCount || 0} Following</Link>
+              <Link to={`/profile/${profile.handle}/followers`} className="hover:underline hover:text-gray-700 dark:hover:text-gray-200">{profile.followersCount || 0} Followers</Link>
               <span>{profile.postsCount || 0} Posts</span>
             </div>
           </div>

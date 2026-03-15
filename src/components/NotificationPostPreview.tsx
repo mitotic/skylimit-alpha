@@ -71,7 +71,13 @@ export default function NotificationPostPreview({ post, onClick, size = 'normal'
         </div>
 
         {truncatedText && (
-          <div className={`text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words line-clamp-3 ${isSmall ? 'text-xs' : 'text-sm'}`}>
+          <div
+            className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words line-clamp-3"
+            style={{
+              fontSize: isSmall ? 'var(--post-secondary-text-size)' : 'var(--post-text-size)',
+              lineHeight: 'var(--post-text-leading)'
+            }}
+          >
             {truncatedText}
           </div>
         )}
