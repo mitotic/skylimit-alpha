@@ -18,6 +18,7 @@ import log from '../utils/logger'
 import SkylimitStatistics from '../components/SkylimitStatistics'
 import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout, getAllFollows, getStorageUsage, formatBytes, type StorageUsage } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
+import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import EditionLayoutEditor from '../components/EditionLayoutEditor'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
@@ -171,6 +172,14 @@ export default function SettingsPage() {
   const [importError, setImportError] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Date.now().toString()
+    setToasts(prev => [...prev, { id, message, type }])
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id))
+    }, type === 'error' ? 10000 : 5000)
+  }
   const [clickToBlueSky, setClickToBlueSky] = useState(() =>
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
@@ -413,10 +422,10 @@ export default function SettingsPage() {
       // Mark settings as saved (no longer dirty)
       setOriginalSettings(structuredClone(settings))
 
-      alert(timezoneChanged ? 'Settings saved! Posts re-numbered for new timezone.' : 'Settings saved!')
+      addToast(timezoneChanged ? 'Settings saved! Posts re-numbered for new timezone.' : 'Settings saved!', 'success')
     } catch (error) {
       log.error('Settings', 'Failed to save settings:', error)
-      alert('Failed to save settings')
+      addToast('Failed to save settings', 'error')
     } finally {
       setSaving(false)
     }
@@ -551,7 +560,7 @@ export default function SettingsPage() {
       downloadJson(jsonString, `websky-curation-${session.handle}-${dateStr}.json`)
     } catch (error) {
       log.error('Settings', 'Failed to export curation data:', error)
-      alert('Failed to export curation data')
+      addToast('Failed to export curation data', 'error')
     } finally {
       setIsExporting(false)
     }
@@ -587,10 +596,10 @@ export default function SettingsPage() {
       setShowImportModal(false)
       setImportValidation(null)
       await loadSettings()
-      alert(`Import complete: ${result.settingsUpdated} settings updated, ${result.followsUpdated} followee preferences updated, ${result.followsSkipped} skipped (not followed on this device).`)
+      addToast(`Import complete: ${result.settingsUpdated} settings updated, ${result.followsUpdated} followee preferences updated, ${result.followsSkipped} skipped (not followed on this device).`, 'success')
     } catch (error) {
       log.error('Settings', 'Failed to import curation data:', error)
-      alert('Failed to import curation data')
+      addToast('Failed to import curation data', 'error')
     } finally {
       setIsImporting(false)
     }
@@ -2012,6 +2021,7 @@ You will be redirected to the home page.`}
         isLoading={isRecurating}
       />
 
+      <ToastContainer toasts={toasts} onRemove={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />
       </div>
   )
 }

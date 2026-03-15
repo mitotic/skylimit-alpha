@@ -861,8 +861,8 @@ export default function ProfilePage() {
               </div>
             )}
             <div className="flex gap-4 mt-4 text-sm text-gray-500 dark:text-gray-400">
-              <Link to={`/profile/${profile.handle}/following`} className="hover:underline hover:text-gray-700 dark:hover:text-gray-200">{profile.followsCount || 0} Following</Link>
-              <Link to={`/profile/${profile.handle}/followers`} className="hover:underline hover:text-gray-700 dark:hover:text-gray-200">{profile.followersCount || 0} Followers</Link>
+              <Link to={`/profile/${profile.handle}/following`} className="text-blue-500 dark:text-blue-400 hover:underline hover:text-blue-600 dark:hover:text-blue-300">{profile.followsCount || 0} Following</Link>
+              <Link to={`/profile/${profile.handle}/followers`} className="text-blue-500 dark:text-blue-400 hover:underline hover:text-blue-600 dark:hover:text-blue-300">{profile.followersCount || 0} Followers</Link>
               <span>{profile.postsCount || 0} Posts</span>
             </div>
           </div>

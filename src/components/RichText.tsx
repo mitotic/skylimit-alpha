@@ -159,14 +159,7 @@ export default function RichText({ text, facets, className }: RichTextProps) {
             )
 
           case 'tag':
-            return (
-              <span
-                key={index}
-                className="text-blue-500 dark:text-blue-400"
-              >
-                {segment.text}
-              </span>
-            )
+            return <span key={index}>{segment.text}</span>
 
           default:
             return <span key={index}>{segment.text}</span>
