@@ -28,7 +28,7 @@ interface AccountStatistics {
   isSelf: boolean
 }
 
-type SortField = 'username' | 'postsPerDay' | 'allowedPerDay' | 'shown' | 'probability' | 'amp' | 'engaged' | 'name'
+type SortField = 'username' | 'postsPerDay' | 'allowedPerDay' | 'shown' | 'probability' | 'amp' | 'engaged' | 'popI' | 'name'
 type SortDirection = 'asc' | 'desc'
 
 type ChartMode = 'posting' | 'normalized'
@@ -596,6 +596,9 @@ export default function SkylimitStatistics() {
         case 'engaged':
           comparison = a.userEntry.engaged_daily - b.userEntry.engaged_daily
           break
+        case 'popI':
+          comparison = (a.userEntry.medianPop || 0) - (b.userEntry.medianPop || 0)
+          break
         case 'name': {
           const nameA = a.followInfo?.displayName || a.username
           const nameB = b.followInfo?.displayName || b.username
@@ -617,6 +620,7 @@ export default function SkylimitStatistics() {
     shown: 'Shown',
     probability: 'Show probability',
     engaged: 'Enggd',
+    popI: '', // no glossary entry, inline title
     name: '', // inline help text, not from glossary
   }
 
@@ -854,6 +858,7 @@ export default function SkylimitStatistics() {
                 {debugMode && renderSortableHeader('Shown', 'shown', { italic: true })}
                 {renderSortableHeader('Prob', 'probability')}
                 {renderSortableHeader('Enggd', 'engaged')}
+                {debugMode && renderSortableHeader('Pop-I', 'popI', { italic: true })}
                 {renderSortableHeader('Name', 'name')}
               </tr>
             </thead>
@@ -994,6 +999,11 @@ export default function SkylimitStatistics() {
                     <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
                       {account.userEntry.engaged_daily.toFixed(1)}
                     </td>
+                    {debugMode && (
+                      <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
+                        {account.userEntry.medianPop > 0 ? account.userEntry.medianPop : '—'}
+                      </td>
+                    )}
                     <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-sm">
                       <div className="max-w-[120px] truncate" title={name}>{name}</div>
                     </td>

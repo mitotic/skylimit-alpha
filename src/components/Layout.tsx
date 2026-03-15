@@ -17,7 +17,7 @@ export default function Layout({ children }: LayoutProps) {
     localStorage.getItem('websky_click_to_bluesky') === 'true'
   )
 
-  const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications' && location.pathname !== '/saved'
+  const showBackButton = location.pathname !== '/' && location.pathname !== '/search' && location.pathname !== '/settings' && location.pathname !== '/notifications' && location.pathname !== '/saved' && location.pathname !== '/chat'
 
   // Load click to Bluesky setting (reload on navigation to pick up changes from settings page)
   useEffect(() => {

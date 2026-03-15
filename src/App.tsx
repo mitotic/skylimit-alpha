@@ -13,6 +13,7 @@ import ThreadPage from './routes/ThreadPage'
 import NotificationsPage from './routes/NotificationsPage'
 import SavedPage from './routes/SavedPage'
 import FeedPage from './routes/FeedPage'
+import ChatPage from './routes/ChatPage'
 
 function App() {
   const { session, isLoading } = useSession()
@@ -43,6 +44,8 @@ function App() {
                   <Route path="/profile/:actor" element={<ProfilePage />} />
                   <Route path="/post/:uri" element={<ThreadPage />} />
                   <Route path="/feed/:feedUri" element={<FeedPage />} />
+                  <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/chat/:convoId" element={<ChatPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>

@@ -891,6 +891,9 @@ export default function ProfilePage() {
                   {curationUserEntry && (
                     <div><span className="font-semibold">Show probability:</span> <span className={curationUserEntry.regular_prob >= 1.0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{(curationUserEntry.regular_prob * 100).toFixed(1)}%</span> regular{hasPriority ? <>, <span className={curationUserEntry.priority_prob >= 1.0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>{(curationUserEntry.priority_prob * 100).toFixed(1)}%</span> priority</> : ''}</div>
                   )}
+                  {curationUserEntry && curationUserEntry.medianPop > 0 && (
+                    <div><span className="font-semibold">Median Popularity Index:</span> {curationUserEntry.medianPop}</div>
+                  )}
                   {curationUserEntry && (
                     <div>
                       <span className="font-semibold">Amplification factor:</span> {(curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor) < 1 ? (curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor).toFixed(2) : (curationFollowInfo?.amp_factor ?? curationUserEntry.amp_factor).toFixed(1)}{' '}

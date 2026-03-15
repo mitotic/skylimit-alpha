@@ -968,6 +968,24 @@ This cannot be undone.`}
 
               <div>
                 <label className="block mb-2 font-medium">
+                  Popularity Amplifier:
+                </label>
+                <select
+                  value={settings.popAmp ?? 1}
+                  onChange={(e) => updateSetting('popAmp', parseInt(e.target.value))}
+                  className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                >
+                  {[1, 2, 3, 4, 5].map(v => (
+                    <option key={v} value={v}>{v}{v === 1 ? ' (disabled)' : ''}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Higher values boost popular posts and reduce less popular ones. 1 = no popularity weighting.
+                </p>
+              </div>
+
+              <div>
+                <label className="block mb-2 font-medium">
                   Days of data to analyze:
                 </label>
                 <input

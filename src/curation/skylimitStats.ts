@@ -8,6 +8,12 @@ import {
   MAX_AMP_FACTOR,
   MIN_AMP_FACTOR,
   ENGAGEMENT_NONE,
+  POP_LOG_MAX,
+  POP_LOG_INTERVALS,
+  POP_MAX_BIN_INDEX,
+  POP_BIN_COUNT,
+  POP_MIN_POST_COUNT,
+  getPopIndex,
   getIntervalHoursSync,
   getIntervalsPerDaySync,
   isStatusDrop,
@@ -423,7 +429,8 @@ export async function computePostStats(
   const sparseIntervals = completeIntervalCounts.filter(c => c < sparseThreshold).length
 
   // Accumulate status counts ONCE after all intervals are processed
-  const summariesAccumulated = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername, didToUsername, initialLookbackActive)
+  const popAmp = settings?.popAmp ?? 1
+  const summariesAccumulated = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername, didToUsername, initialLookbackActive, popAmp)
 
   const summariesTotal = Object.keys(summaryCache).length
   // Total cached summaries across ALL intervals (complete + incomplete)
@@ -467,7 +474,8 @@ export async function computePostStats(
     intervalsPerDay,
     followeeDayCount,
     minFolloweeDayCount,
-    editionPostCounts
+    editionPostCounts,
+    popAmp
   )
 
   // Save computed filter and text pattern suggestions
@@ -560,7 +568,8 @@ async function accumulateStatusCounts(
   secretKey: string,
   _myUsername: string,
   didToUsername: Record<string, string>,
-  initialLookbackActive: boolean
+  initialLookbackActive: boolean,
+  popAmp: number
 ): Promise<number> {
   let accumulated = 0
 
@@ -603,6 +612,8 @@ async function accumulateStatusCounts(
     const isExplicitlyShown = summaryInfo.curation_status?.endsWith('_show') === true
       && summaryInfo.curation_status !== 'temp_show'
 
+    let isRegularPost = false
+
     if (summaryInfo.repostUri) {
       // Repost - skip if dropped by repost interval
       if (summaryInfo.curation_status === 'repost_drop') {
@@ -622,6 +633,7 @@ async function accumulateStatusCounts(
         if (isExplicitlyShown) accum.shown_total += 1
       } else {
         // Regular post - categorize by reply status
+        isRegularPost = true
         if (summaryInfo.inReplyToUri) {
           const parentDid = extractDidFromUri(summaryInfo.inReplyToUri)
           const isParentFollowed = parentDid ? (parentDid in didToUsername) : false
@@ -649,6 +661,16 @@ async function accumulateStatusCounts(
       }
     }
 
+    // Popularity binning for regular posts
+    if (popAmp > 1 && isRegularPost && summaryInfo.likeCount !== undefined) {
+      if (!accum.popBins) accum.popBins = new Array(POP_BIN_COUNT).fill(0)
+      const popIndex = getPopIndex(summaryInfo.likeCount)
+      const cappedPop = Math.min(popIndex, Math.pow(10, POP_LOG_MAX) - 1)
+      const logPop = Math.log10(cappedPop + 1)
+      const binIndex = Math.min(Math.round(logPop * POP_LOG_INTERVALS), POP_MAX_BIN_INDEX)
+      accum.popBins[binIndex] += 1
+    }
+
     if (summaryInfo.engaged > 0) {
       accum.engaged_total += summaryInfo.engaged
     }
@@ -672,7 +694,8 @@ function computeUserProbabilities(
   intervalsPerDay: number,
   followeeDayCount: Record<string, number>,
   minFolloweeDayCount: number,
-  editionPostCounts: Record<string, number>
+  editionPostCounts: Record<string, number>,
+  popAmp: number
 ): [GlobalStats, UserFilter] {
   // Use complete intervals for dayTotal if available, fallback to all processed intervals
   const dayTotal = intervalDiagnostics.completeIntervalsDays > 0
@@ -769,6 +792,29 @@ function computeUserProbabilities(
     } else {
       userEntry.priority_prob = 1.0
       userEntry.regular_prob = Math.min(1, (availableViews - userEntry.priority_daily) / regularPostsPlusReposts)
+    }
+
+    // Compute medianPop for popularity weighting
+    // Use popTotal (sum of bin counts) — only posts with likeCount defined are binned
+    if (popAmp <= 1 || userEntry.regular_prob >= 1 || !accum.popBins) {
+      userEntry.medianPop = 0
+    } else {
+      const popTotal = accum.popBins.reduce((sum, c) => sum + c, 0)
+      if (popTotal < POP_MIN_POST_COUNT) {
+        userEntry.medianPop = 0
+      } else if ((accum.popBins[0] || 0) >= popTotal / 2) {
+        userEntry.medianPop = 0
+      } else {
+        let cumulative = accum.popBins[0] || 0
+        userEntry.medianPop = 0
+        for (let i = 1; i <= POP_MAX_BIN_INDEX; i++) {
+          cumulative += accum.popBins[i] || 0
+          if (cumulative >= popTotal / 2) {
+            userEntry.medianPop = Math.round(Math.pow(10, i / POP_LOG_INTERVALS))
+            break
+          }
+        }
+      }
     }
   }
 

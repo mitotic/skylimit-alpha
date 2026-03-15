@@ -1,6 +1,6 @@
 import { forwardRef, useRef, useEffect, useCallback, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { DEFAULT_PRIORITY_PATTERNS } from '../curation/types'
+import { DEFAULT_PRIORITY_PATTERNS, getPopIndex } from '../curation/types'
 
 export interface CurationPopupProps {
   // Display
@@ -24,6 +24,7 @@ export interface CurationPopupProps {
   regularProb?: number                 // Both (0-1 scale)
   priorityProb?: number                // Both (0-1 scale)
   curationMsg?: string                 // Fallback message
+  likeCount?: number                   // Like count for popularity index display (Debug Info)
   isDropped?: boolean                  // For background styling
 
   // Guaranteed posts
@@ -69,6 +70,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
   regularProb,
   priorityProb,
   curationMsg,
+  likeCount,
   isDropped,
   skylimitNumber,
   showAmpButtons,
@@ -336,6 +338,9 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
           <div className="text-sm text-gray-600 dark:text-gray-400 leading-snug">
             {curationStatus !== undefined && (
               <div>Curation status: {curationStatus || 'none'}</div>
+            )}
+            {likeCount !== undefined && (
+              <div>Popularity index: {getPopIndex(likeCount)}</div>
             )}
             {matchingPattern && (
               <div>Matching pattern: {matchingPattern}</div>

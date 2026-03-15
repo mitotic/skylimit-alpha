@@ -226,6 +226,8 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
   let repostUri: string | undefined
   let cid: string
   let repostCount: number
+  let likeCount: number
+  let replyCount: number
   let inReplyToUri: string | undefined
   let postEngagement: number
   let postText: string | undefined
@@ -254,6 +256,8 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     repostUri = post.post.uri
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
+    likeCount = post.post.likeCount ?? 0
+    replyCount = post.post.replyCount ?? 0
     inReplyToUri = getParentUri(post.post)
     postEngagement = ENGAGEMENT_NONE
       + (post.post.viewer?.like ? ENGAGEMENT_LIKED : 0)
@@ -272,6 +276,8 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     repostUri = undefined
     cid = post.post.cid
     repostCount = post.post.repostCount || 0
+    likeCount = post.post.likeCount ?? 0
+    replyCount = post.post.replyCount ?? 0
     inReplyToUri = getParentUri(post.post)
     postEngagement = ENGAGEMENT_NONE
       + (post.post.viewer?.like ? ENGAGEMENT_LIKED : 0)
@@ -302,6 +308,8 @@ export function createPostSummary(post: AppBskyFeedDefs.FeedViewPost, feedReceiv
     tags,
     repostUri,
     repostCount,
+    likeCount,
+    replyCount,
     inReplyToUri,
     timestamp,
     postTimestamp: timestamp.getTime(),

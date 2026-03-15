@@ -2,12 +2,13 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { useSession } from '../auth/SessionContext'
 import { getUnreadCount } from '../api/notifications'
+import { getUnreadChatCount } from '../api/chat'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
 import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import log from '../utils/logger'
 import ConfirmModal from './ConfirmModal'
-import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, PersonIcon, GearIcon } from './NavIcons'
+import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, ChatIcon, PersonIcon, GearIcon } from './NavIcons'
 import { clientInterval, clearClientInterval, clientTimeout } from '../utils/clientClock'
 
 export default function Navigation() {
@@ -15,6 +16,7 @@ export default function Navigation() {
   const navigate = useNavigate()
   const { session, agent, avatarUrl } = useSession()
   const [unreadCount, setUnreadCount] = useState<number>(0)
+  const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
 
@@ -43,8 +45,12 @@ export default function Navigation() {
       }
 
       try {
-        const count = await getUnreadCount(agent)
+        const [count, chatCount] = await Promise.all([
+          getUnreadCount(agent),
+          getUnreadChatCount(agent).catch(() => 0),
+        ])
         setUnreadCount(count)
+        setUnreadChatCount(chatCount)
       } catch (error) {
         log.warn('Navigation', 'Failed to fetch unread count:', error)
         // Don't show error to user, just silently fail
@@ -70,10 +76,12 @@ export default function Navigation() {
       }
     }, 30000) }
 
-    // Refresh when navigating to/from notifications page
+    // Refresh when navigating to/from notifications or chat page
     if (location.pathname === '/notifications') {
-      // Reset count when viewing notifications
       setUnreadCount(0)
+    }
+    if (location.pathname === '/chat' || location.pathname.startsWith('/chat/')) {
+      setUnreadChatCount(0)
     }
 
     return () => clearClientInterval(intervalRef.current)
@@ -124,6 +132,14 @@ export default function Navigation() {
       window.location.href = 'https://bsky.app/notifications'
     } else {
       navigate('/notifications')
+    }
+  }
+
+  const handleChatClick = () => {
+    if (clickToBlueSky) {
+      window.location.href = 'https://bsky.app/messages'
+    } else {
+      navigate('/chat')
     }
   }
 
@@ -189,6 +205,24 @@ export default function Navigation() {
         {unreadCount > 0 && (
           <span className="md:ml-auto absolute -top-1 -right-1 md:static bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">
             {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {/* Chat - uses button for Click to Bluesky support */}
+      <button
+        onClick={handleChatClick}
+        className={`flex items-center gap-3 px-4 py-3 transition-colors relative ${
+          isActive('/chat') || location.pathname.startsWith('/chat/')
+            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+            : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+        }`}
+      >
+        <ChatIcon className={`w-6 h-6 ${clickToBlueSky ? 'border-2 border-blue-500 rounded-full p-0.5 box-content' : ''}`} />
+        <span className="hidden md:inline font-medium">Chat</span>
+        {unreadChatCount > 0 && (
+          <span className="md:ml-auto absolute -top-1 -right-1 md:static bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">
+            {unreadChatCount > 99 ? '99+' : unreadChatCount}
           </span>
         )}
       </button>

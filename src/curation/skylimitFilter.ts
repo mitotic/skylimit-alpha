@@ -16,7 +16,8 @@ import {
   extractDidFromUri,
   isStatusShow,
   isStatusDrop,
-  SecondaryRepostIndex
+  SecondaryRepostIndex,
+  getPopIndex
 } from './types'
 import { hmacRandom } from '../utils/hmac'
 import {
@@ -285,7 +286,21 @@ export async function curateSinglePost(
     }
 
     const priorityDrop = randomNum >= userEntry.priority_prob
-    const regularDrop = randomNum >= userEntry.regular_prob
+
+    // Compute effective regular probability with popularity weighting
+    let effectiveRegularProb = userEntry.regular_prob
+    if (userEntry.medianPop > 0) {
+      const { getSettings } = await import('./skylimitStore')
+      const popSettings = await getSettings()
+      const popAmp = popSettings?.popAmp ?? 1
+      const popIndex = getPopIndex(summary.likeCount)
+      if (popIndex >= userEntry.medianPop) {
+        effectiveRegularProb = userEntry.regular_prob * popAmp / (1 + popAmp)
+      } else {
+        effectiveRegularProb = userEntry.regular_prob * 1 / (1 + popAmp)
+      }
+    }
+    const regularDrop = randomNum >= effectiveRegularProb
 
     // Set curation_status based on decision
     if (periodicAccepted) {

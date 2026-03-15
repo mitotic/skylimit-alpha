@@ -125,23 +125,72 @@ export default function AggregatedNotificationComponent({
     }
   }
   
-  const getNotificationIcon = (reason: string): string => {
+  const getNotificationIcon = (reason: string): JSX.Element => {
     const normalizedReason = String(reason || '').toLowerCase()
+    const svgProps = { className: 'w-5 h-5', viewBox: '0 0 24 24', fill: 'none' as const, stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
     switch (normalizedReason) {
       case 'like':
-        return '❤️'
+        return (
+          <span className="text-red-500">
+            <svg {...svgProps} fill="currentColor">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+            </svg>
+          </span>
+        )
       case 'repost':
-        return '🔄'
+        return (
+          <span className="text-green-500">
+            <svg {...svgProps}>
+              <path d="M17 1l4 4-4 4" />
+              <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+              <path d="M7 23l-4-4 4-4" />
+              <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+            </svg>
+          </span>
+        )
       case 'reply':
-        return '💬'
+        return (
+          <span className="text-blue-500">
+            <svg {...svgProps}>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </span>
+        )
       case 'quote':
-        return '💬'
+        return (
+          <span className="text-blue-500">
+            <svg {...svgProps}>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </span>
+        )
       case 'mention':
-        return '📢'
+        return (
+          <span className="text-purple-500">
+            <svg {...svgProps}>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <text x="12" y="14" textAnchor="middle" fontSize="10" fontWeight="bold" fill="currentColor" stroke="none">@</text>
+            </svg>
+          </span>
+        )
       case 'follow':
-        return '👤'
+        return (
+          <span className="text-blue-500">
+            <svg {...svgProps}>
+              <circle cx="12" cy="8" r="4" />
+              <path d="M20 21c0-4.418-3.582-8-8-8s-8 3.582-8 8" />
+            </svg>
+          </span>
+        )
       default:
-        return '🔔'
+        return (
+          <span className="text-gray-400">
+            <svg {...svgProps}>
+              <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 01-3.46 0" />
+            </svg>
+          </span>
+        )
     }
   }
   
@@ -188,7 +237,7 @@ export default function AggregatedNotificationComponent({
           
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xl">{getNotificationIcon(reason)}</span>
+              {getNotificationIcon(reason)}
               <span className="font-medium text-gray-900 dark:text-gray-100 text-sm">
                 {notificationText}
               </span>

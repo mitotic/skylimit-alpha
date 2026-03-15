@@ -14,6 +14,8 @@ import { CurationFeedViewPost, isStatusDrop, UserEntry, FollowInfo, ENGAGEMENT_C
 import { updatePostSummaryEngagement } from '../curation/skylimitCache'
 import { getTimeInTimezone, getBrowserTimezone, timezonesAreDifferent, getTimezoneAbbreviation } from '../utils/timezoneUtils'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
+import { getCachedParentPost, saveCachedParentPost } from '../curation/parentPostCache'
+import { getPostThread } from '../api/feed'
 import { getFilter, getFollow } from '../curation/skylimitCache'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
 import { useSession } from '../auth/SessionContext'
@@ -63,7 +65,7 @@ interface PostCardProps {
 
 export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike, onBookmark, onDeletePost, onPinPost, showCounter = false, onAmpChange, showRootPost = true, engagementStats, stackedLayout = false, newspaperView = false, editionFont }: PostCardProps) {
   const navigate = useNavigate()
-  const { session } = useSession()
+  const { session, agent } = useSession()
   const { theme } = useTheme()
   const myUsername = session?.handle || ''
   const record = post.post.record as any
@@ -92,6 +94,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const counterButtonRef = useRef<HTMLButtonElement>(null)
   const repostCounterButtonRef = useRef<HTMLButtonElement>(null)
   const popupClosedAtRef = useRef<number>(0)
+
+  // State for parent post context in newspaper view
+  const [newspaperParentPost, setNewspaperParentPost] = useState<AppBskyFeedDefs.PostView | null>(null)
 
   // Format the counter display based on postNumber value
   // - null: show "#" only (pending, number not yet assigned)
@@ -319,6 +324,35 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   // A direct reply is when the parent is the root (depth 1)
   const isDirectReply = parentUri === rootUri
 
+  // Fetch parent post for newspaper view reply context
+  useEffect(() => {
+    if (!newspaperView || !isReply || !parentUri || !agent) return
+
+    const fetchParent = async () => {
+      try {
+        const childPostId = getPostUniqueId(post)
+        const cached = await getCachedParentPost(childPostId)
+        if (cached) {
+          setNewspaperParentPost(cached)
+          return
+        }
+        const threadData = await getPostThread(agent, parentUri, 0)
+        if (threadData.thread && 'post' in threadData.thread) {
+          const threadPost = threadData.thread as AppBskyFeedDefs.ThreadViewPost
+          await saveCachedParentPost(childPostId, threadPost.post)
+          setNewspaperParentPost(threadPost.post)
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        if (!msg.includes('Post not found')) {
+          log.warn('PostCard', 'Failed to fetch parent post for newspaper view:', error)
+        }
+      }
+    }
+
+    fetchParent()
+  }, [newspaperView, isReply, parentUri, agent, post])
+
   const handlePostClick = (e: React.MouseEvent) => {
     // Ignore ghost clicks from popup dismiss on Android (tap-through prevention)
     if (Date.now() - popupClosedAtRef.current < 400) return
@@ -417,6 +451,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   handle={popupAuthor.handle}
                   popupPosition={popupPosition}
                   anchorRect={popupAnchorRect || undefined}
+                  likeCount={post.post.likeCount}
                   postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                   postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
                   allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
@@ -473,6 +508,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               handle={popupAuthor.handle}
               popupPosition={popupPosition}
               anchorRect={popupAnchorRect || undefined}
+              likeCount={post.post.likeCount}
               editionMode={true}
               postTimestamp={postedAt.getTime()}
               postProperties={{ rawPostNumber: null, viewedAt: curation?.viewedAt }}
@@ -528,6 +564,26 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               )}
             </div>
 
+            {/* Parent post context for replies in newspaper view */}
+            {newspaperParentPost && (() => {
+              const parentRecord = newspaperParentPost.record as any
+              return (
+                <div className="mb-2 pl-3 opacity-60 border-l-2 border-gray-300 dark:border-gray-600">
+                  <span className={`font-semibold italic ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}>
+                    {newspaperParentPost.author.displayName || newspaperParentPost.author.handle}
+                  </span>
+                  {parentRecord?.text && (
+                    <div
+                      className={`italic whitespace-pre-wrap break-words ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}
+                      style={{ fontSize: 'var(--post-text-size)', lineHeight: 'var(--post-text-leading)' }}
+                    >
+                      <RichText text={parentRecord.text} facets={parentRecord.facets} />
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
             {/* Post body with edition font */}
             {record?.text && (
               <div
@@ -570,6 +626,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
               handle={popupAuthor.handle}
               popupPosition={popupPosition}
               anchorRect={popupAnchorRect || undefined}
+              likeCount={post.post.likeCount}
               editionMode={true}
               postTimestamp={postedAt.getTime()}
               postProperties={{ rawPostNumber: null, viewedAt: curation?.viewedAt }}
@@ -635,6 +692,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 handle={popupAuthor.handle}
                 popupPosition={popupPosition}
                 anchorRect={popupAnchorRect || undefined}
+                likeCount={post.post.likeCount}
                 postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                 postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
                 allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
@@ -771,6 +829,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     handle={popupAuthor.handle}
                     popupPosition={popupPosition}
                     anchorRect={popupAnchorRect || undefined}
+                    likeCount={post.post.likeCount}
                     postProperties={{ rawPostNumber, viewedAt: curation?.viewedAt }}
                     postingPerDay={userEntry ? countTotalPostsForUser(userEntry) : undefined}
                     allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}

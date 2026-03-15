@@ -6,7 +6,7 @@ export function HomeIcon({ className = 'w-6 h-6' }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 12L12 3l9 9" />
-      <path d="M5 12v7a1 1 0 001 1h12a1 1 0 001-1v-7" />
+      <path d="M5 12v7a1 1 0 001 1h4 M14 20h4a1 1 0 001-1v-7" />
       <path d="M10 20v-6h4v6" />
     </svg>
   )
@@ -64,6 +64,14 @@ export function TrashIcon({ className = 'w-6 h-6' }: IconProps) {
       <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
       <line x1="10" y1="11" x2="10" y2="17" />
       <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  )
+}
+
+export function ChatIcon({ className = 'w-6 h-6' }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
     </svg>
   )
 }

@@ -189,6 +189,7 @@ export interface UserEntry {
   net_prob: number
   priority_prob: number
   regular_prob: number
+  medianPop: number             // Median popularity for this user (0 = disabled)
 }
 
 export interface UserFilter {
@@ -214,6 +215,18 @@ export type SuggestionsMap = Map<string, TextSuggestions>
 export const SL_REPOST_PREFIX = 'sl-rp://'   // Regular reposts without reason.uri
 export const SL_EDITION_PREFIX = 'sl-ed://'  // Synthetic edition posts
 
+// Popularity weighting constants
+export const POP_LOG_MAX = 3           // Max log10 value (popIndex capped at 10^logMax - 1 = 999)
+export const POP_LOG_INTERVALS = 20    // Number of log intervals per unit
+export const POP_MAX_BIN_INDEX = POP_LOG_MAX * POP_LOG_INTERVALS  // 60
+export const POP_BIN_COUNT = POP_MAX_BIN_INDEX + 1                // 61
+export const POP_MIN_POST_COUNT = 50   // Minimum regular posts needed for popularity weighting
+
+/** Compute popularity index from like count. Currently uses likeCount directly. */
+export function getPopIndex(likeCount: number | undefined): number {
+  return likeCount ?? 0
+}
+
 // Post engagement level constants (powers of 10, additive).
 // Multiple levels can be combined: e.g., 111 = none + clicked + liked.
 // Use Math.floor(Math.log10(postEngagement)) to get highest level index (0–5).
@@ -238,6 +251,8 @@ export interface PostSummary {
   tags: string[]
   repostUri?: string            // Actual URI of the reposted post
   repostCount: number
+  likeCount?: number            // Like count at time of summarization (for popularity weighting)
+  replyCount?: number           // Reply count at time of summarization (for future use)
   inReplyToUri?: string         // Actual URI of the parent post
   timestamp: Date
   postTimestamp: number         // Numeric timestamp for IndexedDB indexing (timestamp.getTime())
@@ -309,6 +324,7 @@ export interface UserAccumulator {
   weight: number
   normalized_daily: number
   followed_at?: string
+  popBins?: number[]            // Log-binned popularity counts (POP_BIN_COUNT elements, indices 0 to POP_MAX_BIN_INDEX)
 }
 
 /**
@@ -357,6 +373,7 @@ export interface SkylimitSettings {
   showEditionsInFeed?: boolean // Show periodic editions in home feed, default false
   newspaperView?: boolean // Use newspaper view for periodic editions, default false
   editionFont?: 'serif' | 'sans-serif' // Font family for edition layout display, default 'serif'
+  popAmp?: number // Popularity amplifier: 1-5, default 1 (disabled)
 }
 
 /**

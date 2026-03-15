@@ -1018,6 +1018,7 @@ export function newUserEntry(obj: Partial<UserEntry>): UserEntry {
     net_prob: 0,
     priority_prob: 0,
     regular_prob: 0,
+    medianPop: 0,
     ...obj,
   }
 }

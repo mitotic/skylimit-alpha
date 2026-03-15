@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   repostDisplayIntervalHours: REPOST_DISPLAY_INTERVAL_DEFAULT, // hide reposts shown within this interval
   initialLookbackDays: 1, // days to look back on initial load
   refillLookbackDays: 1, // days to look back for refill fetches
+  popAmp: 1, // popularity amplifier: 1-5, default 1 (disabled)
 }
 
 /**
