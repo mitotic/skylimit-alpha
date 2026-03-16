@@ -845,7 +845,7 @@ export default function SkylimitStatistics() {
       {/* Active Followee Statistics Table */}
       <div className="w-full">
         <h3 className="text-lg font-semibold mb-1">Active Followees</h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Daily average statistics (* indicates probabilities updated within last week)</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Sortable daily average statistics (* indicates probabilities updated within last week)</p>
         <div className="overflow-x-auto max-w-full" style={{ WebkitOverflowScrolling: 'touch' }}>
           <table className="w-full border-collapse border border-gray-300 dark:border-gray-600 text-sm">
             <thead>
@@ -864,6 +864,10 @@ export default function SkylimitStatistics() {
             </thead>
             <tbody>
               {sortedAccountStats.map((account, index) => {
+                // For Handle column: anonymize non-self, non-hashtag accounts
+                const displayHandle = (anonymize && !account.isSelf && !account.isHashtag)
+                  ? account.userEntry.altname : account.username
+
                 // For Name column: use displayName if available, otherwise altname if anonymized, otherwise username
                 let name: string
                 if (anonymize && !account.isSelf) {
@@ -937,8 +941,8 @@ export default function SkylimitStatistics() {
                       }`}
                       onClick={handleFolloweeClick}
                     >
-                      <div className="max-w-[150px] truncate" title={account.username}>
-                        {account.isHashtag ? `#${account.username.slice(1)}` : account.username}
+                      <div className="max-w-[150px] truncate" title={displayHandle}>
+                        {account.isHashtag ? `#${account.username.slice(1)}` : displayHandle}
                         {account.isSelf && <span className="text-gray-500 dark:text-gray-400 ml-1">(self)</span>}
                       </div>
                     </td>
@@ -952,8 +956,8 @@ export default function SkylimitStatistics() {
                       {isPopupOpen && (
                         <CurationPopup
                           ref={popupRef}
-                          displayName={account.followInfo?.displayName || account.displayName || ''}
-                          handle={account.username}
+                          displayName={anonymize && !account.isSelf ? account.userEntry.altname : (account.followInfo?.displayName || account.displayName || '')}
+                          handle={anonymize && !account.isSelf ? account.userEntry.altname : account.username}
                           popupPosition={popupPosition}
                           anchorRect={popupAnchorRect || undefined}
                           postingPerDay={curationStats.postingCount}
