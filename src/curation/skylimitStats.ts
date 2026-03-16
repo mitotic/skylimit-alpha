@@ -16,9 +16,9 @@ import {
   getPopIndex,
   getIntervalHoursSync,
   getIntervalsPerDaySync,
-  isStatusDrop,
   isStatusShow,
-  extractDidFromUri
+  extractDidFromUri,
+  CURATION_STATUSES
 } from './types'
 import {
   getAllPostSummaries,
@@ -79,6 +79,7 @@ interface IntervalDiagnostics {
   completeIntervalsDays: number
   intervalLengthHours: number
   daysOfData: number
+  curationStatusCounts: Record<string, number>
 }
 
 // --- Text Pattern Suggestions ---
@@ -239,6 +240,28 @@ export async function computePostStats(
   })
   userAccum[myUsername] = newUserAccum({ userEntry: selfUserEntry })
 
+  // Accumulate counts per CurationStatus across all summaries
+  const curationStatusCounts: Record<string, number> = {}
+  for (const status of CURATION_STATUSES) {
+    curationStatusCounts[status] = 0
+  }
+  curationStatusCounts['null'] = 0
+
+  for (const summary of allSummaries) {
+    const key = summary.curation_status ?? 'null'
+    curationStatusCounts[key] = (curationStatusCounts[key] || 0) + 1
+  }
+
+  // Derive droppedCount: sum of all '_drop' statuses except 'edition_*'
+  const droppedCount = Object.entries(curationStatusCounts)
+    .filter(([key]) => key.endsWith('_drop') && !key.startsWith('edition_'))
+    .reduce((sum, [, count]) => sum + count, 0)
+
+  // Derive editionPostCount: sum of all 'edition_post_*' statuses
+  const editionPostCount = Object.entries(curationStatusCounts)
+    .filter(([key]) => key.startsWith('edition_post_'))
+    .reduce((sum, [, count]) => sum + count, 0)
+
   // ============================================================
   // TWO-PASS APPROACH: Only use complete intervals for statistics
   // ============================================================
@@ -248,20 +271,11 @@ export async function computePostStats(
   let intervalStr = oldestIntervalStr
   // Track post counts by interval key (interval key = start time of interval)
   const intervalPostCounts: Record<string, number> = {}
-  // Count dropped summaries and edition post summaries across all intervals
-  let droppedCount = 0
-  let editionPostCount = 0
 
   while (intervalStr < finalIntervalEndStr) {
     expectedIntervals++
     const summaries = summariesByInterval.get(intervalStr)
     intervalPostCounts[intervalStr] = summaries?.length || 0
-    if (summaries) {
-      // Count dropped summaries (curation_status ends in '_drop' when dropped)
-      droppedCount += summaries.filter(s => isStatusDrop(s.curation_status)).length
-      // Count edition_post_* summaries (held or released, not synthetic publish posts)
-      editionPostCount += summaries.filter(s => s.curation_status?.startsWith('edition_post_')).length
-    }
     intervalStr = nextIntervalGeneral(intervalStr, intervalHours)
   }
 
@@ -459,6 +473,7 @@ export async function computePostStats(
     completeIntervalsDays,
     intervalLengthHours: intervalHours,
     daysOfData,
+    curationStatusCounts,
   }
 
   // Compute probabilities
@@ -879,6 +894,7 @@ function computeUserProbabilities(
     complete_intervals_days: intervalDiagnostics.completeIntervalsDays,
     interval_length_hours: intervalDiagnostics.intervalLengthHours,
     days_of_data: intervalDiagnostics.daysOfData,
+    curation_status_counts: intervalDiagnostics.curationStatusCounts,
   }
   
   const userFilter: UserFilter = Object.entries(userAccum).reduce(

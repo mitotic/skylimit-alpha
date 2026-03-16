@@ -5,6 +5,7 @@
 import { AppBskyFeedDefs } from '@atproto/api'
 import {
   PostSummary,
+  CurationStatus,
   CurationResult,
   UserFilter,
   GlobalStats,
@@ -289,14 +290,17 @@ export async function curateSinglePost(
 
     // Compute effective regular probability with popularity weighting
     let effectiveRegularProb = userEntry.regular_prob
+    let regularPrefix = 'regular'
     if (userEntry.medianPop > 0) {
       const { getSettings } = await import('./skylimitStore')
       const popSettings = await getSettings()
       const popAmp = popSettings?.popAmp ?? 1
       const popIndex = getPopIndex(summary.likeCount)
       if (popIndex >= userEntry.medianPop) {
+        regularPrefix = 'regular_hi'
         effectiveRegularProb = userEntry.regular_prob * popAmp / (1 + popAmp)
       } else {
+        regularPrefix = 'regular_lo'
         effectiveRegularProb = userEntry.regular_prob * 1 / (1 + popAmp)
       }
     }
@@ -359,7 +363,7 @@ export async function curateSinglePost(
               && isStatusShow(parentSummary.curation_status)
               && (clientNow() - parentSummary.postTimestamp) >= TWENTY_FOUR_HOURS) {
             // Parent shown and old (>24h) — keep the reply, apply normal probability
-            modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
+            modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
             if (regularDrop) dropReason = 'random (regular)'
           } else {
             // Drop: parent not in summaries, parent dropped, or parent shown recently
@@ -372,7 +376,7 @@ export async function curateSinglePost(
           }
         } else {
           // Original post or non-same-user followed reply - standard logic
-          modStatus.curation_status = regularDrop ? 'regular_drop' : 'regular_show'
+          modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
           if (regularDrop) dropReason = 'random (regular)'
         }
       }

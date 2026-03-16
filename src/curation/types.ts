@@ -10,21 +10,28 @@ export const WEEKLY_TAG = 'weekly'
 export const DEFAULT_PRIORITY_PATTERNS = '#*'
 
 // Curation status type - always ends in '_show' or '_drop'
-export type CurationStatus =
-  | 'periodic_show'    // Periodic tag post accepted (#Weekly)
-  | 'priority_show'    // Priority post passes probability filter
-  | 'priority_drop'    // Priority post fails probability filter
-  | 'regular_show'     // Regular post passes probability filter
-  | 'regular_drop'     // Regular post fails probability filter
-  | 'reply_drop'       // Unfollowed reply dropped
-  | 'repost_drop'      // Repost/original shown within interval
-  | 'edition_post_drop'    // Post matched edition pattern, held for edition
-  | 'edition_post_show'    // Edition held post released (orphaned by layout change)
-  | 'edition_publish_drop' // Edition repost dropped (shouldn't normally occur)
-  | 'edition_publish_show' // Edition repost shown
-  | 'untracked_show'   // User not tracked - shown by default
-  | 'temp_show'        // Temporary show during initial lookback (before stats computed)
-  | 'self_show'        // User's own post - always shown
+export const CURATION_STATUSES = [
+  'periodic_show',        // Periodic tag post accepted (#Weekly)
+  'priority_show',        // Priority post passes probability filter
+  'priority_drop',        // Priority post fails probability filter
+  'regular_show',         // Regular post passes probability filter (no popularity data)
+  'regular_drop',         // Regular post fails probability filter (no popularity data)
+  'regular_lo_show',      // Low popularity regular post passes probability filter
+  'regular_lo_drop',      // Low popularity regular post fails probability filter
+  'regular_hi_show',      // High popularity regular post passes probability filter
+  'regular_hi_drop',      // High popularity regular post fails probability filter
+  'reply_drop',           // Unfollowed reply dropped
+  'repost_drop',          // Repost/original shown within interval
+  'edition_post_drop',    // Post matched edition pattern, held for edition
+  'edition_post_show',    // Edition held post released (orphaned by layout change)
+  'edition_publish_drop', // Edition repost dropped (shouldn't normally occur)
+  'edition_publish_show', // Edition repost shown
+  'untracked_show',       // User not tracked - shown by default
+  'temp_show',            // Temporary show during initial lookback (before stats computed)
+  'self_show',            // User's own post - always shown
+] as const
+
+export type CurationStatus = typeof CURATION_STATUSES[number]
 
 /**
  * Check if a curation status indicates the post should be shown
@@ -162,6 +169,9 @@ export interface GlobalStats {
   complete_intervals_days?: number      // completeCount / intervalsPerDay
   interval_length_hours?: number        // Curation interval length in hours (from settings)
   days_of_data?: number                 // daysOfData setting (summaries cache retention period)
+
+  // Per-status accumulator counts (keys are CurationStatus values + 'null' for undefined)
+  curation_status_counts?: Record<string, number>
 }
 
 /**
