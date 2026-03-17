@@ -3,7 +3,7 @@
  */
 
 import {
-  PostSummary, UserEntry, UserFilter, GlobalStats, UserAccumulator, FollowInfo, PostStats,
+  PostSummary, UserEntry, UserFilter, GlobalStats, UserAccumulator, FollowInfo,
   WEEKLY_TAG,
   MAX_AMP_FACTOR,
   MIN_AMP_FACTOR,
@@ -18,7 +18,9 @@ import {
   getIntervalsPerDaySync,
   isStatusShow,
   extractDidFromUri,
-  CURATION_STATUSES
+  CURATION_STATUSES,
+  POST_TYPES,
+  SL_REPOST_PREFIX
 } from './types'
 import {
   getAllPostSummaries,
@@ -39,9 +41,6 @@ import { hmacHex } from '../utils/hmac'
 import { clientDate } from '../utils/clientClock'
 import { setUnviewedPostsTodayMap, setUnviewedPostsYesterdayMap } from './skylimitUnviewedTracker'
 
-// Prototype for PostStats - tracks repost counts during interval processing
-const POST_STATS_PROTO: PostStats = { repost_count: 0, followed_repost_count: 0, repostCount: 0 }
-
 /**
  * Count total posts per day for a user entry.
  * Includes: periodic posts + priority posts + original posts + followed replies + unfollowed replies + reposts.
@@ -50,7 +49,7 @@ const POST_STATS_PROTO: PostStats = { repost_count: 0, followed_repost_count: 0,
 export function countTotalPostsForUser(userEntry: UserEntry): number {
   return userEntry.periodic_daily + userEntry.priority_daily +
          userEntry.original_daily + userEntry.followed_reply_daily +
-         userEntry.unfollowed_reply_daily + userEntry.repost_daily
+         userEntry.unfollowed_reply_daily + userEntry.reposts_daily
 }
 
 /**
@@ -65,11 +64,9 @@ interface IntervalDiagnostics {
   startTime: Date
   endTime: Date
   // Cache diagnostics
-  summariesTotalCached: number
-  summariesDroppedCached: number
-  editionPostTotalCached: number
-  summariesTotal: number
-  summariesAccumulated: number
+  summariesTotalAll: number
+  summariesTotalProcessed: number
+  summariesTotalFollowees: number
   // Timestamp range
   summariesOldestTime: Date | null
   summariesNewestTime: Date | null
@@ -80,6 +77,7 @@ interface IntervalDiagnostics {
   intervalLengthHours: number
   daysOfData: number
   curationStatusCounts: Record<string, number>
+  postTypeCounts: Record<string, number>
 }
 
 // --- Text Pattern Suggestions ---
@@ -216,7 +214,6 @@ export async function computePostStats(
 
   const currentFollows = await getCurrentFollows()
   const summaryCache: Record<string, any> = {}
-  const postStats: Record<string, PostStats> = {}
 
   // Build DID to username map for efficient reply parent lookup
   const didToUsername: Record<string, string> = {}
@@ -247,20 +244,26 @@ export async function computePostStats(
   }
   curationStatusCounts['null'] = 0
 
+  const curationStatusSet = new Set<string>(CURATION_STATUSES)
+
   for (const summary of allSummaries) {
-    const key = summary.curation_status ?? 'null'
-    curationStatusCounts[key] = (curationStatusCounts[key] || 0) + 1
+    const raw = summary.curation_status ?? 'null'
+    const key = curationStatusSet.has(raw) ? raw : 'null'
+    curationStatusCounts[key]++
   }
 
-  // Derive droppedCount: sum of all '_drop' statuses except 'edition_*'
-  const droppedCount = Object.entries(curationStatusCounts)
-    .filter(([key]) => key.endsWith('_drop') && !key.startsWith('edition_'))
-    .reduce((sum, [, count]) => sum + count, 0)
-
-  // Derive editionPostCount: sum of all 'edition_post_*' statuses
-  const editionPostCount = Object.entries(curationStatusCounts)
-    .filter(([key]) => key.startsWith('edition_post_'))
-    .reduce((sum, [, count]) => sum + count, 0)
+  // Accumulate counts per PostType across all summaries
+  const postTypeCounts: Record<string, number> = {}
+  for (const pt of POST_TYPES) {
+    postTypeCounts[pt] = 0
+  }
+  postTypeCounts['null'] = 0
+  const postTypeSet = new Set<string>(POST_TYPES)
+  for (const summary of allSummaries) {
+    const raw = summary.post_type ?? 'null'
+    const key = postTypeSet.has(raw) ? raw : 'null'
+    postTypeCounts[key]++
+  }
 
   // ============================================================
   // TWO-PASS APPROACH: Only use complete intervals for statistics
@@ -366,7 +369,7 @@ export async function computePostStats(
   }
 
   const oldestDataIntervalStr = sortedIntervalKeys[0]
-  const oldestEffectiveDayCount = effectiveDayCount[oldestDataIntervalStr] || 0
+  const effectiveDayTotal = effectiveDayCount[oldestDataIntervalStr] || 0
 
   // PASS 4: Compute followeeDayCount for each followee username
   // Get minFolloweeDayCount from settings (prevents inflated posting rates)
@@ -399,7 +402,7 @@ export async function computePostStats(
 
     if (followedAtTime < oldestIntervalTime) {
       // Old follower - use oldest effective day count (with minimum floor)
-      followeeDayCount[username] = Math.max(minFolloweeDayCount, oldestEffectiveDayCount)
+      followeeDayCount[username] = Math.max(minFolloweeDayCount, effectiveDayTotal)
     } else {
       // Recent follower - find their oldest post interval
       const oldestPostTimestamp = Math.min(...userSummaries.map(s => s.postTimestamp))
@@ -423,11 +426,12 @@ export async function computePostStats(
   // Track oldest/newest timestamps across all summaries
   const timestampRange: TimestampRange = { oldest: null, newest: null }
   const editionPostCounts: Record<string, number> = {}
+  const editionHoldCounts: Record<string, number> = {}
 
-  // Process all intervals into summaryCache and postStats
+  // Process all intervals into summaryCache
   for (const [, summaries] of summariesByInterval.entries()) {
     if (summaries && summaries.length > 0) {
-      computeIntervalStats(currentFollows, summaries, summaryCache, postStats, timestampRange, editionPostCounts)
+      computeIntervalStats(summaries, summaryCache, timestampRange, editionPostCounts, editionHoldCounts)
     }
   }
 
@@ -444,11 +448,11 @@ export async function computePostStats(
 
   // Accumulate status counts ONCE after all intervals are processed
   const popAmp = settings?.popAmp ?? 1
-  const summariesAccumulated = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, postStats, secretKey, myUsername, didToUsername, initialLookbackActive, popAmp)
+  const summariesTotalFollowees = await accumulateStatusCounts(currentFollows, userAccum, summaryCache, secretKey, myUsername, didToUsername, initialLookbackActive, popAmp)
 
-  const summariesTotal = Object.keys(summaryCache).length
-  // Total cached summaries across ALL intervals (complete + incomplete)
-  const summariesTotalCached = Object.values(intervalPostCounts).reduce((sum, c) => sum + c, 0)
+  const summariesTotalAll = Object.keys(summaryCache).length
+  // Total posts from processed intervals
+  const summariesTotalProcessed = Object.values(intervalPostCounts).reduce((sum, c) => sum + c, 0)
 
   const intervalDiagnostics: IntervalDiagnostics = {
     expected: expectedIntervals,
@@ -459,11 +463,9 @@ export async function computePostStats(
     startTime: analysisStartTime,
     endTime: finalIntervalEnd,
     // Cache diagnostics
-    summariesTotalCached,
-    summariesDroppedCached: droppedCount,
-    editionPostTotalCached: editionPostCount,
-    summariesTotal,
-    summariesAccumulated,
+    summariesTotalAll,
+    summariesTotalProcessed,
+    summariesTotalFollowees,
     // Timestamp range
     summariesOldestTime: timestampRange.oldest,
     summariesNewestTime: timestampRange.newest,
@@ -474,6 +476,7 @@ export async function computePostStats(
     intervalLengthHours: intervalHours,
     daysOfData,
     curationStatusCounts,
+    postTypeCounts,
   }
 
   // Compute probabilities
@@ -481,7 +484,6 @@ export async function computePostStats(
     currentFollows,
     intervalCount,
     finalIntervalEnd,
-    postStats,
     userAccum,
     viewsPerDay,
     myUsername,
@@ -490,7 +492,9 @@ export async function computePostStats(
     followeeDayCount,
     minFolloweeDayCount,
     editionPostCounts,
-    popAmp
+    editionHoldCounts,
+    popAmp,
+    effectiveDayTotal
   )
 
   // Save computed filter and text pattern suggestions
@@ -513,18 +517,20 @@ interface TimestampRange {
  * Returns the oldest and newest timestamps found in the summaries
  */
 function computeIntervalStats(
-  currentFollows: Record<string, FollowInfo>,
   summaries: PostSummary[],
   summaryCache: Record<string, any>,
-  postStats: Record<string, PostStats>,
   timestampRange: TimestampRange,
-  editionPostCounts: Record<string, number>
+  editionPostCounts: Record<string, number>,
+  editionHoldCounts: Record<string, number>
 ): void {
   for (const summary of summaries) {
     // Skip all edition posts from probability statistics
     if (summary.curation_status?.startsWith('edition_')) {
       if (summary.curation_status.startsWith('edition_post_')) {
         editionPostCounts[summary.username] = (editionPostCounts[summary.username] || 0) + 1
+        if (summary.edition_status === 'hold') {
+          editionHoldCounts[summary.username] = (editionHoldCounts[summary.username] || 0) + 1
+        }
       }
       continue
     }
@@ -549,24 +555,6 @@ function computeIntervalStats(
         timestampRange.newest = ts
       }
     }
-
-    if (summary.repostUri) {
-      // This is a repost - track repost statistics for the original post
-      const repostedUri = summary.repostUri
-      if (!(repostedUri in postStats)) {
-        postStats[repostedUri] = { ...POST_STATS_PROTO }
-      }
-      postStats[repostedUri].repost_count += 1
-      postStats[repostedUri].repostCount = summary.repostCount
-
-      if (summary.username in currentFollows) {
-        // Repost by a followed user
-        postStats[repostedUri].followed_repost_count += 1
-      }
-    } else {
-      // Original post
-      postStats[summary.uniqueId] = { ...POST_STATS_PROTO }
-    }
   }
 }
 
@@ -578,8 +566,6 @@ async function accumulateStatusCounts(
   currentFollows: Record<string, FollowInfo>,
   userAccum: Record<string, UserAccumulator>,
   summaryCache: Record<string, any>,
-
-  _postStats: Record<string, PostStats>,
   secretKey: string,
   _myUsername: string,
   didToUsername: Record<string, string>,
@@ -592,6 +578,12 @@ async function accumulateStatusCounts(
   for (const uri of Object.keys(summaryCache)) {
     const summaryInfo = summaryCache[uri]
     const username = summaryInfo.username
+
+    // Safety guard: summaryCache should not contain synthetic reposts or edition posts,
+    // but skip them here in case they slip through
+    if (uri.startsWith(SL_REPOST_PREFIX) || summaryInfo.curation_status?.startsWith('edition_')) {
+      continue
+    }
 
     // Get or create user accumulator
     let accum = userAccum[username]
@@ -701,7 +693,6 @@ function computeUserProbabilities(
   _currentFollows: Record<string, FollowInfo>,
   intervalCount: number,
   _finalIntervalEnd: Date,
-  _postStats: Record<string, PostStats>,
   userAccum: Record<string, UserAccumulator>,
   maxViewsPerDay: number,
   myUsername: string,
@@ -710,10 +701,12 @@ function computeUserProbabilities(
   followeeDayCount: Record<string, number>,
   minFolloweeDayCount: number,
   editionPostCounts: Record<string, number>,
-  popAmp: number
+  editionHoldCounts: Record<string, number>,
+  popAmp: number,
+  effectiveDayTotal: number
 ): [GlobalStats, UserFilter] {
-  // Use complete intervals for dayTotal if available, fallback to all processed intervals
-  const dayTotal = intervalDiagnostics.completeIntervalsDays > 0
+  // Use complete intervals for day total if available, fallback to all processed intervals
+  const completeIntervalsDayTotal = intervalDiagnostics.completeIntervalsDays > 0
     ? intervalDiagnostics.completeIntervalsDays
     : (intervalCount / intervalsPerDay)
   
@@ -733,15 +726,16 @@ function computeUserProbabilities(
     }
 
     // Use followee-specific day count for denominator
-    const userDayCount = followeeDayCount[username] || dayTotal
+    const userDayCount = followeeDayCount[username] || completeIntervalsDayTotal
     const denominator = Math.max(minFolloweeDayCount, userDayCount)
     userEntry.periodic_daily = accum.periodic_total / denominator
     userEntry.priority_daily = accum.priority_total / denominator
     userEntry.original_daily = accum.original_total / denominator
     userEntry.followed_reply_daily = accum.followed_reply_total / denominator
     userEntry.unfollowed_reply_daily = accum.unfollowed_reply_total / denominator
-    userEntry.repost_daily = accum.repost_total / denominator
+    userEntry.reposts_daily = accum.repost_total / denominator
     userEntry.edited_daily = (editionPostCounts[username] || 0) / denominator
+    userEntry.edited_hold_daily = (editionHoldCounts[username] || 0) / denominator
     userEntry.engaged_daily = accum.engaged_total / denominator
 
     userEntry.total_daily = countTotalPostsForUser(userEntry)
@@ -794,7 +788,7 @@ function computeUserProbabilities(
     // - After initial curation: only non-dropped replies counted
     const regularPostsPlusReposts = Math.max(1,
       userEntry.original_daily + userEntry.followed_reply_daily +
-      userEntry.unfollowed_reply_daily + userEntry.repost_daily)
+      userEntry.unfollowed_reply_daily + userEntry.reposts_daily)
     const userSkylimitNumber = skylimitNumber * (accum.weight || 1)
     let availableViews = userSkylimitNumber - userEntry.periodic_daily
 
@@ -850,13 +844,16 @@ function computeUserProbabilities(
   const repostsTotal = Object.values(userAccum).reduce((sum, accum) =>
     sum + accum.repost_total, 0
   )
+  const editionPostTotal = Object.values(editionPostCounts).reduce((sum, c) => sum + c, 0)
+  const editionHoldTotal = Object.values(editionHoldCounts).reduce((sum, c) => sum + c, 0)
 
   const globalStats: GlobalStats = {
     skylimit_number: skylimitNumber,
-    post_daily: postTotal / dayTotal,
+    post_daily: postTotal / effectiveDayTotal,
     shown_daily: maxViewsPerDay, // Approximation
     post_total: postTotal,
-    day_total: dayTotal,
+    complete_intervals_day_total: completeIntervalsDayTotal,
+    effective_day_total: effectiveDayTotal,
     post_lastday: 0, // Will be calculated separately
     shown_lastday: 0, // Will be calculated separately
 
@@ -872,17 +869,17 @@ function computeUserProbabilities(
     analysis_end_time: intervalDiagnostics.endTime.toISOString(),
 
     // Posts breakdown
-    original_daily: originalTotal / dayTotal,
-    followed_reply_daily: followedReplyTotal / dayTotal,
-    unfollowed_reply_daily: unfollowedReplyTotal / dayTotal,
-    reposts_daily: repostsTotal / dayTotal,
+    original_daily: originalTotal / effectiveDayTotal,
+    followed_reply_daily: followedReplyTotal / effectiveDayTotal,
+    unfollowed_reply_daily: unfollowedReplyTotal / effectiveDayTotal,
+    reposts_daily: repostsTotal / effectiveDayTotal,
+    edited_daily: editionPostTotal / effectiveDayTotal,
+    edited_hold_daily: editionHoldTotal / effectiveDayTotal,
 
     // Cache diagnostics
-    summaries_total_cached: intervalDiagnostics.summariesTotalCached,
-    summaries_dropped_cached: intervalDiagnostics.summariesDroppedCached,
-    edition_post_total_cached: intervalDiagnostics.editionPostTotalCached,
-    summaries_total: intervalDiagnostics.summariesTotal,
-    summaries_accumulated: intervalDiagnostics.summariesAccumulated,
+    summaries_total_all: intervalDiagnostics.summariesTotalAll,
+    summaries_total_processed: intervalDiagnostics.summariesTotalProcessed,
+    summaries_total_followees: intervalDiagnostics.summariesTotalFollowees,
 
     // Summaries timestamps
     summaries_oldest_time: intervalDiagnostics.summariesOldestTime?.toISOString(),
@@ -895,6 +892,7 @@ function computeUserProbabilities(
     interval_length_hours: intervalDiagnostics.intervalLengthHours,
     days_of_data: intervalDiagnostics.daysOfData,
     curation_status_counts: intervalDiagnostics.curationStatusCounts,
+    post_type_counts: intervalDiagnostics.postTypeCounts,
   }
   
   const userFilter: UserFilter = Object.entries(userAccum).reduce(
@@ -971,7 +969,7 @@ export async function recomputeProbabilities(
 
     const regularPostsPlusReposts = Math.max(1,
       entry.original_daily + entry.followed_reply_daily +
-      entry.unfollowed_reply_daily + entry.repost_daily)
+      entry.unfollowed_reply_daily + entry.reposts_daily)
     const userSkylimitNumber = skylimitNumber * (item.weight || 1)
     let availableViews = userSkylimitNumber - entry.periodic_daily
 

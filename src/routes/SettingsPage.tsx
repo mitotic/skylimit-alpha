@@ -10,7 +10,7 @@ import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT, VIEW
 import { parseEditionFile, invalidateEditionsCache, saveEditionLayout } from '../curation/skylimitEditions'
 import { rematchHeldPosts } from '../curation/skylimitEditionMatcher'
 import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
-import { SkylimitSettings } from '../curation/types'
+import { SkylimitSettings, WEEKS_OF_DATA_OPTIONS, WEEKS_OF_DATA_DEFAULT } from '../curation/types'
 import { getBrowserTimezone } from '../utils/timezoneUtils'
 import Button from '../components/Button'
 import { version } from '../../package.json'
@@ -648,7 +648,12 @@ export default function SettingsPage() {
             <input
               type="checkbox"
               checked={settings.debugMode}
-              onChange={(e) => updateSetting('debugMode', e.target.checked)}
+              onChange={(e) => {
+                const newValue = e.target.checked
+                updateSetting('debugMode', newValue)
+                setOriginalSettings(prev => prev ? { ...prev, debugMode: newValue } : prev)
+                updateSettings({ debugMode: newValue })
+              }}
               className="w-5 h-5"
             />
             <div>
@@ -973,16 +978,17 @@ Use this only if the app is not working correctly. This cannot be undone.`}
 
               <div>
                 <label className="block mb-2 font-medium">
-                  Days of data to analyze:
+                  Weeks of data to analyze:
                 </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="60"
-                  value={settings.daysOfData}
-                  onChange={(e) => updateSetting('daysOfData', parseInt(e.target.value) || 30)}
+                <select
+                  value={Math.round(settings.daysOfData / 7)}
+                  onChange={(e) => updateSetting('daysOfData', (parseInt(e.target.value) || WEEKS_OF_DATA_DEFAULT) * 7)}
                   className="w-full px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                />
+                >
+                  {WEEKS_OF_DATA_OPTIONS.map((weeks) => (
+                    <option key={weeks} value={weeks}>{weeks} {weeks === 1 ? 'week' : 'weeks'}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -1434,6 +1440,15 @@ Use this only if the app is not working correctly. This cannot be undone.`}
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-4">
                           (Approximate - only counts recent summaries within last 48 hours)
                         </div>
+                      </div>
+                      <div>
+                        <span className="font-medium">Edited by curation (recent):</span>{' '}
+                        {summariesStats?.editedCount ?? 0}
+                        {summariesStats && summariesStats.totalCount > 0 && (
+                          <span className="text-gray-500 dark:text-gray-400 ml-1">
+                            ({((summariesStats.editedCount / summariesStats.totalCount) * 100).toFixed(1)}%)
+                          </span>
+                        )}
                       </div>
                       {!summariesStats?.oldestTimestamp && !summariesStats?.newestTimestamp && summariesStats?.totalCount === 0 && (
                         <div className="text-gray-500 dark:text-gray-400">No summaries cached</div>

@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getFilterWithTimestamp, getAllFollows } from '../curation/skylimitCache'
+import { computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { GlobalStats, UserFilter, UserEntry, FollowInfo } from '../curation/types'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
 import { getSettings } from '../curation/skylimitStore'
@@ -226,7 +227,7 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
 }
 
 export default function SkylimitStatistics() {
-  const { session } = useSession()
+  const { session, agent } = useSession()
   const navigate = useNavigate()
   const [stats, setStats] = useState<GlobalStats | null>(null)
   const [userFilter, setUserFilter] = useState<UserFilter | null>(null)
@@ -243,11 +244,13 @@ export default function SkylimitStatistics() {
   const [popupPosition, setPopupPosition] = useState<'above' | 'below'>('below') // Position of popup relative to cell
   const [popupAnchorRect, setPopupAnchorRect] = useState<DOMRect | null>(null) // Anchor rect for fixed positioning
   const [loadingAmp, setLoadingAmp] = useState(false)
+  const [recomputing, setRecomputing] = useState(false)
   const [sortField, setSortField] = useState<SortField>('postsPerDay')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [headerTooltip, setHeaderTooltip] = useState<string | null>(null)
   const [debugMode, setDebugMode] = useState(false)
   const [chartMode, setChartMode] = useState<ChartMode>('posting')
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
   const myUsername = session?.handle || ''
 
@@ -255,9 +258,9 @@ export default function SkylimitStatistics() {
     loadStatistics()
   }, [])
 
-  const loadStatistics = async () => {
+  const loadStatistics = async (skipLoading = false) => {
     try {
-      setLoading(true)
+      if (!skipLoading) setLoading(true)
 
       // Get settings for anonymization, views per day, and debug mode
       const settings = await getSettings()
@@ -341,7 +344,7 @@ export default function SkylimitStatistics() {
           original_daily: 0,
           followed_reply_daily: 0,
           unfollowed_reply_daily: 0,
-          repost_daily: 0,
+          reposts_daily: 0,
           engaged_daily: 0,
           total_daily: 0,
           shown_daily: 0,
@@ -354,7 +357,7 @@ export default function SkylimitStatistics() {
         // If total_daily is not set, calculate it from the daily values
         const postsPerDay = entry.total_daily > 0
           ? entry.total_daily
-          : (entry.periodic_daily || 0) + (entry.priority_daily || 0) + (entry.original_daily || 0) + (entry.followed_reply_daily || 0) + (entry.unfollowed_reply_daily || 0) + (entry.repost_daily || 0)
+          : (entry.periodic_daily || 0) + (entry.priority_daily || 0) + (entry.original_daily || 0) + (entry.followed_reply_daily || 0) + (entry.unfollowed_reply_daily || 0) + (entry.reposts_daily || 0)
         const displayProbability = (entry.net_prob || 0) * 100
         
         // Get amplification factor from follow info
@@ -460,7 +463,7 @@ export default function SkylimitStatistics() {
     const postingCount = Math.round(countTotalPostsForUser(userEntry))
     const originalsPerDay = userEntry.original_daily
     const priorityPerDay = userEntry.priority_daily
-    const repostsPerDay = userEntry.repost_daily
+    const repostsPerDay = userEntry.reposts_daily
     const followedRepliesPerDay = userEntry.followed_reply_daily
     const unfollowedRepliesPerDay = userEntry.unfollowed_reply_daily
     const editedPerDay = userEntry.edited_daily
@@ -496,6 +499,20 @@ export default function SkylimitStatistics() {
       alert('Failed to update amplification factor')
     } finally {
       setLoadingAmp(false)
+    }
+  }
+
+  const handleRecomputeStats = async () => {
+    if (!agent || !session) return
+    try {
+      setRecomputing(true)
+      await computeStatsInBackground(agent, myUsername, session.did, true)
+      await loadStatistics(true)
+    } catch (error) {
+      log.error('Stats', 'Failed to recompute statistics:', error)
+      alert('Failed to recompute statistics')
+    } finally {
+      setRecomputing(false)
     }
   }
 
@@ -719,7 +736,7 @@ export default function SkylimitStatistics() {
     <div className="space-y-4">
       {/* Summary Statistics (like Mahoot) */}
       <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
-        <h3 className="text-lg font-semibold mb-3">Summary Statistics</h3>
+        <h3 className="text-lg font-semibold mb-3">Feed statistics</h3>
         <div className="space-y-1 text-sm">
           {stats && (
             <>
@@ -736,14 +753,9 @@ export default function SkylimitStatistics() {
                   </em>
                 </div>
               )}
-              <details>
+              <details open={detailsOpen} onToggle={(e) => setDetailsOpen((e.target as HTMLDetailsElement).open)}>
                 <summary className="cursor-pointer text-blue-500">Details</summary>
                 <div className="mt-1 space-y-1">
-                  {curationTimezone && (
-                    <div>
-                      <em>Curation timezone: {curationTimezone}</em>
-                    </div>
-                  )}
                   {followedTags.length > 0 && (
                     <div>
                       Following tags: #{followedTags.join(', #')}
@@ -757,12 +769,40 @@ export default function SkylimitStatistics() {
                     )}
                     {' '}by {Object.keys(userFilter || {}).length} followees over{' '}
                     {stats.complete_intervals_days !== undefined && stats.complete_intervals_days > 0 ? (
-                      <>a non-contiguous period of {stats.day_total.toFixed(2)} days ({stats.intervals_complete} complete {stats.interval_length_hours}-hour intervals)</>
+                      <>a non-contiguous period of {stats.complete_intervals_day_total.toFixed(2)} days ({stats.intervals_complete} complete {stats.interval_length_hours}-hour intervals{stats.effective_day_total !== undefined && stats.effective_day_total !== stats.complete_intervals_day_total ? <>; effective: {stats.effective_day_total.toFixed(2)} days</> : ''})</>
                     ) : (
-                      <>last {stats.day_total.toFixed(2)} days</>
+                      <>last {stats.complete_intervals_day_total.toFixed(2)} days</>
                     )}
-                    {stats.days_of_data !== undefined && <> within the last {stats.days_of_data} days</>}.
+                    {stats.days_of_data !== undefined && <> within the last {Math.round(stats.days_of_data / 7)} {Math.round(stats.days_of_data / 7) === 1 ? 'week' : 'weeks'}</>}.
                   </div>
+                  {/* Debug mode: curation status counts */}
+                  {debugMode && (
+                    <div className="mt-3">
+                      {curationTimezone && (
+                        <div>
+                          <em>Curation timezone: {curationTimezone}</em>
+                        </div>
+                      )}
+                      <div className="font-bold">Debug Mode</div>
+                      {stats.curation_status_counts && stats.effective_day_total && stats.effective_day_total > 0 && (() => {
+                        const counts = stats.curation_status_counts!
+                        const d = stats.effective_day_total!
+                        const daily = (key: string) => Math.round((counts[key] || 0) / d)
+
+                        return (
+                          <div className="mt-1">
+                            <div className="font-medium">Post curation statistics (daily average)</div>
+                            <div>Priority: {daily('priority_show') + daily('priority_drop')} total / {daily('priority_show')} show</div>
+                            <div>Regular: {daily('regular_show') + daily('regular_drop')} total / {daily('regular_show')} show</div>
+                            <div>Regular (hiPop): {daily('regular_hi_show') + daily('regular_hi_drop')} total / {daily('regular_hi_show')} show</div>
+                            <div>Regular (loPop): {daily('regular_lo_show') + daily('regular_lo_drop')} total / {daily('regular_lo_show')} show</div>
+                            <div>Edited: {stats.edited_daily?.toFixed(0) ?? 0} total / {stats.edited_hold_daily?.toFixed(0) ?? 0} hold</div>
+                            <div>Other: {daily('self_show')} self_show, {daily('periodic_show')} periodic, {daily('repost_drop')} repost_drop, {daily('reply_drop')} reply_drop, {daily('untracked_show')} untracked_show</div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  )}
                   {/* Interval diagnostics with complete/incomplete breakdown */}
                   {stats.intervals_expected !== undefined && stats.intervals_processed !== undefined && (
                     <div>
@@ -784,21 +824,9 @@ export default function SkylimitStatistics() {
                     </div>
                   )}
                   {/* Cache vs accumulated diagnostics */}
-                  {stats.summaries_total !== undefined && (
+                  {stats.summaries_total_all !== undefined && (
                     <div>
-                      Summaries (complete intervals): {stats.summaries_total} total, {stats.summaries_accumulated ?? 0} processed
-                    </div>
-                  )}
-                  {/* Total cached summaries (all intervals) */}
-                  {stats.summaries_total_cached !== undefined && (
-                    <div>
-                      Summaries: total {stats.summaries_total_cached}, dropped {stats.summaries_dropped_cached ?? 0} ({stats.summaries_total_cached > 0 ? ((stats.summaries_dropped_cached ?? 0) / stats.summaries_total_cached * 100).toFixed(1) : 0}%)
-                    </div>
-                  )}
-                  {/* Edition post count */}
-                  {stats.edition_post_total_cached !== undefined && stats.edition_post_total_cached > 0 && (
-                    <div>
-                      Edition posts held: {stats.edition_post_total_cached}
+                      Summaries count: {stats.summaries_total_all} total / {stats.summaries_total_processed ?? 0} processed ({stats.summaries_total_followees ?? 0} from followees)
                     </div>
                   )}
                   {/* Summaries cache timestamps */}
@@ -807,6 +835,13 @@ export default function SkylimitStatistics() {
                       Summaries time range: {new Date(stats.summaries_oldest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)} - {new Date(stats.summaries_newest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)}
                     </div>
                   )}
+                  <button
+                    className="mt-2 px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50"
+                    onClick={handleRecomputeStats}
+                    disabled={recomputing}
+                  >
+                    {recomputing ? 'Recomputing...' : 'Recompute curation stats'}
+                  </button>
                 </div>
               </details>
             </>

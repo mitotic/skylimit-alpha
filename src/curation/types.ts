@@ -48,6 +48,20 @@ export function isStatusDrop(status: CurationStatus | undefined): boolean {
 }
 
 /**
+ * Check if a post is truly dropped (excludes edition statuses which are assembled, not dropped)
+ */
+export function isPostDropped(status: CurationStatus | undefined): boolean {
+  return status !== undefined && status.endsWith('_drop') && !status.startsWith('edition_')
+}
+
+/**
+ * Check if a post is part of an edition (curation status starts with 'edition_post_')
+ */
+export function isPostEdited(status: CurationStatus | undefined): boolean {
+  return status !== undefined && status.startsWith('edition_post_')
+}
+
+/**
  * Check if a curation status is an edition publish status (skip in numbering)
  */
 export function isEditionPublishStatus(status: CurationStatus | undefined): boolean {
@@ -131,7 +145,8 @@ export interface GlobalStats {
   post_daily: number           // Daily post count across all users (renamed from status_daily)
   shown_daily: number
   post_total: number           // Total posts in analysis period (renamed from status_total)
-  day_total: number
+  complete_intervals_day_total: number
+  effective_day_total: number
   post_lastday: number         // Posts from the last day (renamed from status_lastday)
   shown_lastday: number
 
@@ -150,14 +165,14 @@ export interface GlobalStats {
   original_daily?: number               // Original posts (not replies)
   followed_reply_daily?: number         // Replies to followees
   unfollowed_reply_daily?: number       // Replies to non-followees
-  reposts_daily?: number                // boost_total / dayTotal
+  reposts_daily?: number                // repostsTotal / effectiveDayTotal
+  edited_daily?: number                 // editionPostTotal / effectiveDayTotal
+  edited_hold_daily?: number            // editionHoldTotal / effectiveDayTotal
 
   // Cache vs accumulated diagnostics
-  summaries_total_cached?: number       // Total summaries across all intervals (complete + incomplete)
-  summaries_dropped_cached?: number     // Total dropped summaries across all intervals
-  edition_post_total_cached?: number    // Total edition_post_* summaries across all intervals
-  summaries_total?: number              // Total posts in summaries cache (complete intervals only)
-  summaries_accumulated?: number        // Posts accumulated (from current followees)
+  summaries_total_all?: number          // Total summaries in cache (all intervals)
+  summaries_total_processed?: number    // Summaries from processed intervals only
+  summaries_total_followees?: number    // Posts accumulated (from current followees)
 
   // Summaries cache timestamps
   summaries_oldest_time?: string        // ISO string of oldest post in summaries
@@ -172,6 +187,9 @@ export interface GlobalStats {
 
   // Per-status accumulator counts (keys are CurationStatus values + 'null' for undefined)
   curation_status_counts?: Record<string, number>
+
+  // Per-post-type accumulator counts (keys are PostType values + 'null' for undefined)
+  post_type_counts?: Record<string, number>
 }
 
 /**
@@ -191,8 +209,9 @@ export interface UserEntry {
   original_daily: number       // Original posts (not replies)
   followed_reply_daily: number // Replies to followees
   unfollowed_reply_daily: number // Replies to non-followees
-  repost_daily: number         // Daily repost count for this user
+  reposts_daily: number         // Daily repost count for this user
   edited_daily: number         // Edition-matched posts per day (diagnostics only)
+  edited_hold_daily: number    // Edition hold posts per day
   engaged_daily: number
   total_daily: number
   shown_daily: number           // Actual shown posts per day (from curation status tracking)
@@ -253,6 +272,19 @@ export function hasEngagementLevel(postEngagement: number, level: number): boole
   return Math.floor(postEngagement / Math.pow(10, digitIndex)) % 10 >= 1
 }
 
+export const POST_TYPES = [
+  'original',
+  'quotepost',
+  'repost_followed',
+  'repost_unfollowed',
+  'repost_synthetic',
+  'reply_followed',
+  'reply_unfollowed',
+  'reply_self',
+] as const
+
+export type PostType = typeof POST_TYPES[number]
+
 export interface PostSummary {
   uniqueId: string              // Unique identifier (see above for format)
   cid: string
@@ -268,6 +300,7 @@ export interface PostSummary {
   postTimestamp: number         // Numeric timestamp for IndexedDB indexing (timestamp.getTime())
   postEngagement?: number       // Additive engagement levels (powers of 10), see ENGAGEMENT_* constants
   orig_username?: string
+  post_type?: PostType
   curation_status?: CurationStatus
   curation_msg?: string
   // Invariant counter numbering (added for counter revamp)
@@ -337,14 +370,10 @@ export interface UserAccumulator {
   popBins?: number[]            // Log-binned popularity counts (POP_BIN_COUNT elements, indices 0 to POP_MAX_BIN_INDEX)
 }
 
-/**
- * Statistics for tracking repost counts during interval processing.
- */
-export interface PostStats {
-  repost_count: number           // Number of times post was reposted (renamed from boost_count)
-  followed_repost_count: number  // Reposts by followed users (renamed from fboost_count)
-  repostCount: number            // Original repost count from post metadata
-}
+
+export const WEEKS_OF_DATA_OPTIONS = [1, 2, 3, 4, 5, 6] as const
+export const WEEKS_OF_DATA_DEFAULT = 4
+export const DAYS_OF_DATA_DEFAULT = WEEKS_OF_DATA_DEFAULT * 7
 
 export interface SkylimitSettings {
   viewsPerDay: number

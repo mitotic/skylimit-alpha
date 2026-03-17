@@ -5,6 +5,7 @@
 import { AppBskyFeedDefs } from '@atproto/api'
 import {
   PostSummary,
+  PostType,
   CurationStatus,
   CurationResult,
   UserFilter,
@@ -14,6 +15,7 @@ import {
   DEFAULT_PRIORITY_PATTERNS,
   USER_PRIORITY_PATTERNS_KEY,
   USER_TIMEZONE_KEY,
+  SL_REPOST_PREFIX,
   extractDidFromUri,
   isStatusShow,
   isStatusDrop,
@@ -23,8 +25,7 @@ import {
 import { hmacRandom } from '../utils/hmac'
 import {
   createPostSummary,
-  isSameWeek,
-  getFeedViewPostTimestamp
+  isSameWeek
 } from './skylimitGeneral'
 import { matchTextPattern } from './skylimitEditionMatcher'
 import { TextPattern } from './skylimitEditions'
@@ -38,11 +39,11 @@ import log from '../utils/logger'
  * Unfollowed replies are always included - filtering is done during accumulation.
  */
 export function countTotalPosts(
-  userEntry: { periodic_daily: number; priority_daily: number; original_daily: number; followed_reply_daily: number; unfollowed_reply_daily: number; repost_daily: number }
+  userEntry: { periodic_daily: number; priority_daily: number; original_daily: number; followed_reply_daily: number; unfollowed_reply_daily: number; reposts_daily: number }
 ): number {
   return userEntry.periodic_daily + userEntry.priority_daily +
          userEntry.original_daily + userEntry.followed_reply_daily +
-         userEntry.unfollowed_reply_daily + userEntry.repost_daily
+         userEntry.unfollowed_reply_daily + userEntry.reposts_daily
 }
 
 /**
@@ -120,12 +121,43 @@ function isUnfollowedReplyEligible(
 }
 
 /**
- * Curate a single post
+ * Classify a post summary into its PostType based on structure and follow state.
  */
-export async function curateSinglePost(
-  post: AppBskyFeedDefs.FeedViewPost,
+export function classifyPostSummary(
+  summary: PostSummary,
+  currentFollows: Record<string, FollowInfo>
+): PostType {
+  if (summary.repostUri) {
+    if (summary.uniqueId.startsWith(SL_REPOST_PREFIX)) {
+      return 'repost_synthetic'
+    } else if (summary.orig_username && summary.orig_username in currentFollows) {
+      return 'repost_followed'
+    } else {
+      return 'repost_unfollowed'
+    }
+  } else if (summary.inReplyToUri) {
+    const parentDid = extractDidFromUri(summary.inReplyToUri)
+    if (parentDid && parentDid === summary.accountDid) {
+      return 'reply_self'
+    } else if (parentDid && Object.values(currentFollows).some(f => f.accountDid === parentDid)) {
+      return 'reply_followed'
+    } else {
+      return 'reply_unfollowed'
+    }
+  } else if (summary.quotedText) {
+    return 'quotepost'
+  } else {
+    return 'original'
+  }
+}
+
+/**
+ * Curate a post summary without needing the original FeedViewPost.
+ * Enables re-curation of cached summaries.
+ */
+export async function curatePostSummary(
+  summary: PostSummary,
   myUsername: string,
-  _myDid: string,
   currentFollows: Record<string, FollowInfo>,
   currentStats: GlobalStats | null,
   currentProbs: UserFilter | null,
@@ -133,7 +165,9 @@ export async function curateSinglePost(
   editionCount: number,
   secondaryRepostIndex?: SecondaryRepostIndex
 ): Promise<CurationResult> {
-  const summary = createPostSummary(post, undefined, myUsername)
+  // Classify post type (recomputed each time since follow state may have changed)
+  summary.post_type = classifyPostSummary(summary, currentFollows)
+
   const modStatus: CurationResult = { curation_msg: '' }
   let dropReason = ''
 
@@ -145,7 +179,7 @@ export async function curateSinglePost(
   }
 
   // Always show own posts
-  if (summary.username === myUsername || summary.username === summary.orig_username) {
+  if (summary.username === myUsername) {
     modStatus.curation_status = 'self_show'
     traceReturn()
     return modStatus
@@ -153,32 +187,24 @@ export async function curateSinglePost(
 
   // Edition matching runs before stats check — posts must be held during initial lookback
   // so they're available when transferSecondaryToPrimary assembles editions
-  let editionEligible = editionCount > 0 && !summary.repostUri
+  let editionEligible = editionCount > 0
+    && summary.post_type !== 'repost_followed'
+    && summary.post_type !== 'repost_unfollowed'
+    && summary.post_type !== 'repost_synthetic'
+    && summary.post_type !== 'reply_self'
 
-  // Replies require additional checks for edition eligibility
-  if (editionEligible && summary.inReplyToUri) {
-    const parentDid = extractDidFromUri(summary.inReplyToUri)
-    if (!parentDid || parentDid === summary.accountDid) {
-      // Self-reply — not eligible
+  // Unfollowed replies require additional eligibility check
+  if (editionEligible && summary.post_type === 'reply_unfollowed') {
+    const userEntry = currentProbs?.[summary.username]
+    if (!userEntry) {
       editionEligible = false
     } else {
-      // Check if parent author is followed
-      const parentFollowed = Object.values(currentFollows).some(f => f.accountDid === parentDid)
-      if (!parentFollowed) {
-        // Unfollowed reply — use shared eligibility check
-        const userEntry = currentProbs?.[summary.username]
-        if (!userEntry) {
-          editionEligible = false
-        } else {
-          const { getSettings } = await import('./skylimitStore')
-          const settings = await getSettings()
-          editionEligible = isUnfollowedReplyEligible(
-            userEntry.regular_prob,
-            settings?.hideUnfollowedReplies ?? false
-          )
-        }
-      }
-      // else: followed non-self reply — stays eligible
+      const { getSettings } = await import('./skylimitStore')
+      const settings = await getSettings()
+      editionEligible = isUnfollowedReplyEligible(
+        userEntry.regular_prob,
+        settings?.hideUnfollowedReplies ?? false
+      )
     }
   }
 
@@ -216,23 +242,23 @@ export async function curateSinglePost(
     traceReturn()
     return modStatus
   }
-  
-  // Use FeedViewPost timestamp (repost time for reposts, creation time for originals)
-  const statusTime = getFeedViewPostTimestamp(post)
+
+  // Use summary timestamp (repost time for reposts, creation time for originals)
+  const statusTime = summary.timestamp
 
   let handledStatus = ''
-  
+
   if (summary.username in currentProbs) {
     // Currently tracking user
     const userEntry = currentProbs[summary.username]
     const randomNum = await hmacRandom(secretKey, 'filter_' + myUsername + '_' + summary.uniqueId)
-    
+
     const follow = currentFollows[summary.username] || null
     let periodicAccepted = false
 
     // Format statistics on separate lines
     const postingCount = Math.round(countTotalPosts(userEntry))
-    const repostingCount = Math.round(userEntry.repost_daily)
+    const repostingCount = Math.round(userEntry.reposts_daily)
     const showProb = (userEntry.regular_prob * 100).toFixed(1) // Convert to percent
     const ampFactor = follow ? follow.amp_factor : null
 
@@ -313,73 +339,55 @@ export async function curateSinglePost(
       modStatus.curation_status = priorityDrop ? 'priority_drop' : 'priority_show'
       modStatus.matching_pattern = priorityMatch
       if (priorityDrop) dropReason = 'random (priority)'
-    } else {
-      // Check if this is an unfollowed reply
-      const isUnfollowedReply = summary.inReplyToUri && (() => {
-        const parentDid = extractDidFromUri(summary.inReplyToUri!)
-        if (!parentDid) return false
-        // Check if parent author is NOT in currentFollows
-        return !Object.values(currentFollows).some(f => f.accountDid === parentDid)
-      })()
+    } else if (summary.post_type === 'reply_unfollowed') {
+      // Check if this is the first curation round (initial lookback active)
+      const initialLookbackActive = !(await isInitialLookbackCompleted())
 
-      if (isUnfollowedReply) {
-        // Check if this is the first curation round (initial lookback active)
-        const initialLookbackActive = !(await isInitialLookbackCompleted())
-
-        if (initialLookbackActive) {
-          // First round: ALWAYS drop unfollowed replies
-          modStatus.curation_status = 'reply_drop'
-          dropReason = 'unfollowed reply (initial)'
-        } else {
-          // Subsequent rounds: apply normal logic
-          const { getSettings } = await import('./skylimitStore')
-          const settings = await getSettings()
-          const hideUnfollowedReplies = settings?.hideUnfollowedReplies ?? false
-
-          if (!isUnfollowedReplyEligible(userEntry.regular_prob, hideUnfollowedReplies)) {
-            // Drop: setting is on OR poster is not a quiet poster
-            modStatus.curation_status = 'reply_drop'
-            dropReason = 'unfollowed reply'
-          } else {
-            // Show: quiet poster (regular_prob>=1) AND setting is off
-            modStatus.curation_status = 'regular_show'
-          }
-        }
+      if (initialLookbackActive) {
+        // First round: ALWAYS drop unfollowed replies
+        modStatus.curation_status = 'reply_drop'
+        dropReason = 'unfollowed reply (initial)'
       } else {
-        // Check if this is a same-user reply (reply to own post)
-        const isSameUserReply = summary.inReplyToUri && (() => {
-          const parentDid = extractDidFromUri(summary.inReplyToUri!)
-          return parentDid === summary.accountDid
-        })()
+        // Subsequent rounds: apply normal logic
+        const { getSettings } = await import('./skylimitStore')
+        const settings = await getSettings()
+        const hideUnfollowedReplies = settings?.hideUnfollowedReplies ?? false
 
-        if (isSameUserReply) {
-          // Look up parent in post summaries cache
-          const { getPostSummary } = await import('./skylimitCache')
-          const parentSummary = await getPostSummary(summary.inReplyToUri!)
-
-          const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
-
-          if (parentSummary
-              && isStatusShow(parentSummary.curation_status)
-              && (clientNow() - parentSummary.postTimestamp) >= TWENTY_FOUR_HOURS) {
-            // Parent shown and old (>24h) — keep the reply, apply normal probability
-            modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
-            if (regularDrop) dropReason = 'random (regular)'
-          } else {
-            // Drop: parent not in summaries, parent dropped, or parent shown recently
-            modStatus.curation_status = 'reply_drop'
-            dropReason = parentSummary
-              ? (isStatusDrop(parentSummary.curation_status)
-                  ? 'same-user reply (parent dropped)'
-                  : 'same-user reply (parent shown recently)')
-              : 'same-user reply'
-          }
+        if (!isUnfollowedReplyEligible(userEntry.regular_prob, hideUnfollowedReplies)) {
+          // Drop: setting is on OR poster is not a quiet poster
+          modStatus.curation_status = 'reply_drop'
+          dropReason = 'unfollowed reply'
         } else {
-          // Original post or non-same-user followed reply - standard logic
-          modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
-          if (regularDrop) dropReason = 'random (regular)'
+          // Show: quiet poster (regular_prob>=1) AND setting is off
+          modStatus.curation_status = 'regular_show'
         }
       }
+    } else if (summary.post_type === 'reply_self') {
+      // Look up parent in post summaries cache
+      const { getPostSummary } = await import('./skylimitCache')
+      const parentSummary = await getPostSummary(summary.inReplyToUri!)
+
+      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
+
+      if (parentSummary
+          && isStatusShow(parentSummary.curation_status)
+          && (clientNow() - parentSummary.postTimestamp) >= TWENTY_FOUR_HOURS) {
+        // Parent shown and old (>24h) — keep the reply, apply normal probability
+        modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
+        if (regularDrop) dropReason = 'random (regular)'
+      } else {
+        // Drop: parent not in summaries, parent dropped, or parent shown recently
+        modStatus.curation_status = 'reply_drop'
+        dropReason = parentSummary
+          ? (isStatusDrop(parentSummary.curation_status)
+              ? 'same-user reply (parent dropped)'
+              : 'same-user reply (parent shown recently)')
+          : 'same-user reply'
+      }
+    } else {
+      // Original post, quotepost, repost, or followed reply - standard logic
+      modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
+      if (regularDrop) dropReason = 'random (regular)'
     }
 
     // Build curation_msg with drop reason if applicable
@@ -408,5 +416,23 @@ export async function curateSinglePost(
 
   traceReturn()
   return modStatus
+}
+
+/**
+ * Curate a single post
+ */
+export async function curateSinglePost(
+  post: AppBskyFeedDefs.FeedViewPost,
+  myUsername: string,
+  _myDid: string,
+  currentFollows: Record<string, FollowInfo>,
+  currentStats: GlobalStats | null,
+  currentProbs: UserFilter | null,
+  secretKey: string,
+  editionCount: number,
+  secondaryRepostIndex?: SecondaryRepostIndex
+): Promise<CurationResult> {
+  const summary = createPostSummary(post, undefined, myUsername)
+  return curatePostSummary(summary, myUsername, currentFollows, currentStats, currentProbs, secretKey, editionCount, secondaryRepostIndex)
 }
 

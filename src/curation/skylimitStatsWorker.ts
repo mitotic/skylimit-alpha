@@ -11,6 +11,8 @@ import { getIntervalHoursSync } from './types'
 import { clientInterval, clearClientInterval, clientTimeout, clearClientTimeout } from '../utils/clientClock'
 import log from '../utils/logger'
 
+let isComputing = false
+
 /**
  * Compute statistics in the background
  */
@@ -21,6 +23,11 @@ export async function computeStatsInBackground(
   forceRefreshFollows: boolean = false,
   onFollowsProgress?: (percent: number) => void
 ): Promise<void> {
+  if (isComputing) {
+    log.warn('Stats Worker', 'Stats computation already in progress, skipping')
+    return
+  }
+  isComputing = true
   try {
     const settings = await getSettings()
 
@@ -45,6 +52,8 @@ export async function computeStatsInBackground(
     scheduleCleanup()
   } catch (error) {
     log.error('Stats Worker', 'Failed to compute statistics:', error)
+  } finally {
+    isComputing = false
   }
 }
 

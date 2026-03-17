@@ -3,6 +3,7 @@ import Modal from './Modal'
 export interface CurationInitStatsDisplay {
   totalPosts: number
   droppedCount: number
+  editedCount: number
   followeeCount: number
   oldestTimestamp: number | null
   newestTimestamp: number | null
@@ -47,6 +48,11 @@ export default function CurationInitModal({ isOpen, onClose, stats }: CurationIn
           <div className="text-xs text-gray-500 dark:text-gray-500">
             ({stats.droppedCount.toLocaleString()} of {stats.totalPosts.toLocaleString()} posts)
           </div>
+          {stats.editedCount > 0 && (
+            <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+              Edition posts: {stats.editedCount.toLocaleString()}
+            </div>
+          )}
         </div>
 
         <p className="text-sm text-gray-500 dark:text-gray-400 text-center">

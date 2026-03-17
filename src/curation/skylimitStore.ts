@@ -3,7 +3,7 @@
  * Uses localStorage for persistence
  */
 
-import { SkylimitSettings } from './types'
+import { SkylimitSettings, DAYS_OF_DATA_DEFAULT } from './types'
 import { saveSettings, getSettings as getSettingsFromDB } from './skylimitCache'
 
 // Exported defaults for use in UI components
@@ -16,7 +16,7 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   showTime: true, // Enable post numbering by default
   showAllPosts: false,
   curationSuspended: false,
-  daysOfData: 30,
+  daysOfData: DAYS_OF_DATA_DEFAULT,
   secretKey: 'default',
   editionLayout: '',
   anonymizeUsernames: false,

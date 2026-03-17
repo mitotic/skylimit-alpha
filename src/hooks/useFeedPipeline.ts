@@ -980,6 +980,7 @@ export function useFeedPipeline({
                     setCurationInitStats({
                       totalPosts: curationStats.totalCount,
                       droppedCount: curationStats.droppedCount,
+                      editedCount: curationStats.editedCount,
                       followeeCount,
                       oldestTimestamp: curationStats.oldestTimestamp,
                       newestTimestamp: curationStats.newestTimestamp,

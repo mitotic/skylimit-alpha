@@ -459,7 +459,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
                   originalsPerDay={userEntry?.original_daily}
                   priorityPerDay={userEntry?.priority_daily}
-                  repostsPerDay={userEntry?.repost_daily}
+                  repostsPerDay={userEntry?.reposts_daily}
                   followedRepliesPerDay={userEntry?.followed_reply_daily}
                   unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
                   editedPerDay={userEntry?.edited_daily}
@@ -700,7 +700,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
                 originalsPerDay={userEntry?.original_daily}
                 priorityPerDay={userEntry?.priority_daily}
-                repostsPerDay={userEntry?.repost_daily}
+                repostsPerDay={userEntry?.reposts_daily}
                 followedRepliesPerDay={userEntry?.followed_reply_daily}
                 unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
                 editedPerDay={userEntry?.edited_daily}
@@ -841,7 +841,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     allowedPerDay={skylimitNumber !== undefined && userEntry ? skylimitNumber * (userEntry.amp_factor || 1) : undefined}
                     originalsPerDay={userEntry?.original_daily}
                     priorityPerDay={userEntry?.priority_daily}
-                    repostsPerDay={userEntry?.repost_daily}
+                    repostsPerDay={userEntry?.reposts_daily}
                     followedRepliesPerDay={userEntry?.followed_reply_daily}
                     unfollowedRepliesPerDay={userEntry?.unfollowed_reply_daily}
                     editedPerDay={userEntry?.edited_daily}

@@ -2,7 +2,7 @@
  * IndexedDB storage for Skylimit curation data
  */
 
-import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isStatusDrop, isStatusShow, SecondaryRepostIndex, TextSuggestions, SuggestionsMap, ENGAGEMENT_NONE, hasEngagementLevel } from './types'
+import { PostSummary, UserFilter, GlobalStats, FollowInfo, UserEntry, UserAccumulator, CurationStatus, isPostDropped, isPostEdited, isStatusShow, SecondaryRepostIndex, TextSuggestions, SuggestionsMap, ENGAGEMENT_NONE, hasEngagementLevel } from './types'
 import { FEED_CACHE_RETENTION_MS } from './skylimitFeedCache'
 import { clientNow } from '../utils/clientClock'
 import log from '../utils/logger'
@@ -312,7 +312,8 @@ export async function getPostSummariesCount(): Promise<number> {
  */
 export interface CurationInitStats {
   totalCount: number
-  droppedCount: number  // Posts with curation_status ending in '_drop'
+  droppedCount: number  // Posts dropped by curation (excludes edition posts)
+  editedCount: number   // Posts assigned to editions
   oldestTimestamp: number | null
   newestTimestamp: number | null
 }
@@ -333,13 +334,16 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
       request.onsuccess = () => {
         const summaries = request.result || []
         let droppedCount = 0
+        let editedCount = 0
         let oldestTimestamp: number | null = null
         let newestTimestamp: number | null = null
 
         for (const summary of summaries) {
-          // Count dropped posts (curation_status ends in '_drop')
-          if (isStatusDrop(summary.curation_status)) {
+          if (isPostDropped(summary.curation_status)) {
             droppedCount++
+          }
+          if (isPostEdited(summary.curation_status)) {
+            editedCount++
           }
 
           // Track timestamps using postTimestamp field
@@ -356,6 +360,7 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
         resolve({
           totalCount: summaries.length,
           droppedCount,
+          editedCount,
           oldestTimestamp,
           newestTimestamp,
         })
@@ -368,6 +373,7 @@ export async function getCurationInitStats(): Promise<CurationInitStats> {
     return {
       totalCount: 0,
       droppedCount: 0,
+      editedCount: 0,
       oldestTimestamp: null,
       newestTimestamp: null,
     }
@@ -1001,8 +1007,9 @@ export function newUserEntry(obj: Partial<UserEntry>): UserEntry {
     original_daily: 0,
     followed_reply_daily: 0,
     unfollowed_reply_daily: 0,
-    repost_daily: 0,
+    reposts_daily: 0,
     edited_daily: 0,
+    edited_hold_daily: 0,
     engaged_daily: 0,
     total_daily: 0,
     shown_daily: 0,
@@ -1044,6 +1051,7 @@ export interface PostSummariesCacheStats {
   oldestTimestamp: number | null
   newestTimestamp: number | null
   droppedCount: number
+  editedCount: number
 }
 
 export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheStats> {
@@ -1060,6 +1068,7 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
         let oldestTimestamp: number | null = null
         let newestTimestamp: number | null = null
         let droppedCount = 0
+        let editedCount = 0
         const now = clientNow()
         const recentCutoff = now - FEED_CACHE_RETENTION_MS
 
@@ -1073,9 +1082,13 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
             newestTimestamp = timestamp
           }
 
-          // Count as dropped if recent (within last 48 hours) and has curation_status ending in '_drop'
-          if (timestamp >= recentCutoff && isStatusDrop(summary.curation_status)) {
-            droppedCount++
+          if (timestamp >= recentCutoff) {
+            if (isPostDropped(summary.curation_status)) {
+              droppedCount++
+            }
+            if (isPostEdited(summary.curation_status)) {
+              editedCount++
+            }
           }
         }
 
@@ -1084,6 +1097,7 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
           oldestTimestamp,
           newestTimestamp,
           droppedCount,
+          editedCount,
         })
       }
 
@@ -1096,6 +1110,7 @@ export async function getPostSummariesCacheStats(): Promise<PostSummariesCacheSt
       oldestTimestamp: null,
       newestTimestamp: null,
       droppedCount: 0,
+      editedCount: 0,
     }
   }
 }

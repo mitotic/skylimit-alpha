@@ -918,7 +918,7 @@ export default function ProfilePage() {
                           postingPerDay={Math.round(postingPerDay)}
                           originalsPerDay={curationUserEntry.original_daily}
                           priorityPerDay={curationUserEntry.priority_daily}
-                          repostsPerDay={curationUserEntry.repost_daily}
+                          repostsPerDay={curationUserEntry.reposts_daily}
                           followedRepliesPerDay={curationUserEntry.followed_reply_daily}
                           unfollowedRepliesPerDay={curationUserEntry.unfollowed_reply_daily}
                           editedPerDay={curationUserEntry.edited_daily}
