@@ -84,6 +84,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const [showViewedStatus, setShowViewedStatus] = useState(true)
   const [showAllPosts, setShowAllPosts] = useState(false)
   const [curationSuspended, setCurationSuspended] = useState(false)
+  const [highlightStatusPrefix, setHighlightStatusPrefix] = useState<string>('')
   const [feedPageLength, setFeedPageLength] = useState<number>(25)
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
   const [settingsTimezone, setSettingsTimezone] = useState<string>('')
@@ -135,6 +136,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           // Track showAllPosts and curationSuspended for styling (grayed out posts)
           setShowAllPosts(settings?.showAllPosts || false)
           setCurationSuspended(settings?.curationSuspended || false)
+          setHighlightStatusPrefix(settings?.highlightStatusPrefix || '')
           setShowViewedStatus(settings?.showViewedStatus !== false)
           // Load click to Bluesky setting from localStorage
           setClickToBlueSky(localStorage.getItem('websky_click_to_bluesky') === 'true')
@@ -398,15 +400,19 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
 
   // Page boundary: non-zero counter where counter % pageLength === 1
   const isPageBoundary = showCounterDisplay && postNumber !== null && postNumber > 0 && postNumber % feedPageLength === 1
+  const isHighlighted = !!(highlightStatusPrefix && curation?.curation_status?.startsWith(highlightStatusPrefix))
 
   return (
     <article
       className={`${isPageBoundary ? 'border-b-4 border-blue-500 dark:border-blue-400' : 'border-b border-gray-200 dark:border-gray-700'} hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors`}
-      style={isViewedOld ? {
-        background: theme === 'dark'
-          ? 'linear-gradient(to bottom, rgba(120,113,108,0.15) 0%, transparent 6%, transparent 94%, rgba(120,113,108,0.15) 100%), linear-gradient(to right, rgba(120,113,108,0.15) 0%, transparent 48px, transparent calc(100% - 48px), rgba(120,113,108,0.15) 100%)'
-          : 'linear-gradient(to bottom, rgba(168,162,158,0.18) 0%, transparent 6%, transparent 94%, rgba(168,162,158,0.18) 100%), linear-gradient(to right, rgba(168,162,158,0.18) 0%, transparent 48px, transparent calc(100% - 48px), rgba(168,162,158,0.18) 100%)'
-      } : undefined}
+      style={{
+        ...(isHighlighted ? { boxShadow: 'inset 0 0 0 2px #ef4444' } : {}),
+        ...(isViewedOld ? {
+          background: theme === 'dark'
+            ? 'linear-gradient(to bottom, rgba(120,113,108,0.15) 0%, transparent 6%, transparent 94%, rgba(120,113,108,0.15) 100%), linear-gradient(to right, rgba(120,113,108,0.15) 0%, transparent 48px, transparent calc(100% - 48px), rgba(120,113,108,0.15) 100%)'
+            : 'linear-gradient(to bottom, rgba(168,162,158,0.18) 0%, transparent 6%, transparent 94%, rgba(168,162,158,0.18) 100%), linear-gradient(to right, rgba(168,162,158,0.18) 0%, transparent 48px, transparent calc(100% - 48px), rgba(168,162,158,0.18) 100%)'
+        } : {}),
+      }}
     >
       {repostedBy && !isPeriodicEdition(curation) && (
         <div className={`px-4 pt-4 pb-2 text-[0.9375rem] text-gray-500 dark:text-gray-400 flex items-center justify-between relative ${'curation' in post && showAllPosts && !curationSuspended && isStatusDrop((post as CurationFeedViewPost).curation?.curation_status) ? 'opacity-50' : ''}`}>

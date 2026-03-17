@@ -4,6 +4,8 @@ import { RateLimitProvider } from './contexts/RateLimitContext'
 import Layout from './components/Layout'
 import Spinner from './components/Spinner'
 import ScrollToTop from './components/ScrollToTop'
+import DormantOverlay from './components/DormantOverlay'
+import { useTabGuard } from './utils/tabGuard'
 import LoginPage from './routes/LoginPage'
 import HomePage from './routes/HomePage'
 import SearchPage from './routes/SearchPage'
@@ -17,9 +19,15 @@ import ChatPage from './routes/ChatPage'
 import FollowListPage from './routes/FollowListPage'
 
 function App() {
+  const { status: tabStatus, claimActive } = useTabGuard()
   const { session, isLoading } = useSession()
 
-  if (isLoading) {
+  // Another tab is already active — show standalone takeover page
+  if (tabStatus === 'blocked') {
+    return <DormantOverlay mode="blocked" onAction={claimActive} />
+  }
+
+  if (isLoading || tabStatus === 'initializing') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <Spinner size="lg" />
@@ -29,6 +37,7 @@ function App() {
 
   return (
     <RateLimitProvider>
+      {tabStatus === 'dormant' && <DormantOverlay mode="dormant" onAction={claimActive} />}
       <ScrollToTop />
       <Routes>
         <Route path="/login" element={session ? <Navigate to="/" replace /> : <LoginPage />} />

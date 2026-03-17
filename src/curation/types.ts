@@ -407,6 +407,7 @@ export interface SkylimitSettings {
   showViewedStatus?: boolean // Show viewed-post visual indicators (checkmark, gradient, unviewed count), default true
   consoleLogLevel?: number // Console log verbosity: 0=errors, 1=warnings, 2=milestones, 3=debug, 4=verbose. Default 2
   traceUsers?: string // Comma-separated list of handles to trace through the processing pipeline
+  highlightStatusPrefix?: string // Highlight posts whose curation_status starts with this prefix (red outline)
   timezone?: string // Stored timezone for consistent day boundaries (e.g., "America/New_York")
   lastBrowserTimezone?: string // Browser timezone when user last saved/confirmed timezone setting
   showEditionsInFeed?: boolean // Show periodic editions in home feed, default false

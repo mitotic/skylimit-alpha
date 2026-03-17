@@ -17,8 +17,13 @@ import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitG
 import { numberUnnumberedPostsForDay, assignNumbersForDay, assignAllNumbers } from '../curation/skylimitNumbering'
 import { clientNow, clientDate, clientTimeout, clearClientTimeout, clientInterval, clearClientInterval } from '../utils/clientClock'
 import { isRateLimited, getTimeUntilClear } from '../utils/rateLimitState'
+import { isTabDormant } from '../utils/tabGuard'
 import { HomeTab, getFeedStateKey, getScrollStateKey, HOME_TAB_STATE_KEY, DEFAULT_MAX_DISPLAYED_FEED_SIZE, SavedFeedState, findLowestVisiblePostTimestamp, alignFeedToPageBoundary, RefreshDisplayedFeedOptions, RefreshDisplayedFeedResult } from './homePageTypes'
 import log from '../utils/logger'
+
+// Persists the initial page of curated posts across component remounts.
+// Used to redisplay the initial page if the user navigates away during lookback.
+let initialPagePosts: CurationFeedViewPost[] | null = null
 
 interface UseFeedPipelineParams {
   agent: BskyAgent | null
@@ -187,6 +192,7 @@ export function useFeedPipeline({
   const prevPageHadUnnumberedRef = useRef(false)
   const resetPendingRef = useRef(false)
   const lookbackInProgressRef = useRef(false)
+  const lookbackPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Sync refs for IntersectionObserver callback (avoids stale closures)
   useEffect(() => {
@@ -265,6 +271,7 @@ export function useFeedPipeline({
     if (!dbInitialized) return
 
     const flushInterval = clientInterval(() => {
+      if (isTabDormant()) return
       flushExpiredParentPosts().catch(err => {
         log.warn('Feed', 'Failed to flush expired parent posts:', err)
       })
@@ -694,6 +701,21 @@ export function useFeedPipeline({
     }
   }, [agent, session, serverCursor, lookupCurationAndFilter])
 
+  // Shared helper: render a set of filtered posts to the feed.
+  // Used by both INITIAL LOAD and navigate-back-during-lookback paths.
+  // Empty deps — only uses imported functions and stable React state setters.
+  const displayInitialPage = useCallback((posts: CurationFeedViewPost[]) => {
+    if (posts.length === 0) return
+    const feedReceivedTime = clientDate()
+    setFeed(posts)
+    setPreviousPageFeed([])
+    const newestTimestamp = getFeedViewPostTimestamp(posts[0], feedReceivedTime).getTime()
+    setNewestDisplayedPostTimestamp(newestTimestamp)
+    const oldestTimestamp = getFeedViewPostTimestamp(posts[posts.length - 1], feedReceivedTime).getTime()
+    setOldestDisplayedPostTimestamp(oldestTimestamp)
+    log.info('Feed', `Displayed ${posts.length} posts, newest=${new Date(newestTimestamp).toLocaleTimeString()}, oldest=${new Date(oldestTimestamp).toLocaleTimeString()}`)
+  }, [])
+
   const loadFeed = useCallback(async (cursor?: string, useCache: boolean = true) => {
     if (!agent || !session || !dbInitialized) return
 
@@ -719,11 +741,42 @@ export function useFeedPipeline({
       let preIdleCacheNewest: number | null = null
 
       if (!summariesCacheIsFresh || forceInitialLoadRef.current) {
+        // Check if a lookback is already in progress (navigate-away-and-back scenario)
+        const lookbackActiveTs = sessionStorage.getItem('websky_lookback_active')
+        const lookbackIsRecent = lookbackActiveTs && (clientNow() - Number(lookbackActiveTs)) < 5 * 60 * 1000
+        if (!forceInitialLoadRef.current && lookbackIsRecent) {
+          // A lookback is actively running — don't clear caches and restart.
+          if (lookbackPollRef.current) {
+            // Another loadFeed() already set up the poll — skip
+            return
+          }
+          // Show loading indicator and poll for lookback completion, then reload.
+          log.info('Feed', 'Lookback in progress — waiting for active lookback to complete')
+          setInitPhase('posts')
+          lookbackPollRef.current = setInterval(() => {
+            const flag = sessionStorage.getItem('websky_lookback_active')
+            if (!flag) {
+              clearInterval(lookbackPollRef.current!)
+              lookbackPollRef.current = null
+              log.info('Feed', 'Lookback completed — reloading feed')
+              setInitPhase(null)
+              loadFeed()
+            }
+          }, 2000)
+          // Redisplay initial page from module-level cache (survives component remount)
+          if (initialPagePosts) {
+            displayInitialPage(initialPagePosts)
+          } else {
+            log.info('Feed', 'No initial page cache available')
+          }
+          return
+        } else {
         forceInitialLoadRef.current = false
         isInitialLoadMode = true
         log.info('Feed', `Mode: INITIAL LOAD - ${summariesCacheIsFresh ? 'forced by Reset Feed' : 'summaries cache stale (< 24h span)'}, clearing feed cache`)
         await clearFeedCache()
         await clearFeedMetadata()
+        }
       } else if (!feedCacheIsFresh) {
         isIdleReturnMode = true
         log.info('Feed', 'Mode: IDLE RETURN - feed cache stale but summaries fresh, clearing feed cache')
@@ -867,16 +920,11 @@ export function useFeedPipeline({
         })
         setFeed(combinedFeed)
       } else {
-        setFeed(filteredPosts)
-        setPreviousPageFeed([])
+        displayInitialPage(filteredPosts)
+        // Persist for redisplay if user navigates away during lookback
+        initialPagePosts = filteredPosts.length > 0 ? filteredPosts : null
         if (filteredPosts.length > 0) {
-          const newestTimestamp = getFeedViewPostTimestamp(filteredPosts[0], feedReceivedTime).getTime()
-          setNewestDisplayedPostTimestamp(newestTimestamp)
-          log.debug('New Posts', `Set newestDisplayedPostTimestamp from displayed posts: ${new Date(newestTimestamp).toISOString()}`)
-
           const oldestDisplayedTimestamp = getFeedViewPostTimestamp(filteredPosts[filteredPosts.length - 1], feedReceivedTime).getTime()
-          setOldestDisplayedPostTimestamp(oldestDisplayedTimestamp)
-          log.debug('Feed', `Set oldestDisplayedPostTimestamp from displayed posts: ${new Date(oldestDisplayedTimestamp).toISOString()} (from ${filteredPosts.length} displayed posts)`)
 
           if (!initialSecondaryEntries) {
             const oldestFetchedTimestamp = curatedFeed.length > 0
@@ -910,6 +958,7 @@ export function useFeedPipeline({
             }
 
             lookbackInProgressRef.current = true
+            sessionStorage.setItem('websky_lookback_active', clientNow().toString())
             setLookingBack(true)
             setLookbackProgress(0)
             setInitPhase('posts')
@@ -959,6 +1008,8 @@ export function useFeedPipeline({
                     await computeStatsInBackground(agent, myUsername, myDid, false)
 
                     await markInitialLookbackCompleted()
+                    sessionStorage.removeItem('websky_lookback_active')
+                    initialPagePosts = null
                     log.info('Curation/Init', 'Initial lookback complete, flag set')
 
                     log.debug('Curation/Init', 'Getting curation statistics...')
@@ -997,6 +1048,7 @@ export function useFeedPipeline({
                     log.debug('Curation/Init', 'Modal displayed')
                   } catch (err) {
                     log.error('Curation/Init', 'Failed to compute stats:', err)
+                    sessionStorage.removeItem('websky_lookback_active')
                     setInitPhase(null)
                     isInitialCurationRef.current = false
                   }
@@ -1004,10 +1056,12 @@ export function useFeedPipeline({
                   try {
                     log.debug('Lookback', 'Non-initial lookback complete, assigning numbers and redisplaying...')
                     await assignAllNumbers()
+                    sessionStorage.removeItem('websky_lookback_active')
                     await refreshDisplayedFeed({ triggerProbe: false, showAllNewPosts: false })
                     setInitialPrefetchDone(true)
                   } catch (err) {
                     log.error('Lookback', 'Post-lookback processing failed:', err)
+                    sessionStorage.removeItem('websky_lookback_active')
                     setInitialPrefetchDone(true)
                   }
                 }
@@ -1035,6 +1089,7 @@ export function useFeedPipeline({
             }).catch((err) => {
               log.error('Lookback', 'Failed:', err)
               lookbackInProgressRef.current = false
+              sessionStorage.removeItem('websky_lookback_active')
               refetchPendingRef.current = false
               setLookingBack(false)
               setLookbackProgress(null)
@@ -1307,7 +1362,7 @@ export function useFeedPipeline({
 
   const refreshDisplayedFeed = useCallback(async (options?: RefreshDisplayedFeedOptions): Promise<RefreshDisplayedFeedResult | null> => {
     if (!agent || !session || !dbInitialized || isLoadingMore || activeTab !== 'curated') {
-      log.debug('Refresh', 'Guard: skipping refresh', { agent: !!agent, session: !!session, dbInitialized, isLoadingMore, activeTab })
+      log.debug('Refresh', `Guard: skipping refresh agent=${!!agent} session=${!!session} dbInit=${dbInitialized} loading=${isLoadingMore} tab=${activeTab}`)
       return null
     }
 
@@ -1479,6 +1534,7 @@ export function useFeedPipeline({
     log.info('Debug', 'resetFeedAndReloadHomePage: Starting...')
     resetPendingRef.current = true
     lookbackInProgressRef.current = false
+    sessionStorage.removeItem('websky_lookback_active')
 
     try {
       sessionStorage.removeItem(getFeedStateKey('curated'))
@@ -1542,6 +1598,7 @@ export function useFeedPipeline({
     log.info('Debug', 'clearRecentAndReloadHomePage: Starting...')
     resetPendingRef.current = true
     lookbackInProgressRef.current = false
+    sessionStorage.removeItem('websky_lookback_active')
 
     try {
       // Calculate lookback boundary
@@ -1600,6 +1657,7 @@ export function useFeedPipeline({
     log.info('Debug', 'recurateAndReloadHomePage: Starting...')
     resetPendingRef.current = true
     lookbackInProgressRef.current = false
+    sessionStorage.removeItem('websky_lookback_active')
 
     try {
       if (!session) {
@@ -1796,6 +1854,7 @@ export function useFeedPipeline({
     let rateLimitLoggedRef = false
 
     const checkForNewPosts = async () => {
+      if (isTabDormant()) return
       if (isRateLimited()) {
         if (!rateLimitLoggedRef) {
           log.verbose('Paged Updates', `Rate limited, pausing probes (${Math.round(getTimeUntilClear())}s remaining)`)
@@ -1948,7 +2007,7 @@ export function useFeedPipeline({
     const interval = clientInterval(checkForNewPosts, 60000)
 
     const handleVisibilityChange = async () => {
-      if (!document.hidden) {
+      if (!document.hidden && !isTabDormant()) {
         log.verbose('Paged Updates', 'Page became visible, triggering immediate probe')
         checkForNewPosts()
       }
@@ -1972,6 +2031,7 @@ export function useFeedPipeline({
     let idleLoggedWhileRateLimited = false
 
     const checkIdleTime = async () => {
+      if (isTabDormant()) return
       if (isRateLimited()) {
         if (!idleLoggedWhileRateLimited) {
           log.verbose('Idle Timer', 'Paused during rate limit')

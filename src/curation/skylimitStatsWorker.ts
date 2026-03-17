@@ -9,6 +9,7 @@ import { refreshFollows } from './skylimitFollows'
 import { scheduleCleanup } from './skylimitCleanup'
 import { getIntervalHoursSync } from './types'
 import { clientInterval, clearClientInterval, clientTimeout, clearClientTimeout } from '../utils/clientClock'
+import { isTabDormant } from '../utils/tabGuard'
 import log from '../utils/logger'
 
 /**
@@ -74,12 +75,14 @@ export function scheduleStatsComputation(
 
     // Schedule periodic runs
     intervalId = clientInterval(() => {
+      if (isTabDormant()) return
       computeStatsInBackground(agent, myUsername, myDid, false)
     }, intervalMs)
 
     // Run once after a short delay to initialize (but don't force follow refresh)
     // This allows initial stats computation without hitting rate limits
     initialTimeout = clientTimeout(() => {
+      if (isTabDormant()) return
       computeStatsInBackground(agent, myUsername, myDid, false)
     }, 5000) // Wait 5 seconds after page load
   }).catch(err => {

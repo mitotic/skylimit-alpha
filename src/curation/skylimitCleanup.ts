@@ -8,6 +8,7 @@ import { getSettings } from './skylimitStore'
 import { DAYS_OF_DATA_DEFAULT } from './types'
 import { FEED_CACHE_RETENTION_DAYS } from './feedCacheCore'
 import { clientNow, clientTimeout, clearClientTimeout } from '../utils/clientClock'
+import { isTabDormant } from '../utils/tabGuard'
 import { cullEditionRegistry } from './editionRegistry'
 import log from '../utils/logger'
 
@@ -57,6 +58,7 @@ export function scheduleCleanup(): void {
 
   // Schedule cleanup after delay (uses client clock for accelerated time)
   cleanupTimeoutId = clientTimeout(() => {
+    if (isTabDormant()) { cleanupTimeoutId = null; return }
     performCleanup().catch(err => {
       log.error('Cleanup', 'Scheduled cleanup failed:', err)
     })

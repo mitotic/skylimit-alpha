@@ -1073,20 +1073,6 @@ Use this only if the app is not working correctly. This cannot be undone.`}
               </label>
 
               <label className="flex items-center space-x-3">
-                <span>Trace users:</span>
-                <input
-                  type="text"
-                  value={settings.traceUsers ?? ''}
-                  onChange={(e) => {
-                    updateSetting('traceUsers', e.target.value)
-                    log.setTraceUsers(e.target.value)
-                  }}
-                  placeholder="handle1, handle2, ..."
-                  className="ml-2 flex-1 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm"
-                />
-              </label>
-
-              <label className="flex items-center space-x-3">
                 <input
                   type="checkbox"
                   checked={settings.showAllPosts}
@@ -1114,6 +1100,31 @@ Use this only if the app is not working correctly. This cannot be undone.`}
                   className="w-5 h-5"
                 />
                 <span>Anonymize usernames (for screenshots)</span>
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <span>Trace users:</span>
+                <input
+                  type="text"
+                  value={settings.traceUsers ?? ''}
+                  onChange={(e) => {
+                    updateSetting('traceUsers', e.target.value)
+                    log.setTraceUsers(e.target.value)
+                  }}
+                  placeholder="handle1, handle2, ..."
+                  className="ml-2 flex-1 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm"
+                />
+              </label>
+
+              <label className="flex items-center space-x-3">
+                <span>Highlight status prefix:</span>
+                <input
+                  type="text"
+                  value={settings.highlightStatusPrefix ?? ''}
+                  onChange={(e) => updateSetting('highlightStatusPrefix', e.target.value)}
+                  placeholder="e.g. priority, regular_hi"
+                  className="ml-2 flex-1 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm"
+                />
               </label>
 
               <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
