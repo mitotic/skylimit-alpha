@@ -23,7 +23,7 @@ function InstallInstructions({ platform }: { platform: Platform }) {
             <li>Tap the menu button (three dots) in the top right corner</li>
             <li>Tap "Add to Home screen" or "Install app"</li>
             <li>Customize the name if desired, then tap "Add"</li>
-            <li>The app icon will appear on your home screen</li>
+            <li>The app icon will appear in your App Drawer</li>
           </ol>
           <p className="pt-2">
             <a

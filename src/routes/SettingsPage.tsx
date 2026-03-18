@@ -10,7 +10,7 @@ import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT, VIEW
 import { parseEditionFile, invalidateEditionsCache, saveEditionLayout } from '../curation/skylimitEditions'
 import { rematchHeldPosts } from '../curation/skylimitEditionMatcher'
 import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
-import { SkylimitSettings, WEEKS_OF_DATA_OPTIONS, WEEKS_OF_DATA_DEFAULT } from '../curation/types'
+import { SkylimitSettings, WEEKS_OF_DATA_OPTIONS, WEEKS_OF_DATA_DEFAULT, CURATION_STATUSES } from '../curation/types'
 import { getBrowserTimezone } from '../utils/timezoneUtils'
 import Button from '../components/Button'
 import { version } from '../../package.json'
@@ -1120,11 +1120,17 @@ Use this only if the app is not working correctly. This cannot be undone.`}
                 <span>Highlight status prefix:</span>
                 <input
                   type="text"
+                  list="curation-status-options"
                   value={settings.highlightStatusPrefix ?? ''}
                   onChange={(e) => updateSetting('highlightStatusPrefix', e.target.value)}
                   placeholder="e.g. priority, regular_hi"
                   className="ml-2 flex-1 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm"
                 />
+                <datalist id="curation-status-options">
+                  {[...CURATION_STATUSES].sort().map((status) => (
+                    <option key={status} value={status} />
+                  ))}
+                </datalist>
               </label>
 
               <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">

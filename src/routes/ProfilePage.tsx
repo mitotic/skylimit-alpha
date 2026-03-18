@@ -249,13 +249,29 @@ export default function ProfilePage() {
       return
     }
 
+    const previousViewer = profile.viewer
     try {
       if (profile.viewer?.following) {
+        // Optimistic update before API call
+        setProfile((prev: any) => prev ? {
+          ...prev,
+          viewer: { ...prev.viewer, following: undefined }
+        } : prev)
         await unfollow(agent, profile.viewer.following)
         await deleteFollow(profile.handle)
         addToast('Unfollowed', 'success')
       } else {
-        await follow(agent, profile.did)
+        // Optimistic update before API call
+        setProfile((prev: any) => prev ? {
+          ...prev,
+          viewer: { ...prev.viewer, following: 'pending' }
+        } : prev)
+        const result = await follow(agent, profile.did)
+        // Update with real URI from server
+        setProfile((prev: any) => prev ? {
+          ...prev,
+          viewer: { ...prev.viewer, following: result.uri }
+        } : prev)
         const priorityPatterns = extractPriorityPatternsFromProfile(profile)
         const timezone = extractTimezone(profile)
         await saveFollow({
@@ -269,9 +285,13 @@ export default function ProfilePage() {
         })
         addToast('Following', 'success')
       }
-      await loadProfile()
       loadCurationData()
     } catch (error) {
+      // Revert optimistic update on failure
+      setProfile((prev: any) => prev ? {
+        ...prev,
+        viewer: previousViewer
+      } : prev)
       addToast(error instanceof Error ? error.message : 'Failed to update follow status', 'error')
     }
   }

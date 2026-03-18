@@ -1082,8 +1082,8 @@ export default function HomePage() {
                 <li>You can see posting and curation statistics for all those you follow in <em>Settings/Following</em>.</li>
               </ul>
               <p className="text-red-600 dark:text-red-400 mt-2">
-                Wait a minute or two for initialization to complete.
-                {isReadOnlyMode() && ' Initially, Skylimit runs in read-only mode that will not modify your Bluesky state/configuration. Use Settings to disable this mode.'}
+                Initializing curation by fetching recent posts will take a minute or two; stay on the home page until it completes.
+                {isReadOnlyMode() && ' Skylimit is currently in read-only mode that will not modify your Bluesky state/configuration. Use Settings to disable this mode.'}
               </p>
             </div>
             <button
