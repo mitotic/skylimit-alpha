@@ -17,7 +17,7 @@ import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } fro
 import { getBrowserTimezone, timezonesAreDifferent } from '../utils/timezoneUtils'
 import { fetchToSecondaryFeedCache, transferSecondaryToPrimary, getCachedFeedAfterPosts } from '../curation/skylimitFeedCache'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
-import { CurationFeedViewPost, isStatusShow } from '../curation/types'
+import { CurationFeedViewPost, isStatusShow, SecondaryEntry } from '../curation/types'
 import { countUnviewedOlderThan, countUnviewedYesterdayOlderThan, getUnviewedPostsInfo, getUnviewedPostsYesterdayInfo, onUnviewedChange } from '../curation/skylimitUnviewedTracker'
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
@@ -30,7 +30,7 @@ import { usePostInteractions } from '../hooks/usePostInteractions'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { usePullToRefresh } from '../hooks/usePullToRefresh'
 import { useViewTracking } from '../hooks/useViewTracking'
-import { useFeedPipeline } from '../hooks/useFeedPipeline'
+import { useFeedPipeline, getRetainedSecondaryCache, setRetainedSecondaryCache, clearRetainedSecondaryCache, isRetainedCacheValid } from '../hooks/useFeedPipeline'
 import { checkForAppUpdate } from '../utils/versionCheck'
 import log from '../utils/logger'
 
@@ -326,33 +326,79 @@ export default function HomePage() {
       setSyncProgress(0)
 
       try {
-        const fetchResult = await fetchToSecondaryFeedCache(
-          agent,
-          session.handle,
-          session.did,
-          'next_page',
-          {
-            pageLength,
-            onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),
-          }
-        )
-        log.debug('New Posts', `SINGLE PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
+        // Check for valid retained secondary cache
+        const cached = getRetainedSecondaryCache()
+        const cacheValid = await isRetainedCacheValid()
 
-        setSyncProgress(80)
-        const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'page', effectivePageLength)
+        let allEntries: SecondaryEntry[]
+        let newestTimestamp: number | null
+        let usedCache: boolean
+
+        if (cacheValid && cached) {
+          // Use retained secondary cache — skip network fetch
+          allEntries = cached.entries
+          newestTimestamp = cached.newestTimestamp
+          usedCache = true
+          const cacheAge = clientNow() - cached.fetchedAt
+          log.debug('New Posts', `SINGLE PAGE: Using retained cache (${allEntries.length} entries, age=${Math.round(cacheAge / 1000)}s)`)
+          setSyncProgress(80)
+        } else {
+          // Clear stale/insufficient cache
+          if (cached) {
+            const cacheAge = clientNow() - cached.fetchedAt
+            const probeCacheTimeMinutes = settings?.probeCacheTime ?? 10
+            log.debug('New Posts', `SINGLE PAGE: Cache invalid (age=${Math.round(cacheAge / 1000)}s, probeCacheTime=${probeCacheTimeMinutes}min)`)
+            clearRetainedSecondaryCache()
+          }
+          // Fetch from server
+          const fetchResult = await fetchToSecondaryFeedCache(
+            agent,
+            session.handle,
+            session.did,
+            'next_page',
+            {
+              pageLength,
+              onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),
+            }
+          )
+          log.debug('New Posts', `SINGLE PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
+          allEntries = fetchResult.entries
+          newestTimestamp = fetchResult.newestTimestamp
+          usedCache = false
+          setSyncProgress(80)
+        }
+
+        const transferResult = await transferSecondaryToPrimary(allEntries, 'page', effectivePageLength)
         setSyncProgress(100)
         log.debug('New Posts', `SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
-          `${transferResult.displayableCount} displayable`)
+          `${transferResult.displayableCount} displayable${usedCache ? ' (from cache)' : ''}`)
+
+        // Compute remaining entries not transferred.
+        // transferSecondaryToPrimary sorts oldest-first and processes sequentially,
+        // so transferred entries are the oldest postsTransferred entries.
+        const sorted = [...allEntries].sort((a, b) => a.entry.postTimestamp - b.entry.postTimestamp)
+        const remainingEntries = sorted.slice(transferResult.postsTransferred)
 
         // Count remaining displayable posts beyond what was transferred
-        // The fetch (cursor-paginated) finds more posts than the probe (single 100-post batch),
-        // so we use the fetch result to accurately set button state for remaining posts.
-        const totalDisplayable = fetchResult.entries.filter(
+        const totalDisplayable = allEntries.filter(
           e => isStatusShow(e.summary.curation_status)
         ).length
         const remaining = totalDisplayable - (transferResult.displayableCount || 0)
-        log.debug('New Posts', `SINGLE PAGE: ${totalDisplayable} total displayable in fetch, ` +
+        log.debug('New Posts', `SINGLE PAGE: ${totalDisplayable} total displayable, ` +
           `${transferResult.displayableCount} transferred, ${remaining} remaining`)
+
+        // Retain secondary cache if enough displayable posts remain for another page
+        const probeCacheTimeMinutes = settings?.probeCacheTime ?? 10
+        if (remaining >= pageLength && probeCacheTimeMinutes > 0 && remainingEntries.length > 0) {
+          setRetainedSecondaryCache({
+            entries: remainingEntries,
+            fetchedAt: usedCache ? cached!.fetchedAt : clientNow(),
+            newestTimestamp,
+          })
+          log.debug('New Posts', `SINGLE PAGE: Retained ${remainingEntries.length} entries in secondary cache (${remaining} displayable)`)
+        } else {
+          clearRetainedSecondaryCache()
+        }
 
         setNewPostsCount(remaining > 0 ? remaining : 0)
         setShowNewPostsButton(false)
@@ -360,18 +406,17 @@ export default function HomePage() {
         setFeedTopTrimmed(null)
 
         // Fetch replaces accumulated probe counts (fetch is authoritative)
-        const totalRaw = fetchResult.entries.length
-        const remainingRaw = totalRaw - (transferResult.postsTransferred || 0)
+        const remainingRaw = remainingEntries.length
         unprocessedShowCountRef.current = remaining > 0 ? remaining : 0
         unprocessedRawCountRef.current = remainingRaw > 0 ? remainingRaw : 0
-        // Update probe boundary to include fetch's newest timestamp
-        if (fetchResult.newestTimestamp) {
+        // Update probe boundary to include newest timestamp
+        if (newestTimestamp) {
           probeBoundaryTimestampRef.current = Math.max(
             probeBoundaryTimestampRef.current ?? 0,
-            fetchResult.newestTimestamp
+            newestTimestamp
           )
         }
-        // Reset gap since fetch is authoritative
+        // Reset gap since fetch/cache is authoritative
         probeHasGapRef.current = false
 
         if (remaining > 0) {
@@ -400,9 +445,9 @@ export default function HomePage() {
           unprocessedShowCountRef.current = 0
         }
 
-        if (fetchResult.newestTimestamp) {
+        if (newestTimestamp) {
           const result = await refreshDisplayedFeed({
-            newestTimestamp: fetchResult.newestTimestamp,
+            newestTimestamp: newestTimestamp,
             triggerProbe: false,
             showAllNewPosts: false,
           })
@@ -519,6 +564,7 @@ export default function HomePage() {
         unprocessedRawCountRef.current = 0
         unprocessedShowCountRef.current = 0
         probeHasGapRef.current = false
+        clearRetainedSecondaryCache()
 
         if (fetchResult.newestTimestamp) {
           const result = await refreshDisplayedFeed({

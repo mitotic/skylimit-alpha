@@ -940,7 +940,7 @@ Use this only if the app is not working correctly. This cannot be undone.`}
                   type="number"
                   min="5"
                   max="120"
-                  value={settings.pagedUpdatesFullPageWaitMinutes ?? 30}
+                  value={settings.pagedUpdatesFullPageWaitMinutes ?? PAGED_UPDATES_DEFAULTS.fullPageWaitMinutes}
                   onChange={(e) => {
                     const value = parseInt(e.target.value, 10)
                     if (!isNaN(value) && value >= 5 && value <= 120) {
@@ -1155,6 +1155,28 @@ Use this only if the app is not working correctly. This cannot be undone.`}
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     Time in minutes. If returning to home page within this interval, cached feed will be redisplayed instead of reloading from server.
+                  </p>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-2">
+                    Probe Cache Time (minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="60"
+                    value={settings.probeCacheTime ?? 10}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value, 10)
+                      if (!isNaN(value) && value >= 0 && value <= 60) {
+                        updateSetting('probeCacheTime', value)
+                      }
+                    }}
+                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Retain fetched posts in memory for faster Next Page. Set to 0 to disable.
                   </p>
                 </div>
 

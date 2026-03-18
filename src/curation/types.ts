@@ -390,7 +390,7 @@ export interface SkylimitSettings {
   infiniteScrollingOption?: boolean // enable infinite scrolling, default false
   // Paged fresh updates settings
   pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 2
-  pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 30
+  pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 10
   // Repost display interval settings
   repostDisplayIntervalHours?: number // hide reposts if original/repost shown within this interval (hours), default 0 (disabled)
   // Lookback settings
@@ -408,6 +408,7 @@ export interface SkylimitSettings {
   consoleLogLevel?: number // Console log verbosity: 0=errors, 1=warnings, 2=milestones, 3=debug, 4=verbose. Default 2
   traceUsers?: string // Comma-separated list of handles to trace through the processing pipeline
   highlightStatusPrefix?: string // Highlight posts whose curation_status starts with this prefix (red outline)
+  probeCacheTime?: number // Minutes to retain secondary cache in memory for faster Next Page (default: 10, 0 to disable)
   timezone?: string // Stored timezone for consistent day boundaries (e.g., "America/New_York")
   lastBrowserTimezone?: string // Browser timezone when user last saved/confirmed timezone setting
   showEditionsInFeed?: boolean // Show periodic editions in home feed, default false

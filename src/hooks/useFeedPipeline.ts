@@ -25,6 +25,31 @@ import log from '../utils/logger'
 // Used to redisplay the initial page if the user navigates away during lookback.
 let initialPagePosts: CurationFeedViewPost[] | null = null
 
+// Persists retained secondary cache across component remounts.
+// Used for faster "Next Page" — avoids re-fetching when cache is fresh.
+let retainedSecondaryCache: {
+  entries: SecondaryEntry[]
+  fetchedAt: number
+  newestTimestamp: number | null
+} | null = null
+
+export function getRetainedSecondaryCache() { return retainedSecondaryCache }
+export function setRetainedSecondaryCache(cache: typeof retainedSecondaryCache) { retainedSecondaryCache = cache }
+export function clearRetainedSecondaryCache() { retainedSecondaryCache = null }
+
+/** Check if the retained secondary cache is valid (fresh and has at least a full page of displayable posts). */
+export async function isRetainedCacheValid(): Promise<boolean> {
+  const cached = retainedSecondaryCache
+  if (!cached) return false
+  const settings = await getSettings()
+  const probeCacheTimeMinutes = settings?.probeCacheTime ?? 10
+  const pageLength = settings?.feedPageLength || 25
+  if (probeCacheTimeMinutes <= 0) return false
+  const cacheAge = clientNow() - cached.fetchedAt
+  return cacheAge < probeCacheTimeMinutes * 60 * 1000
+    && cached.entries.filter(e => isStatusShow(e.summary.curation_status)).length >= pageLength
+}
+
 interface UseFeedPipelineParams {
   agent: BskyAgent | null
   session: { did: string; handle: string } | null
@@ -1511,6 +1536,7 @@ export function useFeedPipeline({
   // Clear all time-variant data and logout
   const clearCacheAndReloadHomePage = useCallback(async () => {
     log.info('Debug', 'clearCacheAndReloadHomePage: Starting...')
+    retainedSecondaryCache = null
     resetPendingRef.current = true
     try {
       sessionStorage.removeItem(getFeedStateKey('curated'))
@@ -1532,6 +1558,7 @@ export function useFeedPipeline({
   // Reset feed only (preserve summaries)
   const resetFeedAndReloadHomePage = useCallback(async () => {
     log.info('Debug', 'resetFeedAndReloadHomePage: Starting...')
+    retainedSecondaryCache = null
     resetPendingRef.current = true
     lookbackInProgressRef.current = false
     sessionStorage.removeItem('websky_lookback_active')
@@ -1596,6 +1623,7 @@ export function useFeedPipeline({
   // Clear recent data and reload (preserve old summaries, idle return behavior)
   const clearRecentAndReloadHomePage = useCallback(async () => {
     log.info('Debug', 'clearRecentAndReloadHomePage: Starting...')
+    retainedSecondaryCache = null
     resetPendingRef.current = true
     lookbackInProgressRef.current = false
     sessionStorage.removeItem('websky_lookback_active')
@@ -1655,6 +1683,7 @@ export function useFeedPipeline({
   // Re-curate from cache (no server re-fetch)
   const recurateAndReloadHomePage = useCallback(async () => {
     log.info('Debug', 'recurateAndReloadHomePage: Starting...')
+    retainedSecondaryCache = null
     resetPendingRef.current = true
     lookbackInProgressRef.current = false
     sessionStorage.removeItem('websky_lookback_active')
@@ -1855,6 +1884,14 @@ export function useFeedPipeline({
 
     const checkForNewPosts = async () => {
       if (isTabDormant()) return
+
+      // Skip probe if retained secondary cache is valid (fresh and has enough posts)
+      if (await isRetainedCacheValid()) {
+        const cached = retainedSecondaryCache!
+        log.verbose('Paged Updates', `Skipping probe — valid retained cache (age=${Math.round((clientNow() - cached.fetchedAt) / 1000)}s)`)
+        return
+      }
+
       if (isRateLimited()) {
         if (!rateLimitLoggedRef) {
           log.verbose('Paged Updates', `Rate limited, pausing probes (${Math.round(getTimeUntilClear())}s remaining)`)
