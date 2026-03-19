@@ -27,6 +27,9 @@ dist-ssr
 *.sw?
 .#*
 
+# Bug report responses from Claude Code
+bug-report-responses/
+
 # Environment variables
 .env
 .env.local

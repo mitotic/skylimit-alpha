@@ -16,6 +16,7 @@ import Modal from '../components/Modal'
 import { getSettings, updateSettings, FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT } from '../curation/skylimitStore'
 import { getBrowserTimezone, timezonesAreDifferent } from '../utils/timezoneUtils'
 import { fetchToSecondaryFeedCache, transferSecondaryToPrimary, getCachedFeedAfterPosts } from '../curation/skylimitFeedCache'
+import { PAGED_UPDATES_DEFAULTS } from '../curation/pagedUpdates'
 import { getPostUniqueId, getFeedViewPostTimestamp } from '../curation/skylimitGeneral'
 import { CurationFeedViewPost, isStatusShow, SecondaryEntry } from '../curation/types'
 import { countUnviewedOlderThan, countUnviewedYesterdayOlderThan, getUnviewedPostsInfo, getUnviewedPostsYesterdayInfo, onUnviewedChange } from '../curation/skylimitUnviewedTracker'
@@ -346,8 +347,8 @@ export default function HomePage() {
           // Clear stale/insufficient cache
           if (cached) {
             const cacheAge = clientNow() - cached.fetchedAt
-            const probeCacheTimeMinutes = settings?.probeCacheTime ?? 10
-            log.debug('New Posts', `SINGLE PAGE: Cache invalid (age=${Math.round(cacheAge / 1000)}s, probeCacheTime=${probeCacheTimeMinutes}min)`)
+            const fullPageWaitMinutes = settings?.pagedUpdatesFullPageWaitMinutes ?? PAGED_UPDATES_DEFAULTS.fullPageWaitMinutes
+            log.debug('New Posts', `SINGLE PAGE: Cache invalid (age=${Math.round(cacheAge / 1000)}s, fullPageWait=${fullPageWaitMinutes}min)`)
             clearRetainedSecondaryCache()
           }
           // Fetch from server
@@ -388,8 +389,8 @@ export default function HomePage() {
           `${transferResult.displayableCount} transferred, ${remaining} remaining`)
 
         // Retain secondary cache if enough displayable posts remain for another page
-        const probeCacheTimeMinutes = settings?.probeCacheTime ?? 10
-        if (remaining >= pageLength && probeCacheTimeMinutes > 0 && remainingEntries.length > 0) {
+        const fullPageWaitMinutes = settings?.pagedUpdatesFullPageWaitMinutes ?? PAGED_UPDATES_DEFAULTS.fullPageWaitMinutes
+        if (remaining >= pageLength && fullPageWaitMinutes > 0 && remainingEntries.length > 0) {
           setRetainedSecondaryCache({
             entries: remainingEntries,
             fetchedAt: usedCache ? cached!.fetchedAt : clientNow(),

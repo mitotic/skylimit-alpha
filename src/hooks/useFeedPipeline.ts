@@ -41,13 +41,10 @@ export function clearRetainedSecondaryCache() { retainedSecondaryCache = null }
 export async function isRetainedCacheValid(): Promise<boolean> {
   const cached = retainedSecondaryCache
   if (!cached) return false
-  const settings = await getSettings()
-  const probeCacheTimeMinutes = settings?.probeCacheTime ?? 10
-  const pageLength = settings?.feedPageLength || 25
-  if (probeCacheTimeMinutes <= 0) return false
+  const pagedSettings = await getPagedUpdatesSettings()
   const cacheAge = clientNow() - cached.fetchedAt
-  return cacheAge < probeCacheTimeMinutes * 60 * 1000
-    && cached.entries.filter(e => isStatusShow(e.summary.curation_status)).length >= pageLength
+  return cacheAge < pagedSettings.fullPageWaitMinutes * 60 * 1000
+    && cached.entries.filter(e => isStatusShow(e.summary.curation_status)).length >= pagedSettings.pageSize
 }
 
 interface UseFeedPipelineParams {
@@ -843,8 +840,14 @@ export function useFeedPipeline({
         const [, currentProbs] = await getFilter() || [null, null]
         const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
         const pagedSettings = await getPagedUpdatesSettings()
-        fetchLimit = calculatePageRaw(pageLength, currentFilterFrac, pagedSettings.varFactor)
-        log.debug('Feed', `Using pageRaw=${fetchLimit} (filterFrac=${currentFilterFrac.toFixed(2)}, pageLength=${pageLength})`)
+        if (isIdleReturnMode) {
+          // After long idle, fetch the API maximum to ensure enough displayable posts
+          // survive curation filtering. The probe uses 3x pageLength for the same reason.
+          fetchLimit = 100
+        } else {
+          fetchLimit = calculatePageRaw(pageLength, currentFilterFrac, pagedSettings.varFactor)
+        }
+        log.debug('Feed', `Using pageRaw=${fetchLimit} (${isIdleReturnMode ? 'idle return max' : `filterFrac=${currentFilterFrac.toFixed(2)}`}, pageLength=${pageLength})`)
       }
 
       const { feed: newFeed, cursor: newCursor } = await getHomeFeed(agent, {
@@ -1888,7 +1891,18 @@ export function useFeedPipeline({
       // Skip probe if retained secondary cache is valid (fresh and has enough posts)
       if (await isRetainedCacheValid()) {
         const cached = retainedSecondaryCache!
-        log.verbose('Paged Updates', `Skipping probe — valid retained cache (age=${Math.round((clientNow() - cached.fetchedAt) / 1000)}s)`)
+        const cacheSettings = await getSettings()
+        const cachePageLength = cacheSettings?.feedPageLength || 25
+        const remainingDisplayable = cached.entries.filter(e => isStatusShow(e.summary.curation_status)).length
+        // Ensure button state reflects cached posts (may have been reset by effect re-run)
+        setNextPageReady(true)
+        setPartialPageCount(remainingDisplayable)
+        setNewPostsCount(remainingDisplayable)
+        if (remainingDisplayable >= cachePageLength) {
+          setMultiPageCount(remainingDisplayable)
+        }
+        setIdleTimerTriggered(true)
+        log.verbose('Paged Updates', `Skipping probe — valid retained cache (age=${Math.round((clientNow() - cached.fetchedAt) / 1000)}s, ${remainingDisplayable} displayable)`)
         return
       }
 

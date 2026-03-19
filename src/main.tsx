@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { SessionProvider } from './auth/SessionContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import './utils/logBuffer' // Start capturing console output early for bug reports
 import './styles/index.css'
 import log from './utils/logger'
 

@@ -18,6 +18,7 @@ import log from '../utils/logger'
 import SkylimitStatistics from '../components/SkylimitStatistics'
 import { getPostSummariesCacheStats, PostSummariesCacheStats, clearSkylimitSettings, resetEverything, getPostSummaryTimestamps, getPostSummariesInRange, clearAllTimeVariantDataAndLogout, getAllFollows, getStorageUsage, formatBytes, type StorageUsage } from '../curation/skylimitCache'
 import ConfirmModal from '../components/ConfirmModal'
+import BugReportModal from '../components/BugReportModal'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import EditionLayoutEditor from '../components/EditionLayoutEditor'
 import { getFeedCacheStats, FeedCacheStats, getFeedCacheTimestamps } from '../curation/skylimitFeedCache'
@@ -159,6 +160,7 @@ export default function SettingsPage() {
   const [showResetDataModal, setShowResetDataModal] = useState(false)
   const [isResettingData, setIsResettingData] = useState(false)
   const [showClearSettingsModal, setShowClearSettingsModal] = useState(false)
+  const [showBugReportModal, setShowBugReportModal] = useState(false)
   const [isClearingSettings, setIsClearingSettings] = useState(false)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
@@ -759,6 +761,15 @@ export default function SettingsPage() {
         <Button
           type="button"
           variant="secondary"
+          onClick={() => setShowClearRecentModal(true)}
+          disabled={isClearingRecent}
+          className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+        >
+          Refetch recent posts
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
           onClick={() => setShowClearSettingsModal(true)}
           disabled={isClearingSettings}
           className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
@@ -806,6 +817,23 @@ Use this only if the app is not working correctly. This cannot be undone.`}
         cancelText="Cancel"
         isDangerous={true}
         isLoading={isResettingAll}
+      />
+
+      <div className="card space-y-4">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setShowBugReportModal(true)}
+          className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full"
+        >
+          Report a bug
+        </Button>
+      </div>
+      <BugReportModal
+        isOpen={showBugReportModal}
+        onClose={() => setShowBugReportModal(false)}
+        initialLogLevel={settings?.consoleLogLevel ?? 2}
+        onSubmitSuccess={() => addToast('Bug report submitted to Claude Code', 'success')}
       />
 
       <div className="card space-y-4">
@@ -1160,28 +1188,6 @@ Use this only if the app is not working correctly. This cannot be undone.`}
 
                 <div className="mb-4">
                   <label className="block text-sm font-medium mb-2">
-                    Probe Cache Time (minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="60"
-                    value={settings.probeCacheTime ?? 10}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value, 10)
-                      if (!isNaN(value) && value >= 0 && value <= 60) {
-                        updateSetting('probeCacheTime', value)
-                      }
-                    }}
-                    className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                  />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Retain fetched posts in memory for faster Next Page. Set to 0 to disable.
-                  </p>
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium mb-2">
                     Max Displayed Feed Size
                   </label>
                   <input
@@ -1344,15 +1350,6 @@ Use this only if the app is not working correctly. This cannot be undone.`}
             className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
           >
             Re-curate recent posts
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setShowClearRecentModal(true)}
-            disabled={isClearingRecent}
-            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-          >
-            Refetch recent posts
           </Button>
         </div>
 

@@ -34,7 +34,6 @@ const DEFAULT_SETTINGS: SkylimitSettings = {
   initialLookbackDays: 1, // days to look back on initial load
   refillLookbackDays: 1, // days to look back for refill fetches
   popAmp: 1, // popularity amplifier: 1-5, default 1 (disabled)
-  probeCacheTime: 10, // minutes to retain secondary cache for faster Next Page (0 to disable)
 }
 
 /**
