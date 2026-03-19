@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSession } from '../auth/SessionContext'
 import { getUnreadCount } from '../api/notifications'
 import { getUnreadChatCount } from '../api/chat'
@@ -9,7 +9,8 @@ import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import log from '../utils/logger'
 import ConfirmModal from './ConfirmModal'
-import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, ChatIcon, PersonIcon, GearIcon } from './NavIcons'
+import BugReportModal from './BugReportModal'
+import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, ChatIcon, PersonIcon, GearIcon, BugIcon } from './NavIcons'
 import { clientInterval, clearClientInterval, clientTimeout } from '../utils/clientClock'
 
 export default function Navigation() {
@@ -20,6 +21,9 @@ export default function Navigation() {
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [showDebugMenu, setShowDebugMenu] = useState(false)
+  const [showBugReportModal, setShowBugReportModal] = useState(false)
+  const debugMenuRef = useRef<HTMLDivElement>(null)
 
   const [clickToBlueSky, setClickToBlueSky] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
@@ -97,6 +101,18 @@ export default function Navigation() {
   useEffect(() => {
     getSetting('debugMode').then(v => setDebugMode(!!v))
   }, [location.pathname])
+
+  // Close debug menu on click outside
+  useEffect(() => {
+    if (!showDebugMenu) return
+    const handleClick = (e: MouseEvent) => {
+      if (debugMenuRef.current && !debugMenuRef.current.contains(e.target as Node)) {
+        setShowDebugMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showDebugMenu])
 
   const navItems = [
     { path: '/', label: 'Home', icon: 'home' as const },
@@ -258,33 +274,60 @@ export default function Navigation() {
             <span className="hidden md:inline font-medium">Settings</span>
           </Link>
 
-          {debugMode && getNonStandardServerName() && (
-            <button
-              onClick={() => setShowResetAllModal(true)}
-              className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            >
-              <span className="text-xl">⎋</span>
-              <span className="hidden md:inline font-medium">Reset all</span>
-            </button>
+          {debugMode && (
+            <div ref={debugMenuRef} className="relative">
+              <button
+                onClick={() => setShowDebugMenu(!showDebugMenu)}
+                className="flex items-center gap-3 px-4 py-3 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                <BugIcon />
+                <span className="hidden md:inline font-medium">Debug</span>
+              </button>
+              {showDebugMenu && (
+                <div className="absolute bottom-full left-0 mb-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 min-w-[160px]">
+                  <button
+                    onClick={() => { setShowBugReportModal(true); setShowDebugMenu(false) }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-t-lg transition-colors"
+                  >
+                    Report a bug
+                  </button>
+                  {getNonStandardServerName() && (
+                    <button
+                      onClick={() => { setShowResetAllModal(true); setShowDebugMenu(false) }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-b-lg transition-colors"
+                    >
+                      Reset ALL
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </>
       )}
 
-      {/* Reset All Confirmation Modal */}
-      {debugMode && getNonStandardServerName() && (
-        <ConfirmModal
-          isOpen={showResetAllModal}
-          onClose={() => setShowResetAllModal(false)}
-          onConfirm={handleResetAll}
-          title="Reset All Data"
-          message={`WARNING: This will completely wipe all Websky data — settings, caches, and login.
+      {/* Debug Modals */}
+      {debugMode && (
+        <>
+          <ConfirmModal
+            isOpen={showResetAllModal}
+            onClose={() => setShowResetAllModal(false)}
+            onConfirm={handleResetAll}
+            title="Reset All Data"
+            message={`WARNING: This will completely wipe all Websky data — settings, caches, and login.
 
 Use this only if the app is not working correctly. This cannot be undone.`}
-          confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
-          cancelText="Cancel"
-          isDangerous={true}
-          isLoading={isResettingAll}
-        />
+            confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
+            cancelText="Cancel"
+            isDangerous={true}
+            isLoading={isResettingAll}
+          />
+          <BugReportModal
+            isOpen={showBugReportModal}
+            onClose={() => setShowBugReportModal(false)}
+            initialLogLevel={2}
+          />
+        </>
       )}
     </div>
   )

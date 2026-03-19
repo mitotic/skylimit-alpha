@@ -8,7 +8,8 @@ import { getNonStandardServerName } from '../api/atproto-client'
 import { resetEverything } from '../curation/skylimitCache'
 import { getSetting } from '../curation/skylimitStore'
 import ConfirmModal from './ConfirmModal'
-import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, ChatIcon, PersonIcon, GearIcon } from './NavIcons'
+import BugReportModal from './BugReportModal'
+import { HomeIcon, SearchIcon, BookmarkIcon, BellIcon, ChatIcon, PersonIcon, GearIcon, BugIcon } from './NavIcons'
 import log from '../utils/logger'
 
 export default function BurgerMenu() {
@@ -20,9 +21,12 @@ export default function BurgerMenu() {
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [showResetAllModal, setShowResetAllModal] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
+  const [showDebugMenu, setShowDebugMenu] = useState(false)
+  const [showBugReportModal, setShowBugReportModal] = useState(false)
 
   const [debugMode, setDebugMode] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const debugMenuRef = useRef<HTMLDivElement>(null)
 
   // Check if a nav item is active - compare pathname only (ignore query params)
   const isActive = (path: string) => {
@@ -74,6 +78,18 @@ export default function BurgerMenu() {
   useEffect(() => {
     getSetting('debugMode').then(v => setDebugMode(!!v))
   }, [location.pathname])
+
+  // Close debug menu on click outside
+  useEffect(() => {
+    if (!showDebugMenu) return
+    const handleClick = (e: MouseEvent) => {
+      if (debugMenuRef.current && !debugMenuRef.current.contains(e.target as Node)) {
+        setShowDebugMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showDebugMenu])
 
   const navItems = [
     { path: '/', label: 'Home', icon: <HomeIcon /> },
@@ -175,14 +191,34 @@ export default function BurgerMenu() {
                     <span className="font-medium">Settings</span>
                   </Link>
 
-                  {debugMode && getNonStandardServerName() && (
-                    <button
-                      onClick={() => setShowResetAllModal(true)}
-                      className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                    >
-                      <span className="text-xl">⎋</span>
-                      <span className="font-medium">Reset all</span>
-                    </button>
+                  {debugMode && (
+                    <div ref={debugMenuRef} className="relative">
+                      <button
+                        onClick={() => setShowDebugMenu(!showDebugMenu)}
+                        className="flex items-center gap-3 px-4 py-3 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors w-full"
+                      >
+                        <BugIcon />
+                        <span className="font-medium">Debug</span>
+                      </button>
+                      {showDebugMenu && (
+                        <div className="ml-8 border-l-2 border-gray-200 dark:border-gray-700">
+                          <button
+                            onClick={() => { setShowBugReportModal(true); setShowDebugMenu(false); setIsOpen(false) }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                          >
+                            Report a bug
+                          </button>
+                          {getNonStandardServerName() && (
+                            <button
+                              onClick={() => { setShowResetAllModal(true); setShowDebugMenu(false); setIsOpen(false) }}
+                              className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                            >
+                              Reset ALL
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </>
               )}
@@ -191,27 +227,28 @@ export default function BurgerMenu() {
         </>
       )}
 
-      {/* Reset All Confirmation Modal */}
-      {debugMode && getNonStandardServerName() && (
-        <ConfirmModal
-          isOpen={showResetAllModal}
-          onClose={() => setShowResetAllModal(false)}
-          onConfirm={handleResetAll}
-          title="Reset All Data"
-          message={`WARNING: This will completely wipe all Websky data:
-• All cached posts and summaries
-• All Skylimit settings
-• Follow list data
-• Login session (you will be logged out)
+      {/* Debug Modals */}
+      {debugMode && (
+        <>
+          <ConfirmModal
+            isOpen={showResetAllModal}
+            onClose={() => setShowResetAllModal(false)}
+            onConfirm={handleResetAll}
+            title="Reset All Data"
+            message={`WARNING: This will completely wipe all Websky data — settings, caches, and login.
 
-This is a complete reset to factory state. Use this only if the app is not working correctly.
-
-This cannot be undone.`}
-          confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
-          cancelText="Cancel"
-          isDangerous={true}
-          isLoading={isResettingAll}
-        />
+Use this only if the app is not working correctly. This cannot be undone.`}
+            confirmText={isResettingAll ? 'Resetting...' : 'Reset Everything'}
+            cancelText="Cancel"
+            isDangerous={true}
+            isLoading={isResettingAll}
+          />
+          <BugReportModal
+            isOpen={showBugReportModal}
+            onClose={() => setShowBugReportModal(false)}
+            initialLogLevel={2}
+          />
+        </>
       )}
     </>
   )

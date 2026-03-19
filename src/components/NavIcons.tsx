@@ -76,6 +76,29 @@ export function ChatIcon({ className = 'w-6 h-6' }: IconProps) {
   )
 }
 
+export function BugIcon({ className = 'w-6 h-6' }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      {/* Antennae */}
+      <path d="M8 2l2 4" />
+      <path d="M16 2l-2 4" />
+      {/* Head */}
+      <circle cx="12" cy="8" r="2" />
+      {/* Body */}
+      <path d="M9 10h6a3 3 0 013 3v4a5 5 0 01-10 0v-4a3 3 0 013-3z" />
+      {/* Legs */}
+      <path d="M5 11l3 2" />
+      <path d="M19 11l-3 2" />
+      <path d="M4 16h4" />
+      <path d="M16 16h4" />
+      <path d="M5 21l3-2" />
+      <path d="M19 21l-3-2" />
+      {/* Body line */}
+      <line x1="12" y1="10" x2="12" y2="22" />
+    </svg>
+  )
+}
+
 export function GearIcon({ className = 'w-6 h-6' }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
