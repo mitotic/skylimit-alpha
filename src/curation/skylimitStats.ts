@@ -805,7 +805,7 @@ function computeUserProbabilities(
 
     // Compute medianPop for popularity weighting
     // Use popTotal (sum of bin counts) — only posts with likeCount defined are binned
-    if (popAmp <= 1 || userEntry.regular_prob >= 1 || !accum.popBins) {
+    if (popAmp <= 1 || !accum.popBins) {
       userEntry.medianPop = 0
     } else {
       const popTotal = accum.popBins.reduce((sum, c) => sum + c, 0)

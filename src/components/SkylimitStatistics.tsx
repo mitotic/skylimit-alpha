@@ -792,8 +792,8 @@ export default function SkylimitStatistics() {
                         return (
                           <div className="mt-1">
                             <div className="font-medium">Post curation statistics (daily average)</div>
-                            <div>Priority: {daily('priority_show') + daily('priority_drop')} total / {daily('priority_show')} show</div>
-                            <div>Regular: {daily('regular_show') + daily('regular_drop')} total / {daily('regular_show')} show</div>
+                            <div>Priority: {daily('priority_always_show') + daily('priority_show') + daily('priority_drop')} total / {daily('priority_always_show') + daily('priority_show')} show</div>
+                            <div>Regular: {daily('regular_always_show') + daily('regular_show') + daily('regular_drop')} total / {daily('regular_always_show') + daily('regular_show')} show</div>
                             <div>Regular (hiPop): {daily('regular_hi_show') + daily('regular_hi_drop')} total / {daily('regular_hi_show')} show</div>
                             <div>Regular (loPop): {daily('regular_lo_show') + daily('regular_lo_drop')} total / {daily('regular_lo_show')} show</div>
                             <div>Edited: {stats.edited_daily?.toFixed(0) ?? 0} total / {stats.edited_hold_daily?.toFixed(0) ?? 0} hold</div>

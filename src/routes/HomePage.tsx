@@ -23,6 +23,8 @@ import { countUnviewedOlderThan, countUnviewedYesterdayOlderThan, getUnviewedPos
 import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import InstallHelp from '../components/InstallHelp'
+import PinnedPostBanner from '../components/PinnedPostBanner'
+import HelpMessage from '../components/HelpMessage'
 import { clientNow, clientDate } from '../utils/clientClock'
 import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, FAST_FORWARD_CHUNK_SIZE, SavedFeedState, findLowestVisiblePostTimestamp } from '../hooks/homePageTypes'
 import { isNewestEditionUnviewed } from '../curation/editionRegistry'
@@ -1041,7 +1043,6 @@ export default function HomePage() {
         <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-2 flex items-center">
           {skylimitStats ? (
             <div className="flex items-center gap-4 text-sm w-full">
-              <span className="font-semibold text-gray-800 dark:text-gray-200">Skylimit:</span>
               {lookingBack ? (
                 <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
                   <Spinner size="sm" />
@@ -1096,7 +1097,7 @@ export default function HomePage() {
                   {curationSuspended ? (
                     <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>
                   ) : (
-                    <><span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=curation')}>~{skylimitStats.shown_daily.toFixed(0)}</span> displayed</>
+                    <><span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=curation')}>~{skylimitStats.shown_daily.toFixed(0)}</span> shown, <span className="font-semibold text-blue-600 dark:text-blue-400">{(skylimitStats.edited_daily ?? 0).toFixed(0)}</span> edited</>
                   )}
                 </div>
                 <button
@@ -1117,21 +1118,17 @@ export default function HomePage() {
         </div>
       )}
 
+      <PinnedPostBanner />
+
       {/* Intro message for first-time users */}
       {showIntroMessage && (
         <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-3 mx-2 mb-2 text-base">
           <div className="flex items-start justify-between gap-2">
             <div className="text-blue-800 dark:text-blue-200">
-              <p>Skylimit is a curating client for Bluesky.</p>
-              <ul className="list-disc list-inside mt-1 space-y-1">
-                <li>Use <em>Settings/Curation</em> to limit the average number of posts shown per day.</li>
-                <li>Posts are numbered, starting at midnight. Click on the post number to adjust whether you want to see more (or fewer) posts from that poster.</li>
-                <li>You can see posting and curation statistics for all those you follow in <em>Settings/Following</em>.</li>
-              </ul>
-              <p className="text-red-600 dark:text-red-400 mt-2">
-                Initializing curation by fetching recent posts will take a minute or two; stay on the home page until it completes.
-                {isReadOnlyMode() && ' Skylimit is currently in read-only mode that will not modify your Bluesky state/configuration. Use Settings to disable this mode.'}
-              </p>
+              <HelpMessage
+                showInitWarning
+                readOnlyNote={isReadOnlyMode() ? 'Skylimit is currently in read-only mode that will not modify your Bluesky state/configuration. Use Settings to disable this mode.' : undefined}
+              />
             </div>
             <button
               onClick={() => {
@@ -1545,12 +1542,7 @@ export default function HomePage() {
 
       <Modal isOpen={showIntroModal} onClose={() => setShowIntroModal(false)} title="About Skylimit" size="md">
         <div className="text-gray-700 dark:text-gray-300 text-base leading-relaxed">
-          <p>Skylimit is a curating client for Bluesky.</p>
-          <ul className="list-disc list-inside mt-1 space-y-1">
-            <li>Use <em>Settings/Curation</em> to limit the average number of posts shown per day.</li>
-            <li>Posts are numbered, starting at midnight. Click on the post number to adjust whether you want to see more (or fewer) posts from that poster.</li>
-            <li>You can see posting and curation statistics for all those you follow in <em>Settings/Following</em>.</li>
-          </ul>
+          <HelpMessage />
         </div>
       </Modal>
     </div>

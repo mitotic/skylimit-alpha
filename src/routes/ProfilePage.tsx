@@ -8,6 +8,7 @@ import { follow, unfollow } from '../api/social'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost, deletePost } from '../api/posts'
 import { pinPost } from '../api/profile'
 import { getPostUniqueId, getProfileUrl, extractPriorityPatternsFromProfile, extractTimezone } from '../curation/skylimitGeneral'
+import { clientNow } from '../utils/clientClock'
 import { getFilter, getFollow, saveFollow, deleteFollow } from '../curation/skylimitCache'
 import { UserEntry, FollowInfo, DEFAULT_PRIORITY_PATTERNS, GlobalStats } from '../curation/types'
 import { countTotalPostsForUser } from '../curation/skylimitStats'
@@ -201,7 +202,7 @@ export default function ProfilePage() {
     if (!profile?.handle) return
     try {
       const username = profile.handle
-      const [filterResult, followInfoResult, settings] = await Promise.all([
+      let [filterResult, followInfoResult, settings] = await Promise.all([
         getFilter(),
         getFollow(username),
         getSettings()
@@ -214,6 +215,30 @@ export default function ProfilePage() {
       } else {
         setCurationGlobalStats(null)
         setCurationUserEntry(null)
+      }
+      // Update cached follow entry with fresh profile data
+      if (followInfoResult && profile) {
+        const liveFollowedBy = !!profile.viewer?.followedBy
+        const liveDisplayName = profile.displayName || undefined
+        const livePatterns = extractPriorityPatternsFromProfile(profile) || followInfoResult.priorityPatterns
+        const liveTimezone = extractTimezone(profile)
+        if (
+          followInfoResult.followedBy !== liveFollowedBy ||
+          followInfoResult.displayName !== liveDisplayName ||
+          (livePatterns && followInfoResult.priorityPatterns !== livePatterns) ||
+          (liveTimezone !== 'UTC' && followInfoResult.timezone !== liveTimezone)
+        ) {
+          const updated = {
+            ...followInfoResult,
+            followedBy: liveFollowedBy,
+            displayName: liveDisplayName,
+            ...(livePatterns && { priorityPatterns: livePatterns }),
+            ...(liveTimezone !== 'UTC' && { timezone: liveTimezone }),
+            lastUpdatedAt: clientNow(),
+          }
+          await saveFollow(updated)
+          followInfoResult = updated
+        }
       }
       setCurationFollowInfo(followInfoResult)
       setEditionLayout(settings?.editionLayout || '')
@@ -282,6 +307,8 @@ export default function ProfilePage() {
           amp_factor: 1,
           priorityPatterns: priorityPatterns || undefined,
           timezone,
+          followedBy: !!profile.viewer?.followedBy,
+          lastUpdatedAt: clientNow(),
         })
         addToast('Following', 'success')
       }
@@ -874,7 +901,12 @@ export default function ProfilePage() {
                 View on Bluesky ↗
               </a>
             </div>
-            <p className="text-gray-500 dark:text-gray-400">@{profile.handle}</p>
+            <p className="text-gray-500 dark:text-gray-400">
+              @{profile.handle}
+              {profile.viewer?.followedBy && (
+                <span className="ml-2 text-xs bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded px-1.5 py-0.5">Follows you</span>
+              )}
+            </p>
             {profile.description && (
               <div className="mt-2 whitespace-pre-wrap">
                 <RichText text={profile.description} facets={descriptionFacets} />

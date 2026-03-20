@@ -4,6 +4,22 @@
 
 import { AppBskyFeedDefs, AppBskyActorDefs } from '@atproto/api'
 import { CurationMetadata, FeedPlatform, PostSummary, ENGAGEMENT_NONE, ENGAGEMENT_LIKED, ENGAGEMENT_BOOKMARKED, ENGAGEMENT_REPOSTED, SL_REPOST_PREFIX } from './types'
+
+// App account pinned post constants
+const DEFAULT_APP_ACCOUNT_HANDLE = 'skylimit.dev'
+const SKYSPEED_APP_ACCOUNT_HANDLE = 'followee1.skyspeed.social'
+export let appAccountHandle = DEFAULT_APP_ACCOUNT_HANDLE
+export const PINNED_POST_ID_KEY = 'websky_pinned_post_id'
+export const PINNED_POST_TEXT_KEY = 'websky_pinned_post_text'
+
+/**
+ * Update appAccountHandle based on whether a non-standard server is configured.
+ * Call this on app startup and when server changes.
+ */
+export function initAppAccountHandle(): void {
+  const serverParam = localStorage.getItem('skylimit_server')
+  appAccountHandle = serverParam ? SKYSPEED_APP_ACCOUNT_HANDLE : DEFAULT_APP_ACCOUNT_HANDLE
+}
 import { clientNow, clientDate } from '../utils/clientClock'
 import log from '../utils/logger'
 
@@ -565,5 +581,27 @@ export function getFeedViewPostTimestamp(post: AppBskyFeedDefs.FeedViewPost, fee
   // Original post: use createdAt
   const record = post.post.record as any
   return new Date(record?.createdAt || post.post.indexedAt || clientNow())
+}
+
+/**
+ * Check if a post is a pinned message from the app account (skylimit.dev).
+ * If so, store it in localStorage for display as a banner.
+ * Only updates if the post has a different uniqueId than the last stored one.
+ */
+export function checkAndStorePinnedPost(summary: PostSummary): void {
+  if (summary.username !== appAccountHandle) return
+  if (!summary.tags.includes('pin')) return
+
+  const lastPinnedId = localStorage.getItem(PINNED_POST_ID_KEY)
+  if (lastPinnedId === summary.uniqueId) return
+
+  // Strip #pin hashtag from display text
+  const displayText = (summary.postText || '')
+    .replace(/#pin\b/gi, '')
+    .trim()
+
+  localStorage.setItem(PINNED_POST_ID_KEY, summary.uniqueId)
+  localStorage.setItem(PINNED_POST_TEXT_KEY, displayText)
+  window.dispatchEvent(new Event('pinnedPostUpdated'))
 }
 

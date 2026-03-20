@@ -91,7 +91,7 @@ function DisclosureSection({ title, defaultOpen = false, children }: { title: st
 }
 
 export default function SettingsPage() {
-  const { session, logout } = useSession()
+  const { session, agent, logout } = useSession()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -834,6 +834,8 @@ Use this only if the app is not working correctly. This cannot be undone.`}
         onClose={() => setShowBugReportModal(false)}
         initialLogLevel={settings?.consoleLogLevel ?? 2}
         onSubmitSuccess={() => addToast('Bug report submitted to Claude Code', 'success')}
+        agent={agent}
+        onDmSubmitSuccess={() => addToast('Bug report sent via DM', 'success')}
       />
 
       <div className="card space-y-4">

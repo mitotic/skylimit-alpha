@@ -256,13 +256,15 @@ export async function getPostThread(
   agent: BskyAgent,
   uri: string,
   depth: number = 6,
-  onRateLimit?: (info: { retryAfter?: number; message?: string }) => void
+  onRateLimit?: (info: { retryAfter?: number; message?: string }) => void,
+  parentHeight?: number
 ): Promise<AppBskyFeedGetPostThread.OutputSchema> {
   return retryWithBackoff(
     async () => {
       const response = await agent.getPostThread({
         uri,
         depth,
+        ...(parentHeight !== undefined && { parentHeight }),
       })
       return response.data
     },

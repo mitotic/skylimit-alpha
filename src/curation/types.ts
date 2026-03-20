@@ -12,8 +12,10 @@ export const DEFAULT_PRIORITY_PATTERNS = '#*'
 // Curation status type - always ends in '_show' or '_drop'
 export const CURATION_STATUSES = [
   'periodic_show',        // Periodic tag post accepted (#Weekly)
+  'priority_always_show', // Priority post shown (probability = 1)
   'priority_show',        // Priority post passes probability filter
   'priority_drop',        // Priority post fails probability filter
+  'regular_always_show',  // Regular post shown (probability = 1)
   'regular_show',         // Regular post passes probability filter (no popularity data)
   'regular_drop',         // Regular post fails probability filter (no popularity data)
   'regular_lo_show',      // Low popularity regular post passes probability filter
@@ -335,6 +337,8 @@ export interface FollowInfo {
   last_posted_at?: number  // postTimestamp of most recent post (ms)
   amp_factor_changed_at?: number  // Timestamp (ms) of last amp factor change
   lastWeeklyPostId?: string  // uniqueId of last shown #Weekly post
+  followedBy?: boolean  // true if this followee also follows you back
+  lastUpdatedAt?: number  // Timestamp (ms) of when this cache entry was last updated from API
 }
 
 /**

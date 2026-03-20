@@ -4,7 +4,8 @@ import { AppBskyNotificationListNotifications, AppBskyFeedDefs } from '@atproto/
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
 import { getNotifications, updateSeenNotifications } from '../api/notifications'
-import { getPostThread } from '../api/feed'
+import { getProfiles } from '../api/profile'
+// getPostThread removed - batch getPosts() is used instead for performance
 import { aggregateNotifications, AggregatedNotification } from '../utils/notificationAggregation'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
@@ -31,6 +32,7 @@ export default function NotificationsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const [followStatusMap, setFollowStatusMap] = useState<Record<string, boolean | null>>({})
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now().toString()
@@ -70,7 +72,6 @@ export default function NotificationsPage() {
 
       // Shared caches for both fetch phases
       const postCache = new Map<string, AppBskyFeedDefs.PostView>()
-      const threadCache = new Map<string, any>()
       const uriResolutionMap = new Map<string, string>()
 
       // Step 1: Separate direct URIs (can fetch immediately) from repost URIs (need resolution)
@@ -115,48 +116,49 @@ export default function NotificationsPage() {
 
       // Step 2: Fetch direct URIs AND resolve repost URIs IN PARALLEL
       const fetchDirectPosts = async () => {
-        // Batch fetch all direct post URIs (likes/reposts/quotes) in ONE request
-        if (directPostUris.size > 0) {
-          try {
-            const response = await agent.getPosts({ uris: Array.from(directPostUris) })
-            for (const post of response.data.posts) {
-              postCache.set(post.uri, post)
-            }
-          } catch (error) {
-            log.warn('Notifications', 'Batch fetch failed:', error)
-          }
-        }
-
-        // Reply/mention threads still need individual getPostThread with depth=1
-        const threadFetches = Array.from(directReplyMentionUris).map(async (uri) => {
-          try {
-            const thread = await getPostThread(agent, uri, 1)
-            if (thread.thread) {
-              threadCache.set(uri, thread.thread)
-              // Type guard: only ThreadViewPost has a 'post' property
-              if (AppBskyFeedDefs.isThreadViewPost(thread.thread) && thread.thread.post) {
-                postCache.set(uri, thread.thread.post as AppBskyFeedDefs.PostView)
+        // Run all three batch fetches in parallel - they are independent
+        const fetchLikeRepostPosts = async () => {
+          if (directPostUris.size > 0) {
+            try {
+              const response = await agent.getPosts({ uris: Array.from(directPostUris) })
+              for (const post of response.data.posts) {
+                postCache.set(post.uri, post)
               }
+            } catch (error) {
+              log.warn('Notifications', 'Batch fetch failed:', error)
             }
-          } catch (error) {
-            log.warn('Notifications', 'Failed to fetch thread:', uri, error)
-          }
-        })
-
-        await Promise.all(threadFetches)
-
-        // Batch fetch the actual reply posts by their URIs (notification.uri)
-        // This ensures we get the reply text even for indirect replies
-        if (replyPostUris.size > 0) {
-          try {
-            const response = await agent.getPosts({ uris: Array.from(replyPostUris) })
-            for (const post of response.data.posts) {
-              postCache.set(post.uri, post)
-            }
-          } catch (error) {
-            log.warn('Notifications', 'Batch fetch reply posts failed:', error)
           }
         }
+
+        // Batch fetch parent/root posts for reply/mention notifications (reasonSubject URIs)
+        const fetchReplyParentPosts = async () => {
+          if (directReplyMentionUris.size > 0) {
+            try {
+              const response = await agent.getPosts({ uris: Array.from(directReplyMentionUris) })
+              for (const post of response.data.posts) {
+                postCache.set(post.uri, post)
+              }
+            } catch (error) {
+              log.warn('Notifications', 'Batch fetch reply parent posts failed:', error)
+            }
+          }
+        }
+
+        // Batch fetch actual reply posts by their URIs (notification.uri)
+        const fetchReplyPosts = async () => {
+          if (replyPostUris.size > 0) {
+            try {
+              const response = await agent.getPosts({ uris: Array.from(replyPostUris) })
+              for (const post of response.data.posts) {
+                postCache.set(post.uri, post)
+              }
+            } catch (error) {
+              log.warn('Notifications', 'Batch fetch reply posts failed:', error)
+            }
+          }
+        }
+
+        await Promise.all([fetchLikeRepostPosts(), fetchReplyParentPosts(), fetchReplyPosts()])
       }
 
       const resolveRepostUris = async () => {
@@ -252,17 +254,7 @@ export default function NotificationsPage() {
             }
           }
 
-          // Fallback: try thread-based lookup for direct replies
-          const thread = threadCache.get(resolvedUri)
-          if (thread?.replies && Array.isArray(thread.replies)) {
-            const reply = thread.replies.find(
-              (r: any) => r.post?.author.did === notification.author.did
-            )
-            if (reply?.post) {
-              return { ...notification, post: reply.post as AppBskyFeedDefs.PostView, parentPost: rootPost }
-            }
-          }
-          // Last fallback to root post
+          // Fallback to root post
           if (rootPost) {
             return { ...notification, post: rootPost }
           }
@@ -281,17 +273,54 @@ export default function NotificationsPage() {
         setNotifications(prev => [...prev, ...notificationsWithPosts])
       } else {
         setNotifications(notificationsWithPosts)
-        // Mark notifications as seen when first loading (skip in read-only mode)
+      }
+
+      // Batch fetch follow statuses and mark as seen in parallel (non-blocking)
+      const parallelTasks: Promise<void>[] = []
+
+      // Batch follow status check: collect all follow notification author DIDs
+      const followAuthorDids = new Set<string>()
+      for (const notification of newNotifications) {
+        if (String(notification.reason || '').toLowerCase() === 'follow') {
+          followAuthorDids.add(notification.author.did)
+        }
+      }
+      if (followAuthorDids.size > 0) {
+        parallelTasks.push(
+          (async () => {
+            try {
+              const dids = Array.from(followAuthorDids)
+              // getProfiles supports up to 25 per call
+              const statusMap: Record<string, boolean | null> = {}
+              for (let i = 0; i < dids.length; i += 25) {
+                const batch = dids.slice(i, i + 25)
+                const { profiles } = await getProfiles(agent, batch)
+                for (const profile of profiles) {
+                  statusMap[profile.did] = !!profile.viewer?.following
+                }
+              }
+              setFollowStatusMap(prev => ({ ...prev, ...statusMap }))
+            } catch (error) {
+              log.warn('Notifications', 'Batch follow status check failed:', error)
+            }
+          })()
+        )
+      }
+
+      // Mark notifications as seen (skip in read-only mode)
+      if (!cursor) {
         if (isReadOnlyMode()) {
           log.warn('Notifications', 'Read-only mode: skipping updateSeenNotifications')
         } else {
-          try {
-            await updateSeenNotifications(agent, new Date().toISOString())
-          } catch (error) {
-            log.warn('Notifications', 'Failed to mark notifications as seen:', error)
-          }
+          parallelTasks.push(
+            updateSeenNotifications(agent, new Date().toISOString()).catch(error => {
+              log.warn('Notifications', 'Failed to mark notifications as seen:', error)
+            })
+          )
         }
       }
+
+      await Promise.all(parallelTasks)
 
       setCursor(newCursor)
     } catch (error) {
@@ -422,6 +451,8 @@ export default function NotificationsPage() {
               key={`${aggNotification.reasonSubject || aggNotification.mostRecent.uri}:${aggNotification.reason}:${index}:${aggNotification.mostRecent.indexedAt}`}
               notification={aggNotification}
               onPostClick={handlePostClick}
+              followStatusMap={followStatusMap}
+              onFollowStatusChange={(did, status) => setFollowStatusMap(prev => ({ ...prev, [did]: status }))}
             />
           ))}
 

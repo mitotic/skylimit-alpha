@@ -317,7 +317,7 @@ export async function curatePostSummary(
     // Compute effective regular probability with popularity weighting
     let effectiveRegularProb = userEntry.regular_prob
     let regularPrefix = 'regular'
-    if (userEntry.medianPop > 0) {
+    if (userEntry.medianPop > 0 && effectiveRegularProb < 1) {
       const { getSettings } = await import('./skylimitStore')
       const popSettings = await getSettings()
       const popAmp = popSettings?.popAmp ?? 1
@@ -336,7 +336,7 @@ export async function curatePostSummary(
     if (periodicAccepted) {
       modStatus.curation_status = 'periodic_show'
     } else if (priority) {
-      modStatus.curation_status = priorityDrop ? 'priority_drop' : 'priority_show'
+      modStatus.curation_status = priorityDrop ? 'priority_drop' : (userEntry.priority_prob >= 1 ? 'priority_always_show' : 'priority_show')
       modStatus.matching_pattern = priorityMatch
       if (priorityDrop) dropReason = 'random (priority)'
     } else if (summary.post_type === 'reply_unfollowed') {
@@ -359,7 +359,7 @@ export async function curatePostSummary(
           dropReason = 'unfollowed reply'
         } else {
           // Show: quiet poster (regular_prob>=1) AND setting is off
-          modStatus.curation_status = 'regular_show'
+          modStatus.curation_status = userEntry.regular_prob >= 1 ? 'regular_always_show' : 'regular_show'
         }
       }
     } else if (summary.post_type === 'reply_self') {
@@ -373,7 +373,7 @@ export async function curatePostSummary(
           && isStatusShow(parentSummary.curation_status)
           && (clientNow() - parentSummary.postTimestamp) >= TWENTY_FOUR_HOURS) {
         // Parent shown and old (>24h) — keep the reply, apply normal probability
-        modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
+        modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : (effectiveRegularProb >= 1 ? 'regular_always_show' : `${regularPrefix}_show`)) as CurationStatus
         if (regularDrop) dropReason = 'random (regular)'
       } else {
         // Drop: parent not in summaries, parent dropped, or parent shown recently
@@ -386,7 +386,7 @@ export async function curatePostSummary(
       }
     } else {
       // Original post, quotepost, repost, or followed reply - standard logic
-      modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : `${regularPrefix}_show`) as CurationStatus
+      modStatus.curation_status = (regularDrop ? `${regularPrefix}_drop` : (effectiveRegularProb >= 1 ? 'regular_always_show' : `${regularPrefix}_show`)) as CurationStatus
       if (regularDrop) dropReason = 'random (regular)'
     }
 

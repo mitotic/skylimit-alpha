@@ -126,6 +126,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
   const actualPost = post.post
   const curation = 'curation' in post ? (post as CurationFeedViewPost).curation : undefined
   const isViewedOld = showViewedStatus && !!(curation?.viewedAt && (clientNow() - curation.viewedAt > 15 * 60 * 1000))
+  const isAlwaysShow = curation?.curation_status === 'priority_always_show' || curation?.curation_status === 'regular_always_show'
 
   // Get post number if counter should be shown
   useEffect(() => {
@@ -437,12 +438,14 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     {getTimeInTimezone(postedAt, settingsTimezone)}{settingsTimezone && timezonesAreDifferent(settingsTimezone, getBrowserTimezone()) ? ` ${getTimezoneAbbreviation(settingsTimezone)}` : ''}
                   </span>
                 )}
-                {/* Counter number - clickable with blue color */}
+                {/* Counter number - clickable with color based on curation status */}
                 <button
                   ref={repostCounterButtonRef}
                   onClick={handleCounterClick}
                   className={curation
-                    ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'
+                    ? (isAlwaysShow
+                        ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+                        : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer')
                     : 'text-gray-500 dark:text-gray-400 cursor-default'
                   }
                   title={curation ? 'Click for Skylimit curation options' : 'Post number'}
@@ -503,7 +506,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
           <button
             ref={repostCounterButtonRef}
             onClick={handleCounterClick}
-            className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer"
+            className={isAlwaysShow
+              ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+              : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'}
             title="Click for edition curation info"
           >
             {formatCounterDisplay(postNumber)}
@@ -562,7 +567,9 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   <button
                     ref={repostCounterButtonRef}
                     onClick={handleCounterClick}
-                    className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer"
+                    className={isAlwaysShow
+                      ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+                      : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'}
                     title="Click for edition curation info"
                   >
                     {formatCounterDisplay(postNumber)}
@@ -677,12 +684,14 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   {getTimeInTimezone(postedAt, settingsTimezone)}{settingsTimezone && timezonesAreDifferent(settingsTimezone, getBrowserTimezone()) ? ` ${getTimezoneAbbreviation(settingsTimezone)}` : ''}
                 </span>
               )}
-              {/* Counter number - clickable with blue color */}
+              {/* Counter number - clickable with color based on curation status */}
               <button
                 ref={counterButtonRef}
                 onClick={handleCounterClick}
                 className={curation
-                  ? 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'
+                  ? (isAlwaysShow
+                      ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+                      : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer')
                   : 'text-gray-500 dark:text-gray-400 cursor-default'
                 }
                 title={curation ? 'Click for Skylimit curation options' : 'Post number'}

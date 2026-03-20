@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react
 import { useParams, useSearchParams, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
-import { getPostThread, fetchParentChain, MAX_PARENT_CHAIN_DEPTH } from '../api/feed'
+import { getPostThread, MAX_PARENT_CHAIN_DEPTH } from '../api/feed'
 import { likePost, unlikePost, repost, removeRepost, createPost, createQuotePost, bookmarkPost, unbookmarkPost, deletePost } from '../api/posts'
 import { pinPost } from '../api/profile'
 import { getPostUrl } from '../curation/skylimitGeneral'
@@ -74,6 +74,44 @@ export default function ThreadPage() {
     }, 5000)
   }
 
+  // Fetch one page of the self-reply chain starting from fetchUri.
+  // Walks the reply tree from a single getPostThread call, collecting same-author replies.
+  // Returns { posts, mayHaveMore, lastUri } where mayHaveMore indicates the API depth limit
+  // may have cut off the chain (last post had empty replies array).
+  const fetchChainPage = useCallback(async (
+    fetchUri: string,
+    authorDid: string,
+  ): Promise<{ posts: AppBskyFeedDefs.PostView[]; mayHaveMore: boolean; lastUri: string | null }> => {
+    if (!agent) return { posts: [], mayHaveMore: false, lastUri: null }
+
+    const chainData = await getPostThread(agent, fetchUri, 10)
+    if (!chainData.thread || !('post' in chainData.thread)) {
+      return { posts: [], mayHaveMore: false, lastUri: null }
+    }
+
+    const posts: AppBskyFeedDefs.PostView[] = []
+    let current = chainData.thread as AppBskyFeedDefs.ThreadViewPost
+
+    while (true) {
+      const replies = (current.replies || [])
+        .filter(r => 'post' in r) as AppBskyFeedDefs.ThreadViewPost[]
+      const sameAuthorReply = replies
+        .filter(r => r.post.author.did === authorDid)
+        .sort((a, b) => new Date(a.post.indexedAt).getTime() - new Date(b.post.indexedAt).getTime())[0]
+
+      if (!sameAuthorReply) break
+      posts.push(sameAuthorReply.post)
+      current = sameAuthorReply
+    }
+
+    // If we found posts and the last post has an empty replies array, the API depth limit
+    // likely cut off the tree — there may be more posts if we fetch from that URI.
+    const mayHaveMore = posts.length >= 10 && (current.replies || []).length === 0
+    const lastUri = posts.length > 0 ? posts[posts.length - 1].uri : null
+
+    return { posts, mayHaveMore, lastUri }
+  }, [agent])
+
   const loadThread = useCallback(async () => {
     if (!agent || !uri) return
 
@@ -92,8 +130,8 @@ export default function ThreadPage() {
       setRepliesDisplayCount(REPLIES_PAGE_LENGTH * REPLIES_INITIAL_PAGES)
 
       // Focused Thread View: Keep the clicked post as the anchor
-      // Fetch with depth=1 to get direct replies only
-      const threadData = await getPostThread(agent, decodedUri, 1)
+      // Fetch with depth=1 to get direct replies, and parentHeight to get parent chain in one call
+      const threadData = await getPostThread(agent, decodedUri, 1, undefined, MAX_PARENT_CHAIN_DEPTH)
 
       if (!threadData.thread || !('post' in threadData.thread)) {
         throw new Error('Thread data not found')
@@ -125,18 +163,49 @@ export default function ThreadPage() {
         setRootUri(null) // This is the root, no need for root link
       }
 
-      // Fetch parent chain in background if this is a reply
-      if (record?.reply?.parent?.uri) {
+      // Extract parent chain from the nested parent field (returned by parentHeight)
+      if (threadPost.parent && AppBskyFeedDefs.isThreadViewPost(threadPost.parent)) {
         setIsLoadingParents(true)
         try {
-          const chain = await fetchParentChain(agent, record.reply.parent.uri, MAX_PARENT_CHAIN_DEPTH)
+          const chain: AppBskyFeedDefs.PostView[] = []
+          let current: AppBskyFeedDefs.ThreadViewPost['parent'] = threadPost.parent
+          while (current && AppBskyFeedDefs.isThreadViewPost(current)) {
+            const parentThread = current as AppBskyFeedDefs.ThreadViewPost
+            chain.unshift(parentThread.post) // oldest first
+            current = parentThread.parent
+          }
           setParentChain(chain)
-        } catch (parentError) {
-          log.warn('Thread', 'Failed to fetch parent chain:', parentError)
-          // Non-fatal - we still show the thread without parent context
         } finally {
           setIsLoadingParents(false)
         }
+      }
+
+      // Initiate self-reply chain fetch immediately (no useEffect delay)
+      const anchorDid = threadPost.post.author.did
+      const directReplies = (threadPost.replies || [])
+        .filter(r => 'post' in r) as AppBskyFeedDefs.ThreadViewPost[]
+      const opReplies = directReplies
+        .filter(r => r.post.author.did === anchorDid)
+        .sort((a, b) => new Date(a.post.indexedAt).getTime() - new Date(b.post.indexedAt).getTime())
+
+      if (opReplies.length > 0) {
+        const firstOpReply = opReplies[0]
+        chainAnchorDidRef.current = anchorDid
+        chainFetchCountRef.current = 0
+        setIsLoadingChain(true)
+        // Fire and forget — don't await, let it update state when done
+        fetchChainPage(firstOpReply.post.uri, anchorDid).then(({ posts, mayHaveMore, lastUri }) => {
+          chainFetchCountRef.current = 1
+          chainLastUriRef.current = lastUri
+          setSelfReplyChain(posts)
+          setChainMayHaveMore(mayHaveMore)
+        }).catch(error => {
+          log.warn('Thread', 'Failed to fetch self-reply chain:', error)
+          setSelfReplyChain([])
+          setChainMayHaveMore(false)
+        }).finally(() => {
+          setIsLoadingChain(false)
+        })
       }
 
       // Check if we should show compose (from query param)
@@ -154,7 +223,7 @@ export default function ThreadPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [agent, uri, searchParams])
+  }, [agent, uri, searchParams, fetchChainPage])
 
   // Step 1: Disable browser scroll restoration for thread pages
   useEffect(() => {
@@ -207,44 +276,6 @@ export default function ThreadPage() {
     loadThread()
   }, [loadThread])
 
-  // Fetch one page of the self-reply chain starting from fetchUri.
-  // Walks the reply tree from a single getPostThread call, collecting same-author replies.
-  // Returns { posts, mayHaveMore, lastUri } where mayHaveMore indicates the API depth limit
-  // may have cut off the chain (last post had empty replies array).
-  const fetchChainPage = useCallback(async (
-    fetchUri: string,
-    authorDid: string,
-  ): Promise<{ posts: AppBskyFeedDefs.PostView[]; mayHaveMore: boolean; lastUri: string | null }> => {
-    if (!agent) return { posts: [], mayHaveMore: false, lastUri: null }
-
-    const chainData = await getPostThread(agent, fetchUri, 10)
-    if (!chainData.thread || !('post' in chainData.thread)) {
-      return { posts: [], mayHaveMore: false, lastUri: null }
-    }
-
-    const posts: AppBskyFeedDefs.PostView[] = []
-    let current = chainData.thread as AppBskyFeedDefs.ThreadViewPost
-
-    while (true) {
-      const replies = (current.replies || [])
-        .filter(r => 'post' in r) as AppBskyFeedDefs.ThreadViewPost[]
-      const sameAuthorReply = replies
-        .filter(r => r.post.author.did === authorDid)
-        .sort((a, b) => new Date(a.post.indexedAt).getTime() - new Date(b.post.indexedAt).getTime())[0]
-
-      if (!sameAuthorReply) break
-      posts.push(sameAuthorReply.post)
-      current = sameAuthorReply
-    }
-
-    // If we found posts and the last post has an empty replies array, the API depth limit
-    // likely cut off the tree — there may be more posts if we fetch from that URI.
-    const mayHaveMore = posts.length > 0 && (current.replies || []).length === 0
-    const lastUri = posts.length > 0 ? posts[posts.length - 1].uri : null
-
-    return { posts, mayHaveMore, lastUri }
-  }, [agent])
-
   // Load more chain posts (called by SelfReplyChain when user clicks "Show more")
   const handleLoadMoreChain = useCallback(async () => {
     if (!agent || !chainLastUriRef.current || !chainAnchorDidRef.current) return
@@ -271,64 +302,6 @@ export default function ThreadPage() {
     }
   }, [agent, fetchChainPage])
 
-  // Initial chain fetch when thread loads (depends on anchor URI, not full thread object,
-  // to avoid re-fetching on optimistic like/repost/bookmark updates)
-  const threadAnchorUri = thread?.post.uri
-  useEffect(() => {
-    const currentThread = threadRef.current
-    if (!agent || !currentThread) {
-      setSelfReplyChain([])
-      setChainMayHaveMore(false)
-      return
-    }
-
-    const anchorDid = currentThread.post.author.did
-    const directReplies = (currentThread.replies || [])
-      .filter(r => 'post' in r) as AppBskyFeedDefs.ThreadViewPost[]
-    const opReplies = directReplies
-      .filter(r => r.post.author.did === anchorDid)
-      .sort((a, b) => new Date(a.post.indexedAt).getTime() - new Date(b.post.indexedAt).getTime())
-
-    if (opReplies.length === 0) {
-      setSelfReplyChain([])
-      setChainMayHaveMore(false)
-      return
-    }
-
-    const firstOpReply = opReplies[0]
-    let cancelled = false
-    chainAnchorDidRef.current = anchorDid
-    chainFetchCountRef.current = 0
-
-    const doFetch = async () => {
-      setIsLoadingChain(true)
-      try {
-        const { posts, mayHaveMore, lastUri } = await fetchChainPage(
-          firstOpReply.post.uri,
-          anchorDid,
-        )
-        if (cancelled) return
-
-        chainFetchCountRef.current = 1
-        chainLastUriRef.current = lastUri
-        setSelfReplyChain(posts)
-        setChainMayHaveMore(mayHaveMore)
-      } catch (error) {
-        log.warn('Thread', 'Failed to fetch self-reply chain:', error)
-        if (!cancelled) {
-          setSelfReplyChain([])
-          setChainMayHaveMore(false)
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingChain(false)
-        }
-      }
-    }
-
-    doFetch()
-    return () => { cancelled = true }
-  }, [agent, threadAnchorUri, fetchChainPage])
 
   // Step 4: Restore scroll position after thread loads OR scroll to highlighted post
   useEffect(() => {

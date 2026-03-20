@@ -5,10 +5,10 @@
 import { BskyAgent } from '@atproto/api'
 import { computePostStats } from './skylimitStats'
 import { getSettings } from './skylimitStore'
-import { refreshFollows } from './skylimitFollows'
+import { refreshFollows, sweepFollowCache } from './skylimitFollows'
 import { scheduleCleanup } from './skylimitCleanup'
 import { getIntervalHoursSync } from './types'
-import { clientInterval, clearClientInterval, clientTimeout, clearClientTimeout } from '../utils/clientClock'
+import { clientInterval, clearClientInterval, clientTimeout, clearClientTimeout, clientNow } from '../utils/clientClock'
 import { isTabDormant } from '../utils/tabGuard'
 import log from '../utils/logger'
 
@@ -41,6 +41,16 @@ export async function computeStatsInBackground(
       myDid,
       settings.secretKey
     )
+
+    // Check if daily follow cache sweep is due (targets noon local time)
+    const now = new Date(clientNow())
+    if (now.getHours() >= 12) {
+      try {
+        await sweepFollowCache(agent, myDid)
+      } catch (err) {
+        log.warn('Stats Worker', 'sweepFollowCache failed (non-critical):', err)
+      }
+    }
 
     // Schedule cleanup after stats computation
     scheduleCleanup()

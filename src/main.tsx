@@ -7,6 +7,7 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import './utils/logBuffer' // Start capturing console output early for bug reports
 import './styles/index.css'
 import log from './utils/logger'
+import { initAppAccountHandle } from './curation/skylimitGeneral'
 
 // Migrate old larger-text boolean to new text-size setting
 if (localStorage.getItem('websky_larger_text') !== null) {
@@ -201,6 +202,9 @@ if (!urlParams.has('server')) {
     log.debug('Server', `Service URL: ${url}`)
   }
 }
+
+// Set app account handle based on server configuration
+initAppAccountHandle()
 
 // Handle ?clobber=1 - equivalent to browser "Clear storage": wipe everything and start fresh
 if (urlParams.get('clobber') === '1') {

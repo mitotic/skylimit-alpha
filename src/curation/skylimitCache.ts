@@ -1374,6 +1374,8 @@ export async function clearAllTimeVariantDataAndLogout(): Promise<void> {
   const { clearEditionRegistry } = await import('./editionRegistry')
   clearEditionRegistry()
   localStorage.removeItem('lastCreatedEditionTimestamp') // legacy cleanup
+  localStorage.removeItem('websky_pinned_post_id')
+  localStorage.removeItem('websky_pinned_post_text')
   log.debug('Debug', 'Cleared edition registry')
 
   // Close DB so in-flight React effects get a fresh connection instead of a closing one

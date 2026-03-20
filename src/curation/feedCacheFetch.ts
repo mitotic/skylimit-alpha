@@ -12,7 +12,7 @@ import {
   savePostSummariesForce,
   clearRecentData,
 } from './skylimitCache'
-import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary, getEditionTimeStrs } from './skylimitGeneral'
+import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary, getEditionTimeStrs, checkAndStorePinnedPost } from './skylimitGeneral'
 import { CurationFeedViewPost, FeedCacheEntryWithPost, PostSummary, isStatusShow, isStatusDrop, getIntervalHoursSync, FetchMode, FetchStopReason, SecondaryEntry, SecondaryFetchResult, SecondaryRepostIndex, addToRepostIndex, SL_REPOST_PREFIX, SL_EDITION_PREFIX } from './types'
 import { curatePosts } from './skylimitTimeline'
 import { curateSinglePost } from './skylimitFilter'
@@ -113,6 +113,7 @@ export async function curateEntriesToSecondary(
       if (curationResult.matching_pattern) summary.matching_pattern = curationResult.matching_pattern
       if (curationResult.edition_status) summary.edition_status = curationResult.edition_status
     }
+    checkAndStorePinnedPost(summary)
     result.push({ entry, summary })
     addToRepostIndex(repostIndex, summary)
     if (onProgress) {
@@ -782,6 +783,7 @@ export async function fetchToSecondaryFeedCache(
         if (curationResult.matching_pattern) summary.matching_pattern = curationResult.matching_pattern
         if (curationResult.edition_status) summary.edition_status = curationResult.edition_status
       }
+      checkAndStorePinnedPost(summary)
 
       // Append to in-memory array and update repost index
       secondaryEntries.push({ entry, summary })

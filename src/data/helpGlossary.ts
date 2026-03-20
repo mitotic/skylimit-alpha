@@ -47,6 +47,22 @@ export const helpGlossary: Record<string, string> = {
     '# HEAD\n@*: #BreakingNews\n@insightful.quietposter.always.show\n\n## Workplace - common section for all editions\n@coworker1\n@coworker2\n\n# 08:00 Morning Edition\n@always.interesting.bsky.social\n@sometimes.interesting: topic, second topic\n\n## Substacks in the morning\n@author1.com: blogname1.substack.com \n@author2.bsky.social: blogname2.substack.com \n\n# 12:00 Noon Edition\n## Humor\n@xkcd.com\n@phdcomics.com\n\n# 18:00 Evening Edition\n## Coding\n@simonwillison.net\n\n# TAIL\n## Catchall common section\n@author1.com',
 }
 
+/**
+ * Structured intro/help message displayed on the home page.
+ * Used by both the first-time intro banner and the help (?) modal.
+ * Markup conventions: _text_ for emphasis, @handle for profile links.
+ */
+export const introMessage = {
+  header: 'Skylimit is a curating client for Bluesky.',
+  bullets: [
+    'Use _Settings/Curation_ to limit the average number of posts shown per day.',
+    'Posts are numbered, starting at midnight. Click on the post number to adjust whether you want to see more (or fewer) posts from that poster.',
+    'You can see posting and curation statistics for all those you follow in _Settings/Following_.',
+    'Follow @{appAccountHandle} to receive updates about the app.',
+  ],
+  initWarning: 'Initializing curation by fetching recent posts will take a minute or two; stay on the home page until it completes.',
+}
+
 /** Look up a glossary term (case-insensitive). Returns undefined if not found. */
 export function getGlossaryDefinition(term: string): string | undefined {
   if (helpGlossary[term]) return helpGlossary[term]

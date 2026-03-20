@@ -1572,6 +1572,8 @@ export function useFeedPipeline({
       sessionStorage.removeItem(getFeedStateKey('editions'))
       sessionStorage.removeItem(getScrollStateKey('editions'))
       sessionStorage.removeItem(HOME_TAB_STATE_KEY)
+      localStorage.removeItem('websky_pinned_post_id')
+      localStorage.removeItem('websky_pinned_post_text')
       log.debug('Debug', 'Cleared sessionStorage')
 
       const database = await initDB()
@@ -1645,6 +1647,8 @@ export function useFeedPipeline({
       sessionStorage.removeItem(getFeedStateKey('editions'))
       sessionStorage.removeItem(getScrollStateKey('editions'))
       sessionStorage.removeItem(HOME_TAB_STATE_KEY)
+      localStorage.removeItem('websky_pinned_post_id')
+      localStorage.removeItem('websky_pinned_post_text')
       log.debug('Debug', 'Cleared sessionStorage')
 
       // Clear recent data (feed cache, recent summaries, recent editions)

@@ -1,12 +1,18 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
+import { BskyAgent } from '@atproto/api'
 import Modal from './Modal'
 import { getRecentLogsFiltered, type LogEntry } from '../utils/logBuffer'
+import { appAccountHandle } from '../curation/skylimitGeneral'
+import { getFollow } from '../curation/skylimitCache'
+import { getOrCreateConversation, sendMessage, isAppPasswordDMError } from '../api/chat'
 
 interface BugReportModalProps {
   isOpen: boolean
   onClose: () => void
   initialLogLevel: number // from settings.consoleLogLevel
   onSubmitSuccess?: () => void
+  agent?: BskyAgent | null
+  onDmSubmitSuccess?: () => void
 }
 
 const LOG_COUNT_OPTIONS = [0, 5, 10, 25, 50, 100, 200]
@@ -28,7 +34,7 @@ function isDevServer(): boolean {
   return portNum >= 1024
 }
 
-export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSubmitSuccess }: BugReportModalProps) {
+export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSubmitSuccess, agent, onDmSubmitSuccess }: BugReportModalProps) {
   const [reportText, setReportText] = useState('')
   const [logCount, setLogCount] = useState(25)
   const [logLevel, setLogLevel] = useState(initialLogLevel)
@@ -37,9 +43,28 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
   const [submitting, setSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<{ mode: string; responseFile?: string } | null>(null)
   const [submitError, setSubmitError] = useState(false)
+  const [submitErrorMsg, setSubmitErrorMsg] = useState<string | null>(null)
   const [attachedImage, setAttachedImage] = useState<{ file: File; dataUrl: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const showSubmit = isDevServer()
+  const [showDmSubmit, setShowDmSubmit] = useState(false)
+  const [appAccountDid, setAppAccountDid] = useState<string | null>(null)
+
+  // Check if app account follows the user (for DM submit on production)
+  useEffect(() => {
+    if (!isOpen || showSubmit) return // Only check on production
+    getFollow(appAccountHandle).then(follow => {
+      if (follow?.followedBy && follow.accountDid) {
+        setShowDmSubmit(true)
+        setAppAccountDid(follow.accountDid)
+      } else {
+        setShowDmSubmit(false)
+        setAppAccountDid(null)
+      }
+    }).catch(() => {
+      setShowDmSubmit(false)
+    })
+  }, [isOpen, showSubmit])
 
   const logEntries = useMemo(() => {
     if (logCount === 0) return []
@@ -114,14 +139,29 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
     }
   }
 
+  async function handleDmSubmit() {
+    if (!agent || !appAccountDid) return
+    setSubmitting(true)
+    setSubmitError(false)
+    setSubmitErrorMsg(null)
+    try {
+      const { convo } = await getOrCreateConversation(agent, appAccountDid)
+      await sendMessage(agent, convo.id, { text: previewText })
+      handleClose()
+      onDmSubmitSuccess?.()
+    } catch (err) {
+      setSubmitError(true)
+      if (isAppPasswordDMError(err)) {
+        setSubmitErrorMsg('App password lacks DM access')
+      }
+      setTimeout(() => { setSubmitError(false); setSubmitErrorMsg(null) }, 5000)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const titleExtra = (
     <div className="flex gap-2 ml-auto">
-      <button
-        onClick={() => setPreview(!preview)}
-        className="px-3 py-1 text-sm rounded bg-blue-500 hover:bg-blue-600 text-white"
-      >
-        {preview ? 'Edit' : 'Preview'}
-      </button>
       {preview && showSubmit && (
         <button
           onClick={handleSubmit}
@@ -134,6 +174,23 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
             : 'Submit to Claude'}
         </button>
       )}
+      {preview && showDmSubmit && !showSubmit && (
+        <button
+          onClick={handleDmSubmit}
+          disabled={submitting || !previewText.trim() || !agent}
+          className="px-3 py-1 text-sm rounded bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+        >
+          {submitting ? 'Sending...'
+            : submitError ? (submitErrorMsg || 'Failed')
+            : `DM @${appAccountHandle}`}
+        </button>
+      )}
+      <button
+        onClick={() => setPreview(!preview)}
+        className="px-3 py-1 text-sm rounded bg-blue-500 hover:bg-blue-600 text-white"
+      >
+        {preview ? 'Edit' : 'Preview'}
+      </button>
       {preview && (
         <button
           onClick={handleCopy}
@@ -158,7 +215,7 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
               <img
                 src={attachedImage.dataUrl}
                 alt="Attached screenshot"
-                className="max-h-48 rounded border border-gray-200 dark:border-gray-700"
+                className="w-full rounded border border-gray-200 dark:border-gray-700"
               />
             </div>
           )}
@@ -173,41 +230,43 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
             className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
 
-          <div className="flex items-center gap-3 text-sm">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleImageSelect}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600"
-            >
-              Attach image
-            </button>
-            {attachedImage && (
-              <div className="flex items-center gap-2">
-                <img
-                  src={attachedImage.dataUrl}
-                  alt="Attached"
-                  className="h-10 w-10 object-cover rounded border border-gray-300 dark:border-gray-600"
-                />
-                <span className="text-gray-500 dark:text-gray-400 text-xs truncate max-w-[120px]">
-                  {attachedImage.file.name}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setAttachedImage(null)}
-                  className="text-gray-400 hover:text-red-500 text-xs"
-                >
-                  Remove
-                </button>
-              </div>
-            )}
-          </div>
+          {showSubmit && (
+            <div className="flex items-center gap-3 text-sm">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageSelect}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-600"
+              >
+                Attach image
+              </button>
+              {attachedImage && (
+                <div className="flex items-center gap-2">
+                  <img
+                    src={attachedImage.dataUrl}
+                    alt="Attached"
+                    className="h-10 w-10 object-cover rounded border border-gray-300 dark:border-gray-600"
+                  />
+                  <span className="text-gray-500 dark:text-gray-400 text-xs truncate max-w-[120px]">
+                    {attachedImage.file.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setAttachedImage(null)}
+                    className="text-gray-400 hover:text-red-500 text-xs"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
             <span>Log level:</span>

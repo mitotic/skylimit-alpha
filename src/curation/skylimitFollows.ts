@@ -4,7 +4,7 @@
 
 import { BskyAgent, AppBskyGraphGetFollows } from '@atproto/api'
 import { FollowInfo, MIN_AMP_FACTOR, MAX_AMP_FACTOR } from './types'
-import { getAllFollows, saveFollow, getFilter } from './skylimitCache'
+import { getAllFollows, saveFollow, deleteFollow, getFilter } from './skylimitCache'
 import { recomputeProbabilities } from './skylimitStats'
 import { getSettings } from './skylimitStore'
 import { extractPriorityPatternsFromProfile, extractTimezone } from './skylimitGeneral'
@@ -175,6 +175,8 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
         priorityPatterns,
         timezone,
         displayName: displayName || undefined,
+        followedBy: profile ? !!profile.viewer?.followedBy : existing?.followedBy,
+        lastUpdatedAt: profile ? clientNow() : existing?.lastUpdatedAt,
       }
 
       // Preserve periodic post tracking and other fields
@@ -195,14 +197,183 @@ export async function refreshFollows(agent: BskyAgent, myDid: string, force: boo
     // Save refresh time
     await saveLastFollowRefreshTime()
     
-    // Remove unfollowed accounts (optional - you might want to keep historical data)
-    // for (const [username] of existingMap) {
-    //   await deleteFollow(username)
-    // }
-    
+    // Unfollowed accounts are handled by the daily sweep (sweepFollowCache)
+
   } catch (error) {
     log.error('Follows', 'Failed to refresh follows:', error)
     throw error
+  }
+}
+
+/**
+ * Get last sweep time from cache
+ */
+async function getLastSweepTime(): Promise<number> {
+  try {
+    const { getSettings } = await import('./skylimitCache')
+    const settings = await getSettings()
+    return (settings as any)?.lastSweepTime || 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Save last sweep time
+ */
+async function saveLastSweepTime(): Promise<void> {
+  try {
+    const { getSettings, saveSettings } = await import('./skylimitCache')
+    const settings = await getSettings() || {}
+    await saveSettings({ ...settings, lastSweepTime: clientNow() })
+  } catch (err) {
+    log.warn('Follows', 'Failed to save last sweep time:', err)
+  }
+}
+
+/**
+ * Daily sweep of follow cache to keep entries fresh.
+ * - Removes unfollowed users from cache
+ * - Adds newly followed users not yet in cache
+ * - Updates stale entries (lastUpdatedAt > 24 hours or missing)
+ * Skips if last sweep was < 24 hours ago. Failures are logged, not thrown.
+ */
+export async function sweepFollowCache(agent: BskyAgent, myDid: string): Promise<void> {
+  try {
+    const lastSweepTime = await getLastSweepTime()
+    const oneDay = 24 * 60 * 60 * 1000
+    if (clientNow() - lastSweepTime < oneDay) {
+      return
+    }
+
+    // Save sweep time immediately to prevent concurrent sweeps
+    await saveLastSweepTime()
+    log.info('Follows', 'Starting daily follow cache sweep')
+
+    // Fetch current follows from API
+    const apiFollows: AppBskyGraphGetFollows.OutputSchema['follows'] = []
+    let cursor: string | undefined
+    do {
+      const response = await retryWithBackoff(
+        async () => agent.getFollows({ actor: myDid, limit: 100, cursor }),
+        3, 2000,
+        (rateLimitInfo) => log.warn('Follows', 'Rate limit in sweep getFollows:', rateLimitInfo)
+      ).catch(error => {
+        if (isRateLimitError(error)) {
+          const info = getRateLimitInfo(error)
+          throw new Error(info.message || `Rate limit exceeded during sweep.`)
+        }
+        throw error
+      })
+      apiFollows.push(...response.data.follows)
+      cursor = response.data.cursor
+      if (cursor) await new Promise(resolve => setTimeout(resolve, 100))
+    } while (cursor)
+
+    const apiHandleSet = new Set(apiFollows.map(f => f.handle))
+    const apiByHandle = new Map(apiFollows.map(f => [f.handle, f]))
+
+    // Get cached follows
+    const cachedFollows = await getAllFollows()
+    const cachedMap = new Map(cachedFollows.map(f => [f.username, f]))
+
+    let deletedCount = 0
+    let addedCount = 0
+    let updatedCount = 0
+
+    // Delete unfollowed users from cache
+    for (const cached of cachedFollows) {
+      if (!apiHandleSet.has(cached.username)) {
+        await deleteFollow(cached.username)
+        deletedCount++
+      }
+    }
+
+    // Collect DIDs needing profile fetch: new follows + stale entries
+    const didsNeedingProfiles: string[] = []
+    const now = clientNow()
+
+    // New follows not in cache
+    for (const [handle, apiFollow] of apiByHandle) {
+      if (!cachedMap.has(handle)) {
+        didsNeedingProfiles.push(apiFollow.did)
+      }
+    }
+
+    // Stale entries (lastUpdatedAt missing or > 24h)
+    for (const cached of cachedFollows) {
+      if (apiHandleSet.has(cached.username)) {
+        if (!cached.lastUpdatedAt || (now - cached.lastUpdatedAt) > oneDay) {
+          didsNeedingProfiles.push(cached.accountDid)
+        }
+      }
+    }
+
+    // Fetch profiles in batches of 25
+    const BATCH_SIZE = 25
+    const profileMap = new Map<string, AppBskyActorDefs.ProfileViewDetailed>()
+
+    for (let i = 0; i < didsNeedingProfiles.length; i += BATCH_SIZE) {
+      const batch = didsNeedingProfiles.slice(i, i + BATCH_SIZE)
+      try {
+        const response = await getProfiles(agent, batch)
+        for (const profile of response.profiles) {
+          profileMap.set(profile.did, profile)
+        }
+      } catch (err) {
+        log.warn('Follows', `Sweep profile batch failed:`, err)
+      }
+      if (i + BATCH_SIZE < didsNeedingProfiles.length) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+    }
+
+    // Add newly followed users
+    for (const [handle, apiFollow] of apiByHandle) {
+      if (!cachedMap.has(handle)) {
+        const profile = profileMap.get(apiFollow.did)
+        const priorityPatterns = profile ? extractPriorityPatternsFromProfile(profile) : ''
+        const timezone = profile ? extractTimezone(profile) : 'UTC'
+        await saveFollow({
+          accountDid: apiFollow.did,
+          username: handle,
+          followed_at: clientDate().toISOString(),
+          amp_factor: 1.0,
+          priorityPatterns: priorityPatterns || undefined,
+          timezone,
+          displayName: profile?.displayName || undefined,
+          followedBy: profile ? !!profile.viewer?.followedBy : undefined,
+          lastUpdatedAt: profile ? clientNow() : undefined,
+        })
+        addedCount++
+      }
+    }
+
+    // Update stale entries
+    for (const cached of cachedFollows) {
+      if (!apiHandleSet.has(cached.username)) continue  // already deleted
+      if (cached.lastUpdatedAt && (now - cached.lastUpdatedAt) <= oneDay) continue  // fresh
+
+      const profile = profileMap.get(cached.accountDid)
+      if (!profile) continue  // fetch failed, skip
+
+      const livePatterns = extractPriorityPatternsFromProfile(profile)
+      const liveTimezone = extractTimezone(profile)
+      await saveFollow({
+        ...cached,
+        displayName: profile.displayName || cached.displayName,
+        priorityPatterns: livePatterns || cached.priorityPatterns,
+        timezone: liveTimezone !== 'UTC' ? liveTimezone : cached.timezone,
+        followedBy: !!profile.viewer?.followedBy,
+        lastUpdatedAt: clientNow(),
+      })
+      updatedCount++
+    }
+
+    log.info('Follows', `Sweep complete: ${deletedCount} removed, ${addedCount} added, ${updatedCount} updated`)
+  } catch (error) {
+    log.error('Follows', 'Follow cache sweep failed:', error)
+    // Don't rethrow — next day's sweep will catch misses
   }
 }
 

@@ -284,7 +284,7 @@ export default function Navigation() {
                 <span className="hidden md:inline font-medium">Debug</span>
               </button>
               {showDebugMenu && (
-                <div className="absolute bottom-full left-0 mb-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 min-w-[160px]">
+                <div className="absolute bottom-full right-0 md:left-0 md:right-auto mb-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 min-w-[160px]">
                   <button
                     onClick={() => { setShowBugReportModal(true); setShowDebugMenu(false) }}
                     className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-t-lg transition-colors"

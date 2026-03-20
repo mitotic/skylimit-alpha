@@ -16,7 +16,7 @@ import Button from './Button'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useSession } from '../auth/SessionContext'
-import { checkFollowStatus, follow } from '../api/social'
+import { follow } from '../api/social'
 import { getProfile } from '../api/profile'
 import { saveFollow } from '../curation/skylimitCache'
 import { extractPriorityPatternsFromProfile, extractTimezone } from '../curation/skylimitGeneral'
@@ -27,15 +27,20 @@ import log from '../utils/logger'
 interface AggregatedNotificationProps {
   notification: AggregatedNotification
   onPostClick?: (uri: string) => void
+  followStatusMap?: Record<string, boolean | null>
+  onFollowStatusChange?: (did: string, status: boolean) => void
 }
 
-export default function AggregatedNotificationComponent({ 
-  notification, 
-  onPostClick 
+export default function AggregatedNotificationComponent({
+  notification,
+  onPostClick,
+  followStatusMap: externalFollowStatusMap,
+  onFollowStatusChange
 }: AggregatedNotificationProps) {
   const navigate = useNavigate()
-  const { agent, session } = useSession()
-  const [followStatusMap, setFollowStatusMap] = useState<Record<string, boolean | null>>({})
+  const { agent } = useSession()
+  const [localFollowStatusMap, setLocalFollowStatusMap] = useState<Record<string, boolean | null>>({})
+  const followStatusMap = externalFollowStatusMap || localFollowStatusMap
   const [followLoadingMap, setFollowLoadingMap] = useState<Record<string, boolean>>({})
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [showUserMenu, setShowUserMenu] = useState(false)
@@ -68,21 +73,7 @@ export default function AggregatedNotificationComponent({
   const authors = notification.authors
   const mostRecent = notification.mostRecent
   
-  // Check follow status for all authors in follow notifications
-  useEffect(() => {
-    if (normalizedReason === 'follow' && agent && session) {
-      authors.forEach(author => {
-        checkFollowStatus(agent, author.did)
-          .then(followUri => {
-            setFollowStatusMap(prev => ({ ...prev, [author.did]: !!followUri }))
-          })
-          .catch(error => {
-            log.warn('Notifications', 'Failed to check follow status:', error)
-            setFollowStatusMap(prev => ({ ...prev, [author.did]: null }))
-          })
-      })
-    }
-  }, [normalizedReason, authors, agent, session])
+  // Follow status is now batch-fetched at the page level via followStatusMap prop
 
   useEffect(() => {
     if (!showUserMenu) return
@@ -126,7 +117,11 @@ export default function AggregatedNotificationComponent({
         priorityPatterns: priorityPatterns || undefined,
         timezone,
       })
-      setFollowStatusMap(prev => ({ ...prev, [targetDid]: true }))
+      if (onFollowStatusChange) {
+        onFollowStatusChange(targetDid, true)
+      } else {
+        setLocalFollowStatusMap(prev => ({ ...prev, [targetDid]: true }))
+      }
       addToast('Now following', 'success')
     } catch (error) {
       log.error('Notifications', 'Failed to follow:', error)
