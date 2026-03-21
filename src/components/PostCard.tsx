@@ -444,7 +444,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                   onClick={handleCounterClick}
                   className={curation
                     ? (isAlwaysShow
-                        ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+                        ? 'text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 cursor-pointer'
                         : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer')
                     : 'text-gray-500 dark:text-gray-400 cursor-default'
                   }
@@ -507,7 +507,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
             ref={repostCounterButtonRef}
             onClick={handleCounterClick}
             className={isAlwaysShow
-              ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+              ? 'text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 cursor-pointer'
               : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'}
             title="Click for edition curation info"
           >
@@ -568,7 +568,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                     ref={repostCounterButtonRef}
                     onClick={handleCounterClick}
                     className={isAlwaysShow
-                      ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+                      ? 'text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 cursor-pointer'
                       : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer'}
                     title="Click for edition curation info"
                   >
@@ -690,7 +690,7 @@ export default function PostCard({ post, onReply, onRepost, onQuotePost, onLike,
                 onClick={handleCounterClick}
                 className={curation
                   ? (isAlwaysShow
-                      ? 'text-green-600 dark:text-green-500 hover:text-green-700 dark:hover:text-green-400 cursor-pointer'
+                      ? 'text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 cursor-pointer'
                       : 'text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer')
                   : 'text-gray-500 dark:text-gray-400 cursor-default'
                 }
