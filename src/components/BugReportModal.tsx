@@ -142,7 +142,8 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
   // Uses Intl.Segmenter for accurate grapheme counting.
   function splitForDm(text: string): string[] {
     const MAX_GRAPHEMES = 900 // Leave room for [n/m] prefix (Bluesky DM limit is 1000 graphemes)
-    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const segmenter = new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
 
     function graphemeLength(s: string): number {
       let count = 0
