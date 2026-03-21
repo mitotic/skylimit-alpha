@@ -6,6 +6,7 @@
  */
 
 import { clientDate } from './clientClock'
+import log from './logger'
 
 /**
  * Get midnight (00:00:00) in a specific timezone for the calendar date
@@ -15,6 +16,10 @@ import { clientDate } from './clientClock'
  * it operates on the Date's UTC timestamp, which Intl correctly interprets.
  */
 export function getMidnightInTimezone(date: Date, timezone: string): Date {
+  if (isNaN(date.getTime())) {
+    log.warn('Timezone', `getMidnightInTimezone called with invalid date, substituting current time`)
+    date = new Date()
+  }
   // Get calendar date components in target timezone
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
@@ -114,6 +119,10 @@ export function timezonesAreDifferent(tz1: string, tz2: string): boolean {
  * Used for edition time checks.
  */
 export function getTimeInTimezone(date: Date, timezone: string): string {
+  if (isNaN(date.getTime())) {
+    log.warn('Timezone', `getTimeInTimezone called with invalid date, substituting current time`)
+    date = new Date()
+  }
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     hour: '2-digit',

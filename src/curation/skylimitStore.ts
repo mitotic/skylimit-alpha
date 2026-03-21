@@ -9,7 +9,7 @@ import { saveSettings, getSettings as getSettingsFromDB } from './skylimitCache'
 // Exported defaults for use in UI components
 export const FEED_REDISPLAY_IDLE_INTERVAL_DEFAULT = 240 // minutes
 export const REPOST_DISPLAY_INTERVAL_DEFAULT = 24 // hours
-export const VIEWS_PER_DAY_DEFAULT = 500
+export const VIEWS_PER_DAY_DEFAULT = 600
 
 const DEFAULT_SETTINGS: SkylimitSettings = {
   viewsPerDay: VIEWS_PER_DAY_DEFAULT,

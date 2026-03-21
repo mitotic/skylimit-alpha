@@ -144,6 +144,11 @@ export async function assignAllNumbers(): Promise<void> {
     if (s.postTimestamp > newestTimestamp) newestTimestamp = s.postTimestamp
   }
 
+  if (!isFinite(oldestTimestamp) || !isFinite(newestTimestamp) || newestTimestamp === 0) {
+    log.warn('Numbering', `Invalid timestamp range (oldest=${oldestTimestamp}, newest=${newestTimestamp}), skipping`)
+    return
+  }
+
   // Process each day
   const startDate = new Date(oldestTimestamp)
   const endDate = new Date(newestTimestamp)

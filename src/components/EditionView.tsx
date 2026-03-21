@@ -66,7 +66,7 @@ export default function EditionView({
   const [registryEntries, setRegistryEntries] = useState<EditionRegistryEntry[]>([])
   const [currentEdition, setCurrentEdition] = useState<EditionDisplayData | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [sectionsExpanded, setSectionsExpanded] = useState(true)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [editionLoading, setEditionLoading] = useState(false)
   const [hasLayout, setHasLayout] = useState(true)
@@ -275,8 +275,13 @@ export default function EditionView({
     setShowEditionList(false)
   }, [])
 
-  const toggleSections = useCallback(() => {
-    setSectionsExpanded(prev => !prev)
+  const toggleSection = useCallback((sectionCode: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(sectionCode)) next.delete(sectionCode)
+      else next.add(sectionCode)
+      return next
+    })
   }, [])
 
   const handleNewspaperViewToggle = useCallback(async () => {
@@ -518,10 +523,16 @@ export default function EditionView({
           </label>
           {namedSections.length > 0 && (
             <button
-              onClick={toggleSections}
+              onClick={() => {
+                if (collapsedSections.size === namedSections.length) {
+                  setCollapsedSections(new Set())
+                } else {
+                  setCollapsedSections(new Set(namedSections.map(s => s.code)))
+                }
+              }}
               className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
             >
-              {sectionsExpanded ? 'Close sections' : 'Open sections'}
+              {collapsedSections.size === namedSections.length ? 'Open sections' : 'Close sections'}
             </button>
           )}
         </div>
@@ -554,11 +565,11 @@ export default function EditionView({
         <div key={section.code}>
           {/* Section divider/header */}
           <div
-            onClick={toggleSections}
+            onClick={() => toggleSection(section.code)}
             className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50"
           >
             <span className="text-blue-600 dark:text-blue-400 text-base">
-              {sectionsExpanded ? '▼' : '▶'}
+              {collapsedSections.has(section.code) ? '▶' : '▼'}
             </span>
             <div className="flex-1 flex items-center gap-2">
               <span className="h-px flex-1 bg-blue-400 dark:bg-blue-500" />
@@ -573,7 +584,7 @@ export default function EditionView({
           </div>
 
           {/* Section posts */}
-          {sectionsExpanded && section.posts.map(post => {
+          {!collapsedSections.has(section.code) && section.posts.map(post => {
             const viewedPost = getPostWithViewed(post)
             return (
               <div key={getPostUniqueId(post)} data-post-uri={post.post.uri} data-post-id={getPostUniqueId(post)}>

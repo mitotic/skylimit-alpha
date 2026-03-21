@@ -197,6 +197,10 @@ export function createFeedCacheEntries(
       if (reason?.indexedAt) {
         // Use reason.indexedAt when available (this is the repost timestamp)
         postTimestamp = new Date(reason.indexedAt)
+        if (isNaN(postTimestamp.getTime())) {
+          log.warn('FeedCache', `Invalid repost indexedAt for ${post.post.uri}: ${reason.indexedAt}`)
+          postTimestamp = lastPostTime
+        }
       } else {
         // Use lastPostTime for reposts without reason.indexedAt
         postTimestamp = lastPostTime
@@ -205,6 +209,10 @@ export function createFeedCacheEntries(
       // Original post: use createdAt and update lastPostTime
       const record = post.post.record as any
       postTimestamp = new Date(record?.createdAt || post.post.indexedAt || now)
+      if (isNaN(postTimestamp.getTime())) {
+        log.warn('FeedCache', `Invalid post timestamp for ${post.post.uri}, using current time`)
+        postTimestamp = new Date(now)
+      }
       lastPostTime = postTimestamp
     }
 

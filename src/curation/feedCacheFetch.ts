@@ -37,7 +37,7 @@ import {
 import {
   tryCreateEdition,
 } from './skylimitEditionAssembly'
-import { getParsedEditions, EDITION_PRE_OFFSET_MS } from './skylimitEditions'
+import { getParsedEditions, EDITION_PRE_OFFSET_MS, TAIL_EDITION_NUMBER } from './skylimitEditions'
 import { isEditionInRegistry } from './editionRegistry'
 import log from '../utils/logger'
 
@@ -734,6 +734,11 @@ export async function fetchToSecondaryFeedCache(
     let batchStopped = false
 
     for (const entry of entries) {
+      // Skip entries with invalid timestamps (NaN escapes comparison checks)
+      if (isNaN(entry.postTimestamp)) {
+        log.warn(topic, ` Skipping entry with invalid postTimestamp: ${entry.uniqueId}`)
+        continue
+      }
       // Check midnight boundary — stop if post is at or before boundary
       if (entry.postTimestamp <= midnightBoundary) {
         log.info(topic, ` Reached midnight boundary: ${new Date(midnightBoundary).toLocaleString()}`)
@@ -941,8 +946,21 @@ export async function transferSecondaryToPrimary(
     return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null, oldestTransferredTimestamp: null, editionsAssembled: 0 }
   }
 
-  // Sort oldest-first for correct numbering order
-  const sorted = [...secondaryEntries].sort((a, b) => a.entry.postTimestamp - b.entry.postTimestamp)
+  // Filter out entries with invalid timestamps, then sort oldest-first for correct numbering order
+  const sorted = [...secondaryEntries]
+    .filter(s => {
+      if (isNaN(s.entry.postTimestamp)) {
+        log.warn(topic, ` Skipping entry with invalid postTimestamp: ${s.entry.uniqueId}`)
+        return false
+      }
+      return true
+    })
+    .sort((a, b) => a.entry.postTimestamp - b.entry.postTimestamp)
+
+  if (sorted.length === 0) {
+    log.debug(topic, ` No valid entries to transfer (all had invalid timestamps)`)
+    return { postsTransferred: 0, displayableCount: 0, newestTransferredTimestamp: null, oldestTransferredTimestamp: null, editionsAssembled: 0 }
+  }
 
   // Initialize numbering from the day of the oldest entry (unless skipping)
   const settings = await getSettings()
@@ -979,7 +997,7 @@ export async function transferSecondaryToPrimary(
   // Find all pending editions between newestPrimaryTimestamp and newestEntryTimestamp
   const pendingEditions: Array<{ editionNumber: number; editionTime: string; editionTimestamp: number }> = []
   const editionTimes = parsedEditions.editions
-    .filter(e => e.editionNumber !== 0)
+    .filter(e => e.editionNumber > 0 && e.editionNumber < TAIL_EDITION_NUMBER)
     .sort((a, b) => a.time.localeCompare(b.time))
 
   // Compute how many days the data spans to check all possible editions

@@ -542,30 +542,34 @@ export const getBlueSkyProfileUrl = getProfileUrl
  */
 export function getFeedViewPostTimestamp(post: AppBskyFeedDefs.FeedViewPost, feedReceivedTime?: Date): Date {
   const isReposted = isRepost(post)
-  
+
+  // Helper: return a valid Date or null
+  const validDate = (value: any): Date | null => {
+    if (!value) return null
+    const d = new Date(value)
+    return isNaN(d.getTime()) ? null : d
+  }
+
   if (isReposted) {
     // For reposts, try multiple approaches to get the repost timestamp
-    
+
     // 1. Check if reason object has timestamp (unlikely but possible)
     const reason = post.reason as any
-    if (reason?.indexedAt) {
-      return new Date(reason.indexedAt)
-    }
-    if (reason?.createdAt) {
-      return new Date(reason.createdAt)
-    }
-    
+    const fromIndexedAt = validDate(reason?.indexedAt)
+    if (fromIndexedAt) return fromIndexedAt
+    const fromCreatedAt = validDate(reason?.createdAt)
+    if (fromCreatedAt) return fromCreatedAt
+
     // 2. Check if FeedViewPost itself has indexedAt (some API responses might)
-    if ((post as any).indexedAt) {
-      return new Date((post as any).indexedAt)
-    }
-    
+    const fromPostIndexedAt = validDate((post as any).indexedAt)
+    if (fromPostIndexedAt) return fromPostIndexedAt
+
     // 3. Use feedReceivedTime if provided (when we received this batch from API)
     // This is a good proxy since reposts appear in timeline at repost time
     if (feedReceivedTime) {
       return feedReceivedTime
     }
-    
+
     // 4. Fallback: Use current time as proxy
     // This is not ideal but reposts appear in timeline at repost time,
     // so if we process them immediately, current time is close to repost time
@@ -577,10 +581,14 @@ export function getFeedViewPostTimestamp(post: AppBskyFeedDefs.FeedViewPost, fee
     const offset = (uriHash % 1000) // 0-999ms offset
     return new Date(now.getTime() + offset)
   }
-  
-  // Original post: use createdAt
+
+  // Original post: use createdAt, then indexedAt, then current time
   const record = post.post.record as any
-  return new Date(record?.createdAt || post.post.indexedAt || clientNow())
+  const fromCreatedAt = validDate(record?.createdAt)
+  if (fromCreatedAt) return fromCreatedAt
+  const fromIndexedAt = validDate(post.post.indexedAt)
+  if (fromIndexedAt) return fromIndexedAt
+  return new Date(clientNow())
 }
 
 /**
