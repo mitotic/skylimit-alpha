@@ -195,28 +195,38 @@ export function generateLayoutText(state: EditorState): string {
 
   for (const edition of state.editions) {
     if (edition.type === 'common') {
-      // Output common patterns without # HEAD line
+      // Output common patterns without # HEAD line (no leading blank - it's first)
       const commonLines = generateEditionPatternLines(edition)
       if (commonLines.length > 0) {
         lines.push(...commonLines)
-        lines.push('')
       }
     } else if (edition.type === 'tail') {
-      // Output TAIL if it has content
       const tailLines = generateEditionPatternLines(edition)
       if (tailLines.length > 0) {
+        // Blank line above # TAIL for readability
+        if (lines.length > 0) {
+          lines.push('')
+        }
         lines.push('# TAIL')
-        lines.push(...tailLines)
+        // Always add blank line after # TAIL for readability
         lines.push('')
+        lines.push(...tailLines)
       }
     } else {
-      // Timed edition
+      // Timed edition — blank line above for readability
+      if (lines.length > 0) {
+        lines.push('')
+      }
       const timeName = edition.name
         ? `# ${edition.time} ${edition.name}`
         : `# ${edition.time}`
       lines.push(timeName)
-      lines.push(...generateEditionPatternLines(edition))
-      lines.push('')
+      const editionLines = generateEditionPatternLines(edition)
+      // Blank line after edition header if first content is not a section header
+      if (editionLines.length > 0 && !editionLines[0].startsWith('##')) {
+        lines.push('')
+      }
+      lines.push(...editionLines)
     }
   }
 
@@ -228,6 +238,10 @@ function generateEditionPatternLines(edition: EditorEdition): string[] {
 
   for (const section of edition.sections) {
     if (section.name) {
+      // Blank line above section header for readability (if not first line)
+      if (lines.length > 0) {
+        lines.push('')
+      }
       lines.push(`## ${section.name}`)
     }
 

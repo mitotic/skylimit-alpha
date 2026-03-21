@@ -279,7 +279,7 @@ const CurationPopup = forwardRef<HTMLDivElement, CurationPopupProps>(({
             <button
               onClick={onAmpUp}
               disabled={ampLoading}
-              className="flex-1 px-3 py-1.5 text-sm bg-green-400 hover:bg-green-500 text-white rounded disabled:opacity-50"
+              className="flex-1 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded disabled:opacity-50"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 inline-block align-middle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg> Amp Up
             </button>

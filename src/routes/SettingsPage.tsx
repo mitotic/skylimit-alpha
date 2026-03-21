@@ -1314,15 +1314,6 @@ Use this only if the app is not working correctly. This cannot be undone.`}
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setShowResetFeedModal(true)}
-                  disabled={isResettingFeed}
-                  className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
-                >
-                  Refresh post display
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
                   onClick={() => setShowResetDataModal(true)}
                   disabled={isResettingData}
                   className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full"
@@ -1344,6 +1335,15 @@ Use this only if the app is not working correctly. This cannot be undone.`}
         </form>
 
         <div className="flex flex-wrap gap-3 mt-6">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowResetFeedModal(true)}
+            disabled={isResettingFeed}
+            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-full"
+          >
+            Refresh post display
+          </Button>
           <Button
             type="button"
             variant="secondary"
@@ -1907,8 +1907,8 @@ Your Skylimit settings will be preserved.`}
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-1">
               {editionWarning.map(handle => (
-                <a key={handle} href={`https://bsky.app/profile/${handle}`} target="_blank" rel="noopener noreferrer"
-                   className="text-blue-600 dark:text-blue-400 hover:underline">
+                <a key={handle} onClick={() => navigate(`/profile/${handle}`)}
+                   className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
                   @{handle}
                 </a>
               ))}

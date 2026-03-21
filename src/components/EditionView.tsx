@@ -14,6 +14,7 @@ import type { BskyAgent } from '@atproto/api'
 import PostCard from './PostCard'
 import { getEditionList, getEditionContent, EditionDisplayData } from '../curation/skylimitEditionAssembly'
 import { getPostUniqueId } from '../curation/skylimitGeneral'
+import { getPostSummariesInRange } from '../curation/skylimitCache'
 import { getSettings, updateSettings } from '../curation/skylimitStore'
 import { useSwipeNavigation } from '../hooks/useSwipeNavigation'
 import { useViewTracking } from '../hooks/useViewTracking'
@@ -78,6 +79,7 @@ export default function EditionView({
   // Edition list popup
   const [showEditionList, setShowEditionList] = useState(false)
   const titleRef = useRef<HTMLButtonElement>(null)
+  const [baseEditionCounts, setBaseEditionCounts] = useState<Map<string, { total: number; unviewed: number }>>(new Map())
 
   // View tracking: map from postId → { viewedAt, editionKey } (shared across editions)
   type ViewedAtEntry = { viewedAt: number; editionKey: string }
@@ -233,6 +235,46 @@ export default function EditionView({
     })
   }, [registryEntries])
 
+  // Compute base per-edition post counts from IndexedDB (once per registry change)
+  useEffect(() => {
+    if (registryEntries.length === 0) {
+      setBaseEditionCounts(new Map())
+      return
+    }
+    let cancelled = false
+    async function computeCounts() {
+      const counts = new Map<string, { total: number; unviewed: number }>()
+      for (const entry of registryEntries) {
+        const summaries = await getPostSummariesInRange(entry.startPostTimestamp, entry.endPostTimestamp)
+        const synthetic = summaries.filter(s => s.edition_status === 'synthetic')
+        const unviewed = synthetic.filter(s => !s.viewedAt).length
+        counts.set(entry.editionKey, { total: synthetic.length, unviewed })
+      }
+      if (!cancelled) setBaseEditionCounts(counts)
+    }
+    computeCounts()
+    return () => { cancelled = true }
+  }, [registryEntries])
+
+  // Derive reactive edition counts by adjusting base counts with viewedAtMap
+  const editionCounts = useMemo(() => {
+    if (baseEditionCounts.size === 0) return baseEditionCounts
+    const viewedPerEdition = new Map<string, number>()
+    for (const [, entry] of viewedAtMap) {
+      viewedPerEdition.set(entry.editionKey, (viewedPerEdition.get(entry.editionKey) || 0) + 1)
+    }
+    const adjusted = new Map<string, { total: number; unviewed: number }>()
+    for (const [key, base] of baseEditionCounts) {
+      const sessionViewed = viewedPerEdition.get(key) || 0
+      // Base unviewed excludes IDB-hydrated views; viewedAtMap includes both
+      // hydrated and new views. Use max to avoid double-counting.
+      const hydratedViewed = base.total - base.unviewed
+      const allViewed = Math.max(hydratedViewed, sessionViewed)
+      adjusted.set(key, { total: base.total, unviewed: Math.max(0, base.total - allViewed) })
+    }
+    return adjusted
+  }, [baseEditionCounts, viewedAtMap])
+
   // Persist current index
   useEffect(() => {
     sessionStorage.setItem(EDITION_INDEX_KEY, String(currentIndex))
@@ -343,7 +385,10 @@ export default function EditionView({
     })
   }, [currentFeed])
 
-  useViewTracking({ feed: currentFeed, setFeed: setFeedAdapter })
+  // Force useViewTracking to re-observe DOM when sections collapse/expand
+  // (new array reference triggers the observe effect in the hook)
+  const feedForTracking = useMemo(() => [...currentFeed], [currentFeed, collapsedSections])
+  useViewTracking({ feed: feedForTracking, setFeed: setFeedAdapter })
 
   // Helper to get a post with viewedAt injected
   const getPostWithViewed = useCallback((post: AppBskyFeedDefs.FeedViewPost): AppBskyFeedDefs.FeedViewPost => {
@@ -435,13 +480,21 @@ export default function EditionView({
           </button>
 
           <div className="text-center">
-            <button
-              ref={titleRef}
-              onClick={() => setShowEditionList(prev => !prev)}
-              className={`font-semibold text-lg text-blue-700 dark:text-blue-400 hover:underline cursor-pointer ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}
-            >
-              {edition.editionName}
-            </button>
+            <div className="flex items-center justify-center gap-1">
+              <span
+                className={`font-semibold text-lg text-gray-900 dark:text-gray-100 ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}
+              >
+                {edition.editionName}
+              </span>
+              <button
+                ref={titleRef}
+                onClick={() => setShowEditionList(prev => !prev)}
+                className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 cursor-pointer leading-none"
+                aria-label="Show edition list"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+              </button>
+            </div>
             <div className={`text-base text-gray-500 dark:text-gray-400 ${editionFont === 'sans-serif' ? 'font-newspaper-sans' : 'font-serif'}`}>
               {edition.editionDate.toLocaleString(undefined, {
                 hour: 'numeric', minute: '2-digit',
@@ -460,35 +513,47 @@ export default function EditionView({
               />
               {/* Popup */}
               <div
-                className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg max-h-80 overflow-y-auto w-72"
+                className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg max-h-80 overflow-y-auto w-80"
                 style={{
                   top: titleRef.current
                     ? titleRef.current.getBoundingClientRect().bottom + 4
                     : 60,
                   left: titleRef.current
                     ? Math.max(8, titleRef.current.getBoundingClientRect().left +
-                        titleRef.current.getBoundingClientRect().width / 2 - 144)
+                        titleRef.current.getBoundingClientRect().width / 2 - 160)
                     : 16,
                 }}
               >
                 {registryEntries.map((entry, idx) => {
                   const isCurrent = idx === currentIndex
                   const isUnviewed = !entry.viewedAt
-                  const dateStr = formatEditionDate(entry)
-                  const nameStr = entry.editionName && entry.editionName !== entry.editionKey
-                    ? ` \u2013 ${entry.editionName}` : ''
+                  const entryDate = new Date(entry.startPostTimestamp)
+                  const today = new Date()
+                  const isToday = entryDate.getFullYear() === today.getFullYear() &&
+                    entryDate.getMonth() === today.getMonth() &&
+                    entryDate.getDate() === today.getDate()
+                  const dateSuffix = isToday ? '' : ` (${entryDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`
+                  const displayName = entry.editionName || formatEditionDate(entry)
                   return (
                     <button
                       key={entry.editionKey}
                       onClick={() => { if (!isCurrent) goToEdition(idx) }}
-                      className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${
+                      className={`w-full text-left px-3 py-2 text-sm flex items-center gap-1 ${
                         isCurrent
                           ? 'text-gray-400 dark:text-gray-500 cursor-default'
                           : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer'
                       } ${idx > 0 ? 'border-t border-gray-100 dark:border-gray-700' : ''}`}
                     >
                       <span className={`text-xs ${isUnviewed ? 'text-red-500' : 'invisible'}`}>●</span>
-                      <span>{dateStr}{nameStr}</span>
+                      <span className="flex-1">{displayName}{dateSuffix}</span>
+                      {editionCounts.has(entry.editionKey) && (() => {
+                        const c = editionCounts.get(entry.editionKey)!
+                        return (
+                          <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap ml-2">
+                            unread {c.unviewed}/{c.total}
+                          </span>
+                        )
+                      })()}
                     </button>
                   )
                 })}

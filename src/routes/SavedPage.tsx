@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigationType } from 'react-router-dom'
 import { AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { getBookmarks } from '../api/feed'
@@ -7,13 +8,20 @@ import PostCard from '../components/PostCard'
 import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 
+const SAVED_FEED_KEY = 'websky_saved_feed_state'
+const SAVED_SCROLL_KEY = 'websky_saved_scroll_pos'
+
 export default function SavedPage() {
   const { agent } = useSession()
+  const navigationType = useNavigationType()
   const [feed, setFeed] = useState<AppBskyFeedDefs.FeedViewPost[]>([])
   const [cursor, setCursor] = useState<string | undefined>()
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const restoredFromCacheRef = useRef(false)
+  const isProgrammaticScrollRef = useRef(false)
+  const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const addToast = (message: string, type: 'error' | 'success' = 'error') => {
     const id = Date.now().toString()
@@ -23,6 +31,13 @@ export default function SavedPage() {
   const removeToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id))
   }
+
+  // Save feed state to sessionStorage
+  const saveFeedState = useCallback((currentFeed: AppBskyFeedDefs.FeedViewPost[], currentCursor?: string) => {
+    try {
+      sessionStorage.setItem(SAVED_FEED_KEY, JSON.stringify({ feed: currentFeed, cursor: currentCursor }))
+    } catch { /* ignore quota errors */ }
+  }, [])
 
   const loadBookmarks = useCallback(async (loadCursor?: string) => {
     if (!agent) return
@@ -40,9 +55,15 @@ export default function SavedPage() {
         } as AppBskyFeedDefs.FeedViewPost))
 
       if (loadCursor) {
-        setFeed(prev => [...prev, ...posts])
+        setFeed(prev => {
+          const updated = [...prev, ...posts]
+          const newCursor = posts.length > 0 ? response.cursor : undefined
+          saveFeedState(updated, newCursor)
+          return updated
+        })
       } else {
         setFeed(posts)
+        saveFeedState(posts, posts.length > 0 ? response.cursor : undefined)
       }
       // Clear cursor if no posts returned (end of list)
       setCursor(posts.length > 0 ? response.cursor : undefined)
@@ -52,11 +73,82 @@ export default function SavedPage() {
       setIsLoading(false)
       setIsLoadingMore(false)
     }
-  }, [agent])
+  }, [agent, saveFeedState])
 
+  // On mount: restore from cache on back navigation, otherwise fetch fresh
   useEffect(() => {
+    if (navigationType === 'POP') {
+      try {
+        const saved = sessionStorage.getItem(SAVED_FEED_KEY)
+        if (saved) {
+          const { feed: savedFeed, cursor: savedCursor } = JSON.parse(saved)
+          if (savedFeed && savedFeed.length > 0) {
+            setFeed(savedFeed)
+            setCursor(savedCursor)
+            setIsLoading(false)
+            restoredFromCacheRef.current = true
+            return
+          }
+        }
+      } catch { /* parse error, fall through to fresh load */ }
+    } else {
+      // Fresh navigation — clear stale state
+      sessionStorage.removeItem(SAVED_FEED_KEY)
+      sessionStorage.removeItem(SAVED_SCROLL_KEY)
+    }
     loadBookmarks()
-  }, [loadBookmarks])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Restore scroll position after cache restore renders
+  useEffect(() => {
+    if (!restoredFromCacheRef.current) return
+    restoredFromCacheRef.current = false
+
+    const savedScrollY = sessionStorage.getItem(SAVED_SCROLL_KEY)
+    if (!savedScrollY) return
+    const targetY = parseInt(savedScrollY, 10)
+    if (isNaN(targetY) || targetY <= 0) return
+
+    isProgrammaticScrollRef.current = true
+    let attempt = 0
+    const maxAttempts = 8
+
+    const tryRestore = () => {
+      attempt++
+      window.scrollTo(0, targetY)
+      const actual = window.scrollY
+      if (Math.abs(actual - targetY) < 100 || attempt >= maxAttempts) {
+        setTimeout(() => { isProgrammaticScrollRef.current = false }, 200)
+      } else {
+        setTimeout(tryRestore, attempt * 100)
+      }
+    }
+    // Small delay for DOM to render restored feed
+    setTimeout(tryRestore, 50)
+  }, [feed.length]) // triggers when feed is populated from cache
+
+  // Debounced scroll position saving
+  useEffect(() => {
+    const handleScroll = () => {
+      if (scrollSaveTimeoutRef.current) clearTimeout(scrollSaveTimeoutRef.current)
+      scrollSaveTimeoutRef.current = setTimeout(() => {
+        if (isProgrammaticScrollRef.current) return
+        const scrollY = window.scrollY
+        try {
+          if (scrollY < 50) {
+            sessionStorage.removeItem(SAVED_SCROLL_KEY)
+          } else {
+            sessionStorage.setItem(SAVED_SCROLL_KEY, scrollY.toString())
+          }
+        } catch { /* ignore */ }
+      }, 150)
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      if (scrollSaveTimeoutRef.current) clearTimeout(scrollSaveTimeoutRef.current)
+    }
+  }, [])
 
   const handleBookmark = async (uri: string, cid: string) => {
     if (!agent) return

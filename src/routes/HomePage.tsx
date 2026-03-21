@@ -1117,7 +1117,7 @@ export default function HomePage() {
                   {curationSuspended ? (
                     <span className="text-orange-500 dark:text-orange-400">(curation suspended)</span>
                   ) : (
-                    <><span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=curation')}>~{skylimitStats.shown_daily.toFixed(0)}</span> shown, <span className="font-semibold text-blue-600 dark:text-blue-400">{(skylimitStats.edited_daily ?? 0).toFixed(0)}</span> edited</>
+                    <><span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=curation')}>~{skylimitStats.shown_daily.toFixed(0)}</span> shown, <span className="font-semibold cursor-pointer hover:underline text-blue-600 dark:text-blue-400" onClick={() => navigate('/settings?tab=editions')}>{(skylimitStats.edited_daily ?? 0).toFixed(0)}</span> edited</>
                   )}
                 </div>
                 <button

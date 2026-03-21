@@ -457,6 +457,11 @@ export async function getEditionContent(registryEntry: EditionRegistryEntry, age
       const originalPost = summary.repostUri ? originalPostMap.get(summary.repostUri) : undefined
 
       if (originalPost && syntheticPost) {
+        // Ensure reason.uri matches the summary uniqueId for view tracking
+        // (older feed_cache entries may lack reason.uri)
+        if (!(syntheticPost.reason as any)?.uri) {
+          (syntheticPost.reason as any).uri = summary.uniqueId
+        }
         // Combine: original post data + synthetic edition metadata
         const editionPost: CurationFeedViewPost = {
           post: originalPost,
@@ -472,6 +477,10 @@ export async function getEditionContent(registryEntry: EditionRegistryEntry, age
         posts.push(editionPost)
       } else if (syntheticPost) {
         // Fallback: use synthetic post as-is (text only, no embeds)
+        // Ensure reason.uri for view tracking (same as above)
+        if (!(syntheticPost.reason as any)?.uri) {
+          (syntheticPost.reason as any).uri = summary.uniqueId
+        }
         if (!syntheticPost.curation) {
           syntheticPost.curation = {
             curation_status: 'edition_publish_show',

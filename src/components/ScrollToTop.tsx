@@ -14,12 +14,14 @@ export default function ScrollToTop() {
     const wasOnThread = prevPathnameRef.current.startsWith('/post/')
     const isOnThread = pathname.startsWith('/post/')
     const isOnSearch = pathname === '/search'
+    const isOnSaved = pathname === '/saved'
+    const isOnNotifications = pathname === '/notifications'
 
     // Don't scroll to top if:
     // 1. We're on a thread page (let ThreadPage handle scroll restoration)
     // 2. We're navigating back to thread page (POP navigation)
-    // 3. We're returning to search page via back navigation (let SearchPage handle scroll restoration)
-    if (isOnThread || (wasOnThread && navigationType === 'POP') || (isOnSearch && navigationType === 'POP')) {
+    // 3. We're returning to search/saved/notifications page via back navigation (let them handle scroll restoration)
+    if (isOnThread || (wasOnThread && navigationType === 'POP') || ((isOnSearch || isOnSaved || isOnNotifications) && navigationType === 'POP')) {
       prevPathnameRef.current = pathname
       return
     }

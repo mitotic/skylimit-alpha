@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate, useNavigationType } from 'react-router-dom'
 import { AppBskyNotificationListNotifications, AppBskyFeedDefs } from '@atproto/api'
 import { useSession } from '../auth/SessionContext'
 import { useRateLimit } from '../contexts/RateLimitContext'
@@ -22,8 +22,12 @@ interface NotificationWithPost extends Notification {
   replyParentAuthor?: { displayName?: string; handle: string }
 }
 
+const NOTIF_FEED_KEY = 'websky_notif_feed_state'
+const NOTIF_SCROLL_KEY = 'websky_notif_scroll_pos'
+
 export default function NotificationsPage() {
   const navigate = useNavigate()
+  const navigationType = useNavigationType()
   const { agent, session } = useSession()
   const { rateLimitStatus, setRateLimitStatus } = useRateLimit()
   const [notifications, setNotifications] = useState<NotificationWithPost[]>([])
@@ -33,6 +37,9 @@ export default function NotificationsPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [followStatusMap, setFollowStatusMap] = useState<Record<string, boolean | null>>({})
+  const restoredFromCacheRef = useRef(false)
+  const isProgrammaticScrollRef = useRef(false)
+  const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now().toString()
@@ -400,9 +407,92 @@ export default function NotificationsPage() {
     }
   }, [notifications])
 
+  // Save notification state to sessionStorage whenever it changes
   useEffect(() => {
+    if (notifications.length === 0) return
+    try {
+      sessionStorage.setItem(NOTIF_FEED_KEY, JSON.stringify({
+        notifications,
+        cursor,
+        followStatusMap,
+      }))
+    } catch { /* ignore quota errors */ }
+  }, [notifications, cursor, followStatusMap])
+
+  // On mount: restore from cache on back navigation, otherwise fetch fresh
+  useEffect(() => {
+    if (navigationType === 'POP') {
+      try {
+        const saved = sessionStorage.getItem(NOTIF_FEED_KEY)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (parsed.notifications && parsed.notifications.length > 0) {
+            setNotifications(parsed.notifications)
+            setCursor(parsed.cursor)
+            setFollowStatusMap(parsed.followStatusMap || {})
+            setIsLoading(false)
+            restoredFromCacheRef.current = true
+            return
+          }
+        }
+      } catch { /* parse error, fall through to fresh load */ }
+    } else {
+      // Fresh navigation — clear stale state
+      sessionStorage.removeItem(NOTIF_FEED_KEY)
+      sessionStorage.removeItem(NOTIF_SCROLL_KEY)
+    }
     loadNotifications()
-  }, [loadNotifications])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Restore scroll position after cache restore renders
+  useEffect(() => {
+    if (!restoredFromCacheRef.current) return
+    restoredFromCacheRef.current = false
+
+    const savedScrollY = sessionStorage.getItem(NOTIF_SCROLL_KEY)
+    if (!savedScrollY) return
+    const targetY = parseInt(savedScrollY, 10)
+    if (isNaN(targetY) || targetY <= 0) return
+
+    isProgrammaticScrollRef.current = true
+    let attempt = 0
+    const maxAttempts = 8
+
+    const tryRestore = () => {
+      attempt++
+      window.scrollTo(0, targetY)
+      const actual = window.scrollY
+      if (Math.abs(actual - targetY) < 100 || attempt >= maxAttempts) {
+        setTimeout(() => { isProgrammaticScrollRef.current = false }, 200)
+      } else {
+        setTimeout(tryRestore, attempt * 100)
+      }
+    }
+    setTimeout(tryRestore, 50)
+  }, [aggregatedNotifications.length]) // triggers when aggregated list is populated from cache
+
+  // Debounced scroll position saving
+  useEffect(() => {
+    const handleScroll = () => {
+      if (scrollSaveTimeoutRef.current) clearTimeout(scrollSaveTimeoutRef.current)
+      scrollSaveTimeoutRef.current = setTimeout(() => {
+        if (isProgrammaticScrollRef.current) return
+        const scrollY = window.scrollY
+        try {
+          if (scrollY < 50) {
+            sessionStorage.removeItem(NOTIF_SCROLL_KEY)
+          } else {
+            sessionStorage.setItem(NOTIF_SCROLL_KEY, scrollY.toString())
+          }
+        } catch { /* ignore */ }
+      }, 150)
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      if (scrollSaveTimeoutRef.current) clearTimeout(scrollSaveTimeoutRef.current)
+    }
+  }, [])
 
   const handleLoadMore = () => {
     if (cursor && !isLoadingMore) {

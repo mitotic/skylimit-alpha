@@ -1134,6 +1134,10 @@ export async function transferSecondaryToPrimary(
         const insertTimestamp = getFeedViewPostTimestamp(syntheticPost).getTime()
         const syntheticUniqueId = getPostUniqueId(syntheticPost).replace(SL_REPOST_PREFIX, SL_EDITION_PREFIX)
 
+        // Set reason.uri so getPostUniqueId() returns the sl-ed:// uniqueId when
+        // the post is later retrieved from cache (fixes summary lookup mismatch)
+        ;(syntheticPost.reason as any).uri = syntheticUniqueId
+
         // Follow repost convention: username = reposter (editor), orig_username = original author
         const editorBy = (syntheticPost.reason as any)?.by
         const syntheticSummary: PostSummary = {
