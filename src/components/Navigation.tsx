@@ -52,7 +52,7 @@ export default function Navigation() {
       try {
         const [count, chatCount] = await Promise.all([
           getUnreadCount(agent),
-          getUnreadChatCount(agent).catch(() => 0),
+          getNonStandardServerName() ? Promise.resolve(0) : getUnreadChatCount(agent).catch(() => 0),
         ])
         setUnreadCount(count)
         setUnreadChatCount(chatCount)
@@ -326,6 +326,7 @@ Use this only if the app is not working correctly. This cannot be undone.`}
             isOpen={showBugReportModal}
             onClose={() => setShowBugReportModal(false)}
             initialLogLevel={2}
+            agent={agent}
           />
         </>
       )}

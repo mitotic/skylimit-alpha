@@ -35,6 +35,7 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh'
 import { useViewTracking } from '../hooks/useViewTracking'
 import { useFeedPipeline, getRetainedSecondaryCache, setRetainedSecondaryCache, clearRetainedSecondaryCache, isRetainedCacheValid } from '../hooks/useFeedPipeline'
 import { checkForAppUpdate } from '../utils/versionCheck'
+import { useFeedTransition } from '../hooks/useFeedTransition'
 import log from '../utils/logger'
 
 export default function HomePage() {
@@ -47,6 +48,7 @@ export default function HomePage() {
   const scrollSentinelRef = useRef<HTMLDivElement>(null)
   const intersectionObserverRef = useRef<IntersectionObserver | null>(null)
 
+  const { feedContainerRef, fadeOut, fadeIn } = useFeedTransition()
   const previousPathnameRef = useRef<string>(location.pathname)
   const scrollRestoredRef = useRef(false)
   const [unviewedRevision, setUnviewedRevision] = useState(0)
@@ -449,6 +451,12 @@ export default function HomePage() {
         }
 
         if (newestTimestamp) {
+          await fadeOut()
+
+          // Scroll to top while content is invisible
+          isProgrammaticScrollRef.current = true
+          window.scrollTo({ top: 0, behavior: 'instant' })
+
           const result = await refreshDisplayedFeed({
             newestTimestamp: newestTimestamp,
             triggerProbe: false,
@@ -474,10 +482,12 @@ export default function HomePage() {
             }
             sessionStorage.setItem(getFeedStateKey('curated'), JSON.stringify(stateToSave))
           }
-        }
 
-        isProgrammaticScrollRef.current = true
-        window.scrollTo({ top: 0, behavior: 'smooth' })
+          fadeIn()
+        } else {
+          isProgrammaticScrollRef.current = true
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        }
         setTimeout(() => {
           isProgrammaticScrollRef.current = false
           lastScrollTopRef.current = window.scrollY
@@ -494,7 +504,7 @@ export default function HomePage() {
     } finally {
       setIsLoadingMore(false)
     }
-  }, [agent, session, newestDisplayedPostTimestamp, isLoadingMore, refreshDisplayedFeed, postsNeededForPage, lookingBack])
+  }, [agent, session, newestDisplayedPostTimestamp, isLoadingMore, refreshDisplayedFeed, postsNeededForPage, lookingBack, fadeOut, fadeIn])
 
   // Handle "All n new posts" button click
   const handleLoadAllNewPosts = useCallback(async () => {
@@ -570,6 +580,12 @@ export default function HomePage() {
         clearRetainedSecondaryCache()
 
         if (fetchResult.newestTimestamp) {
+          await fadeOut()
+
+          // Scroll to top while content is invisible
+          isProgrammaticScrollRef.current = true
+          window.scrollTo({ top: 0, behavior: 'instant' })
+
           const result = await refreshDisplayedFeed({
             newestTimestamp: fetchResult.newestTimestamp,
             triggerProbe: false,
@@ -580,12 +596,13 @@ export default function HomePage() {
           } else {
             addToast('No new posts to display (filtered by settings)', 'info')
           }
+
+          fadeIn()
         } else {
           addToast('No new posts to display', 'info')
+          isProgrammaticScrollRef.current = true
+          window.scrollTo({ top: 0, behavior: 'smooth' })
         }
-
-        isProgrammaticScrollRef.current = true
-        window.scrollTo({ top: 0, behavior: 'smooth' })
         setTimeout(() => {
           isProgrammaticScrollRef.current = false
           lastScrollTopRef.current = window.scrollY
@@ -604,7 +621,7 @@ export default function HomePage() {
       setIdleTimerTriggered(false)
       idleTimerForcedRef.current = false
     }
-  }, [agent, session, isLoadingMore, multiPageCount, partialPageCount, handleLoadNewPosts, newestDisplayedPostTimestamp, refreshDisplayedFeed, lookingBack])
+  }, [agent, session, isLoadingMore, multiPageCount, partialPageCount, handleLoadNewPosts, newestDisplayedPostTimestamp, refreshDisplayedFeed, lookingBack, fadeOut, fadeIn])
 
   const handlePrevPage = useCallback(async () => {
     if (previousPageFeed.length === 0) return
@@ -788,6 +805,8 @@ export default function HomePage() {
     const trimmed = actualRemove > 0 ? combined.slice(0, combined.length - actualRemove) : combined
     log.debug('Fast Forward', `Feed: ${feed.length} → prepend ${accumulatedFiltered.length}, remove ${combined.length - trimmed.length} from bottom → ${trimmed.length}`)
 
+    await fadeOut()
+
     setFeed(trimmed)
 
     const newNewest = getFeedViewPostTimestamp(trimmed[0], feedReceivedTime).getTime()
@@ -804,7 +823,8 @@ export default function HomePage() {
     }
 
     window.scrollTo({ top: 0, behavior: 'instant' })
-  }, [feed, feedTopTrimmed, lookupCurationAndFilter])
+    fadeIn()
+  }, [feed, feedTopTrimmed, lookupCurationAndFilter, fadeOut, fadeIn])
 
   // Set up IntersectionObserver for infinite scrolling
   useEffect(() => {
@@ -1241,8 +1261,7 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* Next Page / All New Posts buttons - hidden during initialization */}
-            {initialPrefetchDone && (
+            {/* Next Page / All New Posts buttons */}
             <div className="sticky top-0 z-30 p-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
               <div className="flex gap-2">
                 {/* "Next Page" button - always visible, grayed out when inactive or during lookback */}
@@ -1345,8 +1364,8 @@ export default function HomePage() {
                 )}
               </div>
             </div>
-            )}
 
+            <div ref={feedContainerRef} className="feed-transition-container">
             {feed.map((post, index) => (
               <div
                 key={getPostUniqueId(post)}
@@ -1368,6 +1387,7 @@ export default function HomePage() {
                 />
               </div>
             ))}
+            </div>
           </>
         )}
 

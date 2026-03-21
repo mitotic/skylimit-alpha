@@ -247,6 +247,7 @@ Use this only if the app is not working correctly. This cannot be undone.`}
             isOpen={showBugReportModal}
             onClose={() => setShowBugReportModal(false)}
             initialLogLevel={2}
+            agent={agent}
           />
         </>
       )}

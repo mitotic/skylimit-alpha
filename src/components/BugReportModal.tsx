@@ -49,7 +49,6 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
   const showSubmit = isDevServer()
   const [showDmSubmit, setShowDmSubmit] = useState(false)
   const [appAccountDid, setAppAccountDid] = useState<string | null>(null)
-
   // Check if app account follows the user (for DM submit on production)
   useEffect(() => {
     if (!isOpen || showSubmit) return // Only check on production
@@ -139,6 +138,54 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
     }
   }
 
+  // Split text into chunks that fit within Bluesky's 1000-grapheme DM limit.
+  // Uses Intl.Segmenter for accurate grapheme counting.
+  function splitForDm(text: string): string[] {
+    const MAX_GRAPHEMES = 900 // Leave room for [n/m] prefix (Bluesky DM limit is 1000 graphemes)
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+
+    function graphemeLength(s: string): number {
+      let count = 0
+      for (const _ of segmenter.segment(s)) { count++; void _ }
+      return count
+    }
+
+    if (graphemeLength(text) <= MAX_GRAPHEMES) return [text]
+
+    const chunks: string[] = []
+    const lines = text.split('\n')
+    let current = ''
+    for (const line of lines) {
+      const candidate = current ? current + '\n' + line : line
+      if (graphemeLength(candidate) > MAX_GRAPHEMES) {
+        if (current) chunks.push(current)
+        // If a single line exceeds the limit, hard-split it
+        if (graphemeLength(line) > MAX_GRAPHEMES) {
+          let remaining = line
+          while (graphemeLength(remaining) > MAX_GRAPHEMES) {
+            // Take MAX_GRAPHEMES graphemes
+            let taken = ''
+            let count = 0
+            for (const seg of segmenter.segment(remaining)) {
+              if (count >= MAX_GRAPHEMES) break
+              taken += seg.segment
+              count++
+            }
+            chunks.push(taken)
+            remaining = remaining.slice(taken.length)
+          }
+          current = remaining
+        } else {
+          current = line
+        }
+      } else {
+        current = candidate
+      }
+    }
+    if (current) chunks.push(current)
+    return chunks
+  }
+
   async function handleDmSubmit() {
     if (!agent || !appAccountDid) return
     setSubmitting(true)
@@ -146,7 +193,11 @@ export default function BugReportModal({ isOpen, onClose, initialLogLevel, onSub
     setSubmitErrorMsg(null)
     try {
       const { convo } = await getOrCreateConversation(agent, appAccountDid)
-      await sendMessage(agent, convo.id, { text: previewText })
+      const chunks = splitForDm(previewText)
+      for (let i = 0; i < chunks.length; i++) {
+        const prefix = chunks.length > 1 ? `[${i + 1}/${chunks.length}] ` : ''
+        await sendMessage(agent, convo.id, { text: prefix + chunks[i] })
+      }
       handleClose()
       onDmSubmitSuccess?.()
     } catch (err) {
