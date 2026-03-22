@@ -24,7 +24,10 @@ import { getNonStandardServerName } from '../api/atproto-client'
 import AcceleratedClock from '../components/AcceleratedClock'
 import InstallHelp from '../components/InstallHelp'
 import PinnedPostBanner from '../components/PinnedPostBanner'
-import HelpMessage from '../components/HelpMessage'
+import ReleaseBanner from '../components/ReleaseBanner'
+import HelpMessage, { renderFormattedText } from '../components/HelpMessage'
+import { helpGlossary } from '../data/helpGlossary'
+import { version } from '../../package.json'
 import { clientNow, clientDate } from '../utils/clientClock'
 import { HomeTab, HOME_TAB_STATE_KEY, getFeedStateKey, getScrollStateKey, DEFAULT_MAX_DISPLAYED_FEED_SIZE, FAST_FORWARD_CHUNK_SIZE, SavedFeedState, findLowestVisiblePostTimestamp } from '../hooks/homePageTypes'
 import { isNewestEditionUnviewed } from '../curation/editionRegistry'
@@ -62,6 +65,7 @@ export default function HomePage() {
   const [showIntroModal, setShowIntroModal] = useState(false)
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState(false)
+  const [showAboutModal, setShowAboutModal] = useState(false)
 
   // Tab state - initialize from sessionStorage
   const getInitialTab = (): HomeTab => {
@@ -1070,15 +1074,13 @@ export default function HomePage() {
                 </div>
               ) : (
                 <>
-                  <a
-                    href="https://github.com/mitotic/skylimit-alpha#readme"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                  <span
+                    onClick={() => setShowAboutModal(true)}
+                    className="text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
                     title="About Skylimit"
                   >
                     About
-                  </a>
+                  </span>
                   <InstallHelp />
                   {updateVersion && (
                     <span
@@ -1139,6 +1141,7 @@ export default function HomePage() {
       )}
 
       <PinnedPostBanner />
+      <ReleaseBanner />
 
       {/* Intro message for first-time users */}
       {showIntroMessage && (
@@ -1560,9 +1563,17 @@ export default function HomePage() {
         </p>
       </Modal>
 
-      <Modal isOpen={showIntroModal} onClose={() => setShowIntroModal(false)} title="About Skylimit" size="md">
+      <Modal isOpen={showIntroModal} onClose={() => setShowIntroModal(false)} title="Skylimit Help" size="md">
         <div className="text-gray-700 dark:text-gray-300 text-base leading-relaxed">
-          <HelpMessage />
+          <HelpMessage showTitle={false} />
+        </div>
+      </Modal>
+
+      <Modal isOpen={showAboutModal} onClose={() => setShowAboutModal(false)} title={`About Skylimit (version: ${version})`} size="md">
+        <div className="text-gray-700 dark:text-gray-300 text-base leading-relaxed">
+          {helpGlossary['about'].split('\n\n').map((para, i) => (
+            <p key={i} className={i > 0 ? 'mt-2' : ''}>{renderFormattedText(para, navigate)}</p>
+          ))}
         </div>
       </Modal>
     </div>

@@ -15,6 +15,7 @@ import Spinner from '../components/Spinner'
 import ToastContainer, { ToastMessage } from '../components/ToastContainer'
 import EngagementList from '../components/EngagementList'
 import SelfReplyChain from '../components/SelfReplyChain'
+import { PencilIcon } from '../components/NavIcons'
 import { isReadOnlyMode } from '../utils/readOnlyMode'
 import log from '../utils/logger'
 
@@ -1030,7 +1031,7 @@ export default function ThreadPage() {
           className="fixed bottom-20 right-6 md:bottom-8 md:right-8 bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all z-40 flex items-center justify-center w-14 h-14"
           aria-label="Reply to post"
         >
-          <span className="text-2xl">&#x270F;&#xFE0F;</span>
+          <PencilIcon className="w-7 h-7" />
           {isReadOnlyMode() && (
             <span className="absolute inset-0 flex items-center justify-center text-red-500 text-6xl font-thin pointer-events-none -mt-1">&times;</span>
           )}

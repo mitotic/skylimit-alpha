@@ -6,6 +6,7 @@ import { appAccountHandle } from '../curation/skylimitGeneral'
 interface HelpMessageProps {
   showInitWarning?: boolean
   readOnlyNote?: string
+  showTitle?: boolean
 }
 
 /**
@@ -14,7 +15,7 @@ interface HelpMessageProps {
  * - @handle rendered as clickable profile links
  * - https://... URLs rendered as <a> hyperlinks
  */
-function renderFormattedText(
+export function renderFormattedText(
   text: string,
   navigate: ReturnType<typeof useNavigate>
 ): React.ReactNode[] {
@@ -47,7 +48,7 @@ function renderFormattedText(
           rel="noopener noreferrer"
           className="text-blue-600 dark:text-blue-400 hover:underline"
         >
-          {part}
+          {part.replace(/^https?:\/\//, '').replace(/#.*$/, '')}
         </a>
       )
     }
@@ -55,12 +56,12 @@ function renderFormattedText(
   })
 }
 
-export default function HelpMessage({ showInitWarning, readOnlyNote }: HelpMessageProps) {
+export default function HelpMessage({ showInitWarning, readOnlyNote, showTitle = true }: HelpMessageProps) {
   const navigate = useNavigate()
 
   return (
     <>
-      <p>{introMessage.header}</p>
+      {showTitle && <p className="font-bold mb-1">{introMessage.header}</p>}
       <ul className="list-disc list-inside mt-1 space-y-1">
         {introMessage.bullets.map((bullet, i) => (
           <li key={i}>{renderFormattedText(bullet, navigate)}</li>

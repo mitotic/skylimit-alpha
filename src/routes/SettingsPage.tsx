@@ -1981,7 +1981,17 @@ Your Skylimit settings will be preserved.`}
     <div className="pb-20 md:pb-0">
       {/* Header */}
       <div className="p-4">
-        <h1 className="text-2xl font-bold">Settings</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Settings</h1>
+          <a
+            href="https://bsky.app/settings"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+          >
+            Bluesky settings ↗
+          </a>
+        </div>
       </div>
 
       {/* Tabs */}
