@@ -13,6 +13,7 @@ import { getSettings } from '../curation/skylimitStore'
 import { useSession } from '../auth/SessionContext'
 import { ampUp, ampDown } from '../curation/skylimitFollows'
 import CurationPopup from './CurationPopup'
+import { isBeginnerMode } from '../utils/beginnerMode'
 import { getGlossaryDefinition } from '../data/helpGlossary'
 import { clientNow } from '../utils/clientClock'
 import log from '../utils/logger'
@@ -43,7 +44,7 @@ interface ChartDataPoint {
   shownDaily: number
 }
 
-function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint[], highlightUsername?: string | null, mode: ChartMode }) {
+function CurationChart({ data, highlightUsername, highlightLabel, mode }: { data: ChartDataPoint[], highlightUsername?: string | null, highlightLabel?: string | null, mode: ChartMode }) {
   const margin = { top: 20, right: 2, bottom: 40, left: 38 }
   const width = 640
   const height = 300
@@ -81,8 +82,8 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
     : 'Followee (sorted by posting rate)'
 
   return (
-    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
-      <h3 className="text-lg font-semibold mb-2">Curation Rate Distribution</h3>
+    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg" style={{ overflowAnchor: 'none' }}>
+      <h3 className="text-lg font-semibold mb-2">Followee Posting and Show Rates</h3>
       <svg viewBox={`-30 0 ${width + 30} ${height}`} width="100%" className="max-h-[250px]">
         {/* Grid lines */}
         {yTicks.map(v => (
@@ -135,14 +136,14 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
               )
             })}
 
-            {/* Allow rate - open blue squares */}
+            {/* Allow rate - open red squares */}
             {data.map(d => {
               const cx = xScale(d.index)
               const cy = yScale(d.allowedPerDay)
               const s = 2.5
               return (
                 <rect key={`allowed-${d.index}`} x={cx - s} y={cy - s} width={s * 2} height={s * 2}
-                  fill="none" className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
+                  fill="none" className="stroke-red-500 dark:stroke-red-400" strokeWidth={1.5} />
               )
             })}
 
@@ -158,20 +159,20 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
               className="fill-gray-700 dark:fill-gray-300">Posting rate</text>
 
             <rect x={margin.left + 15.5} y={margin.top + 36.5} width={7} height={7}
-              fill="none" className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
+              fill="none" className="stroke-red-500 dark:stroke-red-400" strokeWidth={1.5} />
             <text x={margin.left + 32} y={margin.top + 45} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Allow rate</text>
           </>
         ) : (
           <>
-            {/* Allow rate - open blue squares (skylimit_number × amp_factor) — drawn first (back) */}
+            {/* Allow rate - open red squares (skylimit_number × amp_factor) — drawn first (back) */}
             {data.map(d => {
               const cx = xScale(d.index)
               const cy = yScale(d.allowedPerDay)
               const s = 2.5
               return (
                 <rect key={`computed-${d.index}`} x={cx - s} y={cy - s} width={s * 2} height={s * 2}
-                  fill="none" className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
+                  fill="none" className="stroke-red-500 dark:stroke-red-400" strokeWidth={1.5} />
               )
             })}
 
@@ -205,7 +206,7 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
               className="fill-gray-700 dark:fill-gray-300">Show rate</text>
 
             <rect x={margin.left + 15.5} y={margin.top + 36.5} width={7} height={7}
-              fill="none" className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={1.5} />
+              fill="none" className="stroke-red-500 dark:stroke-red-400" strokeWidth={1.5} />
             <text x={margin.left + 32} y={margin.top + 45} style={{ fontSize: 'var(--post-secondary-text-size)' }}
               className="fill-gray-700 dark:fill-gray-300">Allow rate</text>
           </>
@@ -217,11 +218,24 @@ function CurationChart({ data, highlightUsername, mode }: { data: ChartDataPoint
           if (!point) return null
           const x = xScale(point.index)
           return (
-            <line x1={x} x2={x} y1={margin.top} y2={margin.top + plotH}
-              className="stroke-red-500 dark:stroke-red-400" strokeWidth={1.5} strokeDasharray="4 3" />
+            <>
+              <line x1={x} x2={x} y1={margin.top} y2={margin.top + plotH}
+                className="stroke-red-500 dark:stroke-red-400" strokeWidth={1.5} strokeDasharray="4 3" />
+              <text x={x} y={margin.top - 5} textAnchor="middle"
+                style={{ fontSize: 'var(--post-secondary-text-size)' }}
+                className="fill-red-500 dark:fill-red-400">@{highlightLabel || highlightUsername}</text>
+            </>
           )
         })()}
       </svg>
+      {isBeginnerMode() && (
+        <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+          <div><strong>Posting rate:</strong> Number of posts received per day</div>
+          <div><strong>Allow rate:</strong> Number of posts allowed to be shown per day (controlled by Amp Factor)</div>
+          <div><strong>Show rate:</strong> Number of posts actually shown per day (will differ from Allow rate due to dropped replies/reposts as well as statistical fluctuation)</div>
+          <div className="italic mt-1">This is an interactive graph — you can click on the Amp Factor for any followee in the table below, position the graph below the popup, and change the Amp factor to immediately see its impact on the followee's Allow rate.</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -262,26 +276,14 @@ export default function SkylimitStatistics() {
     try {
       if (!skipLoading) setLoading(true)
 
-      // Get settings for anonymization, views per day, and debug mode
+      // Gather all async data first, then batch state updates to avoid intermediate re-renders
       const settings = await getSettings()
-      setAnonymize(settings?.anonymizeUsernames || false)
-      setViewsPerDay(settings?.viewsPerDay || 0)
-      setDebugMode(settings?.debugMode || false)
-      setStoredTimezone(settings?.timezone || '')
-      
-      // Get statistics with timestamp
       const filterResult = await getFilterWithTimestamp()
       if (!filterResult) {
         setLoading(false)
         return
       }
-      
       const [globalStats, userFilterData, timestamp] = filterResult
-      setStats(globalStats)
-      setUserFilter(userFilterData)
-      setFilterTimestamp(timestamp)
-
-      // Get followed hashtags and most common timezone
       const allFollows = await getAllFollows()
       const tags: string[] = []
       const timezoneCounts: Record<string, number> = {}
@@ -297,16 +299,10 @@ export default function SkylimitStatistics() {
         }
       }
       
-      setFollowedTags(tags)
-      
       // Get most common timezone, or use browser timezone as fallback
       const mostCommonTimezone = Object.entries(timezoneCounts)
         .sort((a, b) => b[1] - a[1])[0]?.[0] || Intl.DateTimeFormat().resolvedOptions().timeZone
-      setCurationTimezone(mostCommonTimezone)
-      
-      // Get follows (already loaded above, but need for account stats)
-      setFollows(allFollows)
-      
+
       // Build account statistics
       // Iterate over ALL followed users (like Mahoot does), not just those in userFilter
       const accounts: AccountStatistics[] = []
@@ -412,6 +408,17 @@ export default function SkylimitStatistics() {
         return a.username.localeCompare(b.username)
       })
 
+      // Batch all state updates in one synchronous block to avoid intermediate re-renders
+      setAnonymize(settings?.anonymizeUsernames || false)
+      setViewsPerDay(settings?.viewsPerDay || 0)
+      setDebugMode(settings?.debugMode || false)
+      setStoredTimezone(settings?.timezone || '')
+      setStats(globalStats)
+      setUserFilter(userFilterData)
+      setFilterTimestamp(timestamp)
+      setFollowedTags(tags)
+      setCurationTimezone(mostCommonTimezone)
+      setFollows(allFollows)
       setAccountStats(activeAccounts)
     } catch (error) {
       log.error('Stats', 'Failed to load statistics:', error)
@@ -478,8 +485,7 @@ export default function SkylimitStatistics() {
     try {
       setLoadingAmp(true)
       await ampUp(username, myUsername)
-      // Reload statistics to reflect recomputed probabilities
-      await loadStatistics()
+      await loadStatistics(true)
     } catch (error) {
       log.error('Stats', 'Failed to amp up:', error)
       alert('Failed to update amplification factor')
@@ -492,8 +498,7 @@ export default function SkylimitStatistics() {
     try {
       setLoadingAmp(true)
       await ampDown(username, myUsername)
-      // Reload statistics to reflect recomputed probabilities
-      await loadStatistics()
+      await loadStatistics(true)
     } catch (error) {
       log.error('Stats', 'Failed to amp down:', error)
       alert('Failed to update amplification factor')
@@ -803,37 +808,41 @@ export default function SkylimitStatistics() {
                       })()}
                     </div>
                   )}
-                  {/* Interval diagnostics with complete/incomplete breakdown */}
-                  {stats.intervals_expected !== undefined && stats.intervals_processed !== undefined && (
-                    <div>
-                      Intervals: {stats.intervals_processed} of {stats.intervals_expected} expected ({((stats.intervals_processed / stats.intervals_expected) * 100).toFixed(1)}% coverage)
-                      {stats.intervals_complete !== undefined && stats.intervals_incomplete !== undefined && (
-                        <> ({stats.intervals_complete} complete, {stats.intervals_incomplete} incomplete)</>
+                  {debugMode && (
+                    <>
+                      {/* Interval diagnostics with complete/incomplete breakdown */}
+                      {stats.intervals_expected !== undefined && stats.intervals_processed !== undefined && (
+                        <div>
+                          Intervals: {stats.intervals_processed} of {stats.intervals_expected} expected ({((stats.intervals_processed / stats.intervals_expected) * 100).toFixed(1)}% coverage)
+                          {stats.intervals_complete !== undefined && stats.intervals_incomplete !== undefined && (
+                            <> ({stats.intervals_complete} complete, {stats.intervals_incomplete} incomplete)</>
+                          )}
+                        </div>
                       )}
-                    </div>
-                  )}
-                  {stats.posts_per_interval_avg !== undefined && (
-                    <div>
-                      Posts/interval: avg {stats.posts_per_interval_avg.toFixed(1)}
-                      {stats.posts_per_interval_max !== undefined && <>, max {stats.posts_per_interval_max}</>}
-                    </div>
-                  )}
-                  {stats.intervals_sparse !== undefined && stats.intervals_sparse > 0 && stats.posts_per_interval_avg !== undefined && (
-                    <div className="text-yellow-600 dark:text-yellow-400">
-                      Warning: {stats.intervals_sparse} intervals have &lt; {(stats.posts_per_interval_avg * 0.1).toFixed(0)} posts
-                    </div>
-                  )}
-                  {/* Cache vs accumulated diagnostics */}
-                  {stats.summaries_total_all !== undefined && (
-                    <div>
-                      Summaries count: {stats.summaries_total_all} total / {stats.summaries_total_processed ?? 0} processed ({stats.summaries_total_followees ?? 0} from followees)
-                    </div>
-                  )}
-                  {/* Summaries cache timestamps */}
-                  {stats.summaries_oldest_time && stats.summaries_newest_time && (
-                    <div>
-                      Summaries time range: {new Date(stats.summaries_oldest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)} - {new Date(stats.summaries_newest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)}
-                    </div>
+                      {stats.posts_per_interval_avg !== undefined && (
+                        <div>
+                          Posts/interval: avg {stats.posts_per_interval_avg.toFixed(1)}
+                          {stats.posts_per_interval_max !== undefined && <>, max {stats.posts_per_interval_max}</>}
+                        </div>
+                      )}
+                      {stats.intervals_sparse !== undefined && stats.intervals_sparse > 0 && stats.posts_per_interval_avg !== undefined && (
+                        <div className="text-yellow-600 dark:text-yellow-400">
+                          Warning: {stats.intervals_sparse} intervals have &lt; {(stats.posts_per_interval_avg * 0.1).toFixed(0)} posts
+                        </div>
+                      )}
+                      {/* Cache vs accumulated diagnostics */}
+                      {stats.summaries_total_all !== undefined && (
+                        <div>
+                          Summaries count: {stats.summaries_total_all} total / {stats.summaries_total_processed ?? 0} processed ({stats.summaries_total_followees ?? 0} from followees)
+                        </div>
+                      )}
+                      {/* Summaries cache timestamps */}
+                      {stats.summaries_oldest_time && stats.summaries_newest_time && (
+                        <div>
+                          Summaries time range: {new Date(stats.summaries_oldest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)} - {new Date(stats.summaries_newest_time).toLocaleString('en-US', storedTimezone ? { timeZone: storedTimezone } : undefined)}
+                        </div>
+                      )}
+                    </>
                   )}
                   <button
                     className="mt-2 px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50"
@@ -849,7 +858,7 @@ export default function SkylimitStatistics() {
         </div>
       </div>
 
-      {/* Curation Rate Distribution Chart */}
+      {/* Followee Posting and Show Rates Chart */}
       {chartData && chartData.length > 0 && (
         <div>
           <div className="mb-2">
@@ -862,7 +871,7 @@ export default function SkylimitStatistics() {
               <option value="normalized">Normalized posting rate</option>
             </select>
           </div>
-          <CurationChart data={chartData} highlightUsername={showPopup} mode={chartMode} />
+          <CurationChart data={chartData} highlightUsername={showPopup} highlightLabel={showPopup && anonymize ? (accountStats.find(a => a.username === showPopup)?.userEntry.altname || showPopup) : showPopup} mode={chartMode} />
         </div>
       )}
 
@@ -879,8 +888,8 @@ export default function SkylimitStatistics() {
 
       {/* Active Followee Statistics Table */}
       <div className="w-full">
-        <h3 className="text-lg font-semibold mb-1">Active Followees</h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Sortable daily average statistics (* indicates probabilities updated within last week)</p>
+        <h3 className="text-lg font-semibold mb-1">Active Followee Statistics <span className="text-sm font-normal">(daily average)</span></h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Sortable by any column (* indicates probabilities updated within last week)</p>
         <div className="overflow-x-auto max-w-full" style={{ WebkitOverflowScrolling: 'touch' }}>
           <table className="w-full border-collapse border border-gray-300 dark:border-gray-600 text-sm">
             <thead>

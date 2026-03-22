@@ -25,7 +25,7 @@ const CURATION_SETTINGS_KEYS: (keyof SkylimitSettings)[] = [
   'feedPageLength',
   'infiniteScrollingOption',
   'maxDisplayedFeedSize',
-  'pagedUpdatesVarFactor',
+  'newPostBatchFetches',
   'pagedUpdatesFullPageWaitMinutes',
   'feedRedisplayIdleInterval',
   'showEditionsInFeed',

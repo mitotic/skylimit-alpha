@@ -9,18 +9,18 @@ import { BskyAgent, AppBskyFeedDefs } from '@atproto/api'
 import { curateSinglePost } from './skylimitFilter'
 import { getFilter, getAllFollows, getPostSummariesInRange } from './skylimitCache'
 import { getSettings } from './skylimitStore'
-import { getCachedPostUniqueIds, getLocalMidnight, getNextLocalMidnight } from './skylimitFeedCache'
+import { getCachedPostUniqueIds, getLocalMidnight, getNextLocalMidnight, getNewestCachedPostTimestamp } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
 import { FollowInfo, PostSummary, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost, SecondaryRepostIndex, addToRepostIndex } from './types'
 import log from '../utils/logger'
 
-// Maximum PageRaw to prevent excessive API calls
-const MAX_PAGE_RAW = 100
+// Standard batch size for all API fetches (initial load, idle return, probe)
+export const FETCH_BATCH_SIZE = 100
 
 // Default settings
 export const PAGED_UPDATES_DEFAULTS = {
-  varFactor: 2,
+  newPostBatchFetches: 1,   // Number of API fetches per probe (1-3)
   fullPageWaitMinutes: 10,  // Time to wait for full page before showing partial page button
 }
 
@@ -43,31 +43,6 @@ export interface ProbeResult {
   lastPostNumber?: number     // curationNumber of the newest overlapping displayable post
   nonOverlappingEntries?: SecondaryEntry[]  // Curated entries eligible for retention
   retentionDisplayableCount?: number  // Displayable count from full batch (for retention decision)
-}
-
-/**
- * Calculate the number of raw posts to fetch for one filtered page.
- *
- * PageRaw = VarFactor * PageSize / FilterFrac
- *
- * @param pageSize - Number of posts per page (e.g., 25)
- * @param filterFrac - Fraction of posts surviving curation (0 to 1)
- * @param varFactor - Variability factor to account for filtering variance (default 1.5)
- * @returns Number of raw posts to fetch
- */
-export function calculatePageRaw(
-  pageSize: number,
-  filterFrac: number,
-  varFactor: number = PAGED_UPDATES_DEFAULTS.varFactor
-): number {
-  // Ensure filterFrac is valid (avoid division by zero)
-  const safeFrac = Math.max(0.01, Math.min(1.0, filterFrac))
-
-  // Calculate PageRaw
-  const pageRaw = Math.ceil(varFactor * pageSize / safeFrac)
-
-  // Cap at maximum to prevent excessive API calls
-  return Math.min(pageRaw, MAX_PAGE_RAW)
 }
 
 /**
@@ -109,14 +84,46 @@ export async function probeForNewPosts(
   }
 
   try {
+    // Get settings early — needed for multi-fetch config and curation
+    const settings = await getSettings()
+
     // Get cached post IDs early — needed for overlap detection
     const cachedPostIds = await getCachedPostUniqueIds()
 
-    // Single fetch of up to pageRaw posts (no adaptive second fetch)
-    const { feed } = await getHomeFeed(agent, { limit: pageRaw })
+    // Fetch posts, potentially multiple batches to bridge gap to cached posts
+    const maxFetches = Math.min(3, Math.max(1, settings?.newPostBatchFetches ?? PAGED_UPDATES_DEFAULTS.newPostBatchFetches))
+    const newestCachedTimestamp = maxFetches > 1 ? await getNewestCachedPostTimestamp() : null
 
-    if (feed.length === 0) {
+    const { feed: firstBatch, cursor: firstCursor } = await getHomeFeed(agent, { limit: pageRaw })
+
+    if (firstBatch.length === 0) {
       return result
+    }
+
+    let feed = [...firstBatch]
+    let currentCursor = firstCursor
+
+    // Additional fetches if gap exists between fetched posts and cache
+    if (maxFetches > 1 && newestCachedTimestamp != null) {
+      for (let fetchNum = 2; fetchNum <= maxFetches; fetchNum++) {
+        if (!currentCursor) break
+
+        // Check if oldest post in combined batch is still newer than cache
+        let oldestBatchTimestamp = Number.MAX_SAFE_INTEGER
+        for (const post of feed) {
+          const ts = getFeedViewPostTimestamp(post).getTime()
+          if (ts < oldestBatchTimestamp) oldestBatchTimestamp = ts
+        }
+        if (oldestBatchTimestamp <= newestCachedTimestamp) break
+
+        log.verbose('Probe', `Multi-fetch ${fetchNum}/${maxFetches}: gap detected (oldestBatch=${new Date(oldestBatchTimestamp).toLocaleTimeString()}, newestCached=${new Date(newestCachedTimestamp).toLocaleTimeString()})`)
+
+        const { feed: nextBatch, cursor: nextCursor } = await getHomeFeed(agent, { limit: pageRaw, cursor: currentCursor })
+        if (nextBatch.length === 0) break
+
+        feed = feed.concat(nextBatch)
+        currentCursor = nextCursor
+      }
     }
 
     result.rawPostCount = feed.length
@@ -131,9 +138,6 @@ export async function probeForNewPosts(
         result.rawNewestTimestamp = postTimestamp
       }
     }
-
-    // Get settings and filter data for curation
-    const settings = await getSettings()
     const [currentStats, currentProbs] = await getFilter() || [null, null]
     const currentFollows = await getAllFollows()
     const followMap: Record<string, FollowInfo> = {}
@@ -337,16 +341,16 @@ export async function probeForNewPosts(
  * Get paged updates settings with defaults
  */
 export async function getPagedUpdatesSettings(): Promise<{
-  varFactor: number
   fullPageWaitMinutes: number
   pageSize: number
+  newPostBatchFetches: number
 }> {
   const settings = await getSettings()
 
   return {
-    varFactor: settings?.pagedUpdatesVarFactor ?? PAGED_UPDATES_DEFAULTS.varFactor,
     fullPageWaitMinutes: settings?.pagedUpdatesFullPageWaitMinutes ?? PAGED_UPDATES_DEFAULTS.fullPageWaitMinutes,
     pageSize: settings?.feedPageLength ?? 25,
+    newPostBatchFetches: settings?.newPostBatchFetches ?? PAGED_UPDATES_DEFAULTS.newPostBatchFetches,
   }
 }
 

@@ -41,6 +41,11 @@ import { checkForAppUpdate } from '../utils/versionCheck'
 import { useFeedTransition } from '../hooks/useFeedTransition'
 import log from '../utils/logger'
 
+function incrementSessionCounter(key: string) {
+  const current = parseInt(sessionStorage.getItem(key) || '0', 10)
+  sessionStorage.setItem(key, String(current + 1))
+}
+
 export default function HomePage() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -299,7 +304,7 @@ export default function HomePage() {
   })
 
   // Handle loading new posts
-  const handleLoadNewPosts = useCallback(async () => {
+  const handleLoadNewPosts = useCallback(async (calledFromNewPosts?: boolean) => {
     if (lookingBack) {
       log.debug('New Posts', 'Background lookback in progress, ignoring click')
       addToast('Still syncing posts... Please wait.', 'info')
@@ -376,6 +381,13 @@ export default function HomePage() {
           newestTimestamp = fetchResult.newestTimestamp
           usedCache = false
           setSyncProgress(80)
+        }
+
+        // Track retained cache vs fetch usage
+        if (usedCache) {
+          incrementSessionCounter(calledFromNewPosts ? 'newPostsClicksRetained' : 'nextPageClicksRetained')
+        } else {
+          incrementSessionCounter(calledFromNewPosts ? 'newPostsClicksFetched' : 'nextPageClicksFetched')
         }
 
         const transferResult = await transferSecondaryToPrimary(allEntries, 'page', effectivePageLength)
@@ -588,6 +600,9 @@ export default function HomePage() {
           setSyncProgress(80)
         }
 
+        // Track retained cache vs fetch usage
+        incrementSessionCounter(usedRetainedCache ? 'allNewPostsClicksRetained' : 'allNewPostsClicksFetched')
+
         const transferResult = await transferSecondaryToPrimary(allEntries, 'all', pageLength)
         setSyncProgress(100)
         log.debug('New Posts', `MULTI-PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
@@ -651,7 +666,7 @@ export default function HomePage() {
     } else {
       log.debug('New Posts', `PARTIAL PAGE: ${partialPageCount} posts, using single page flow`)
       log.info('Page Load', `[New posts (${partialPageCount})] → delegating to single page handler`)
-      await handleLoadNewPosts()
+      await handleLoadNewPosts(true)
       setIdleTimerTriggered(false)
       idleTimerForcedRef.current = false
     }

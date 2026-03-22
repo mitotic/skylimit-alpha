@@ -6,8 +6,7 @@ import { CurationInitStatsDisplay } from '../components/CurationInitModal'
 import { RecurateResultStats } from '../components/RecurateResultModal'
 import { initDB, closeDB, getFilter, getPostSummary, isPostSummariesCacheEmpty, getCurationInitStats, checkPostSummaryExists, isSummariesCacheFresh, clearAllTimeVariantDataAndLogout, clearRecentData } from '../curation/skylimitCache'
 import { getSettings } from '../curation/skylimitStore'
-import { computeFilterFrac } from '../curation/skylimitStats'
-import { probeForNewPosts, calculatePageRaw, getPagedUpdatesSettings } from '../curation/pagedUpdates'
+import { probeForNewPosts, FETCH_BATCH_SIZE, getPagedUpdatesSettings } from '../curation/pagedUpdates'
 import { flushExpiredParentPosts } from '../curation/parentPostCache'
 import { scheduleStatsComputation, computeStatsInBackground } from '../curation/skylimitStatsWorker'
 import { recomputeCurationDecisions } from '../curation/skylimitRecurate'
@@ -849,17 +848,8 @@ export function useFeedPipeline({
 
       let fetchLimit = pageLength
       if (!cursor) {
-        const [, currentProbs] = await getFilter() || [null, null]
-        const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
-        const pagedSettings = await getPagedUpdatesSettings()
-        if (isIdleReturnMode) {
-          // After long idle, fetch the API maximum to ensure enough displayable posts
-          // survive curation filtering. The probe uses 3x pageLength for the same reason.
-          fetchLimit = 100
-        } else {
-          fetchLimit = calculatePageRaw(pageLength, currentFilterFrac, pagedSettings.varFactor)
-        }
-        log.debug('Feed', `Using pageRaw=${fetchLimit} (${isIdleReturnMode ? 'idle return max' : `filterFrac=${currentFilterFrac.toFixed(2)}`}, pageLength=${pageLength})`)
+        fetchLimit = FETCH_BATCH_SIZE
+        log.debug('Feed', `Using fetchLimit=${fetchLimit} (pageLength=${pageLength})`)
       }
 
       const { feed: newFeed, cursor: newCursor } = await getHomeFeed(agent, {
@@ -1953,7 +1943,7 @@ export function useFeedPipeline({
         const pagedSettings = await getPagedUpdatesSettings()
         const pageSize = pagedSettings.pageSize
 
-        const pageRaw = 100  // Single fetch of max batch size
+        const pageRaw = FETCH_BATCH_SIZE
 
         const currentBoundary = probeBoundaryTimestampRef.current
         log.verbose('Paged Updates/Probe', `Probing for new posts (pageRaw=${pageRaw}, newestDisplayed=${new Date(currentTimestamp).toLocaleTimeString()}, stopBoundary=${currentBoundary ? new Date(currentBoundary).toLocaleTimeString() : 'none'}, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'})...`)

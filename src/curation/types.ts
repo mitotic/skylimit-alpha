@@ -393,7 +393,7 @@ export interface SkylimitSettings {
   feedPageLength?: number // number of posts per page, default 25, values: 10, 20, 25, 50
   infiniteScrollingOption?: boolean // enable infinite scrolling, default false
   // Paged fresh updates settings
-  pagedUpdatesVarFactor?: number // variability factor for PageRaw calculation, default 2
+  newPostBatchFetches?: number // number of API fetches per probe (1-3), default 1
   pagedUpdatesFullPageWaitMinutes?: number // time to wait for full page before showing partial page, default 10
   // Repost display interval settings
   repostDisplayIntervalHours?: number // hide reposts if original/repost shown within this interval (hours), default 0 (disabled)

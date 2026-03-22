@@ -1218,24 +1218,19 @@ Use this only if the app is not working correctly. This cannot be undone.`}
 
                 <div className="mb-4">
                   <label className="block text-sm font-medium mb-2">
-                    Variability Factor
+                    New Post Batch Fetches
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="3"
-                    step="0.1"
-                    value={settings.pagedUpdatesVarFactor ?? PAGED_UPDATES_DEFAULTS.varFactor}
-                    onChange={(e) => {
-                      const value = parseFloat(e.target.value)
-                      if (!isNaN(value) && value >= 1 && value <= 3) {
-                        updateSetting('pagedUpdatesVarFactor', value)
-                      }
-                    }}
+                  <select
+                    value={settings.newPostBatchFetches ?? PAGED_UPDATES_DEFAULTS.newPostBatchFetches}
+                    onChange={(e) => updateSetting('newPostBatchFetches', parseInt(e.target.value))}
                     className="w-32 px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                  />
+                  >
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                  </select>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Multiplier for raw posts to fetch (accounts for filtering variability). Higher = more reliable page fill. Range: 1-3.
+                    Number of API fetches per probe. Higher values bridge gaps between new and cached posts. Default: 1.
                   </p>
                 </div>
 
@@ -1408,12 +1403,11 @@ Use this only if the app is not working correctly. This cannot be undone.`}
           />
         )}
 
-        {/* Data Archive */}
+        {/* Data Handling */}
         <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
-        <DisclosureSection title="Data Archive">
+        <DisclosureSection title="Data Handling">
 
-          {/* Cache Statistics - only show if debug mode is enabled */}
-          {settings.debugMode && (
+          {/* Cache Statistics */}
             <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
               <h3 className="text-lg font-semibold mb-3">Cache Statistics</h3>
 
@@ -1505,6 +1499,29 @@ Use this only if the app is not working correctly. This cannot be undone.`}
                   </div>
                 </div>
               )}
+            </div>
+
+          {/* New post loading counters - debug only */}
+          {settings.debugMode && (
+            <div className="bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
+              <h3 className="text-lg font-semibold mb-3">New post loading</h3>
+              <div className="text-sm space-y-1 ml-4">
+                <div>
+                  <span className="font-medium">Next Page</span> —
+                  fetched: {sessionStorage.getItem('nextPageClicksFetched') || '0'},
+                  retained: {sessionStorage.getItem('nextPageClicksRetained') || '0'}
+                </div>
+                <div>
+                  <span className="font-medium">New posts</span> —
+                  fetched: {sessionStorage.getItem('newPostsClicksFetched') || '0'},
+                  retained: {sessionStorage.getItem('newPostsClicksRetained') || '0'}
+                </div>
+                <div>
+                  <span className="font-medium">All new posts</span> —
+                  fetched: {sessionStorage.getItem('allNewPostsClicksFetched') || '0'},
+                  retained: {sessionStorage.getItem('allNewPostsClicksRetained') || '0'}
+                </div>
+              </div>
             </div>
           )}
 
