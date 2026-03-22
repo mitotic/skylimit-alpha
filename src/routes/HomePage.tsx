@@ -328,6 +328,7 @@ export default function HomePage() {
       const pageLength = settings?.feedPageLength || 25
 
       const effectivePageLength = postsNeededForPage ?? pageLength
+      const buttonName = postsNeededForPage !== null ? 'Next Page *' : 'Next Page'
 
       log.debug('New Posts', `SINGLE PAGE: Loading via unified fetch (effectivePageLength=${effectivePageLength})...`)
 
@@ -381,6 +382,7 @@ export default function HomePage() {
         setSyncProgress(100)
         log.debug('New Posts', `SINGLE PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
           `${transferResult.displayableCount} displayable${usedCache ? ' (from cache)' : ''}`)
+        log.info('Page Load', `[${buttonName}] source=${usedCache ? 'retained cache' : 'fetch'}, raw=${allEntries.length}, displayed=${transferResult.displayableCount}/${transferResult.postsTransferred} transferred`)
 
         // Compute remaining entries not transferred.
         // transferSecondaryToPrimary sorts oldest-first and processes sequentially,
@@ -403,6 +405,7 @@ export default function HomePage() {
             entries: remainingEntries,
             fetchedAt: usedCache ? cached!.fetchedAt : clientNow(),
             newestTimestamp,
+            partPagePostCount: 0,
           })
           log.debug('New Posts', `SINGLE PAGE: Retained ${remainingEntries.length} entries in secondary cache (${remaining} displayable)`)
         } else {
@@ -543,28 +546,54 @@ export default function HomePage() {
       try {
         const pageLength = settings?.feedPageLength || 25
 
-        const fetchResult = await fetchToSecondaryFeedCache(
-          agent,
-          session.handle,
-          session.did,
-          'all_new',
-          {
-            pageLength,
-            onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),
-          }
-        )
-        log.debug('New Posts', `MULTI-PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
+        // Check for valid retained secondary cache first
+        const retainedCached = getRetainedSecondaryCache()
+        const retainedCacheValid = await isRetainedCacheValid()
 
-        if (fetchResult.postsFetched === 0) {
-          addToast('No new posts available', 'info')
-          return
+        let allEntries: SecondaryEntry[]
+        let newestTimestamp: number | null
+        let usedRetainedCache = false
+
+        if (retainedCacheValid && retainedCached) {
+          // Use retained cache — skip network fetch
+          allEntries = retainedCached.entries
+          newestTimestamp = retainedCached.newestTimestamp
+          const cacheAge = clientNow() - retainedCached.fetchedAt
+          usedRetainedCache = true
+          log.debug('New Posts', `MULTI-PAGE: Using retained cache (${allEntries.length} entries, age=${Math.round(cacheAge / 1000)}s)`)
+          setSyncProgress(80)
+        } else {
+          // Clear stale/insufficient cache
+          if (retainedCached) clearRetainedSecondaryCache()
+
+          const fetchResult = await fetchToSecondaryFeedCache(
+            agent,
+            session.handle,
+            session.did,
+            'all_new',
+            {
+              pageLength,
+              onProgress: (progress) => setSyncProgress(Math.round(progress * 0.8)),
+            }
+          )
+          log.debug('New Posts', `MULTI-PAGE: Fetched ${fetchResult.postsFetched} posts to secondary`)
+
+          if (fetchResult.postsFetched === 0) {
+            addToast('No new posts available', 'info')
+            return
+          }
+
+          allEntries = fetchResult.entries
+          newestTimestamp = fetchResult.newestTimestamp
+          setSyncProgress(80)
         }
 
-        setSyncProgress(80)
-        const transferResult = await transferSecondaryToPrimary(fetchResult.entries, 'all', pageLength)
+        const transferResult = await transferSecondaryToPrimary(allEntries, 'all', pageLength)
         setSyncProgress(100)
         log.debug('New Posts', `MULTI-PAGE: Transferred ${transferResult.postsTransferred} posts, ` +
           `${transferResult.displayableCount} displayable`)
+        const multiButtonName = isExtendedIdle ? 'New posts (idle)' : `All new posts (${multiPageCount})`
+        log.info('Page Load', `[${multiButtonName}] source=${usedRetainedCache ? 'retained cache' : 'fetch'}, raw=${allEntries.length}, displayed=${transferResult.displayableCount}/${transferResult.postsTransferred} transferred`)
 
         setNewPostsCount(0)
         setShowNewPostsButton(false)
@@ -583,7 +612,7 @@ export default function HomePage() {
         probeHasGapRef.current = false
         clearRetainedSecondaryCache()
 
-        if (fetchResult.newestTimestamp) {
+        if (newestTimestamp) {
           await fadeOut()
 
           // Scroll to top while content is invisible
@@ -591,7 +620,7 @@ export default function HomePage() {
           window.scrollTo({ top: 0, behavior: 'instant' })
 
           const result = await refreshDisplayedFeed({
-            newestTimestamp: fetchResult.newestTimestamp,
+            newestTimestamp: newestTimestamp,
             triggerProbe: false,
             showAllNewPosts: false,
           })
@@ -621,6 +650,7 @@ export default function HomePage() {
       }
     } else {
       log.debug('New Posts', `PARTIAL PAGE: ${partialPageCount} posts, using single page flow`)
+      log.info('Page Load', `[New posts (${partialPageCount})] → delegating to single page handler`)
       await handleLoadNewPosts()
       setIdleTimerTriggered(false)
       idleTimerForcedRef.current = false

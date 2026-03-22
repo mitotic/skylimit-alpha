@@ -7,12 +7,12 @@
 
 import { BskyAgent, AppBskyFeedDefs } from '@atproto/api'
 import { curateSinglePost } from './skylimitFilter'
-import { getFilter, getAllFollows } from './skylimitCache'
+import { getFilter, getAllFollows, getPostSummariesInRange } from './skylimitCache'
 import { getSettings } from './skylimitStore'
 import { getCachedPostUniqueIds, getLocalMidnight, getNextLocalMidnight } from './skylimitFeedCache'
 import { getFeedViewPostTimestamp, getPostUniqueId, createPostSummary } from './skylimitGeneral'
 import { getHomeFeed } from '../api/feed'
-import { FollowInfo, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost, SecondaryRepostIndex, addToRepostIndex } from './types'
+import { FollowInfo, PostSummary, isStatusShow, SecondaryEntry, FeedCacheEntryWithPost, SecondaryRepostIndex, addToRepostIndex } from './types'
 import log from '../utils/logger'
 
 // Maximum PageRaw to prevent excessive API calls
@@ -39,6 +39,10 @@ export interface ProbeResult {
   rawOldestTimestamp: number   // Timestamp of oldest raw post from API
   rawNewestTimestamp: number   // Timestamp of newest raw post from API
   hasGap: boolean             // True if probe didn't reach stopTimestamp (counts may be underestimates)
+  isOverlappingBatch: boolean // True if overlap with primary cache was detected
+  lastPostNumber?: number     // curationNumber of the newest overlapping displayable post
+  nonOverlappingEntries?: SecondaryEntry[]  // Curated entries eligible for retention
+  retentionDisplayableCount?: number  // Displayable count from full batch (for retention decision)
 }
 
 /**
@@ -101,48 +105,18 @@ export async function probeForNewPosts(
     rawOldestTimestamp: Number.MAX_SAFE_INTEGER,
     rawNewestTimestamp: 0,
     hasGap: false,
+    isOverlappingBatch: false,
   }
 
   try {
-    // Get cached post IDs early — needed for adaptive fetch decision
+    // Get cached post IDs early — needed for overlap detection
     const cachedPostIds = await getCachedPostUniqueIds()
 
-    // Fetch posts from server (no cursor = newest posts)
-    const { feed: initialFeed, cursor } = await getHomeFeed(agent, { limit: pageRaw })
-    let feed = [...initialFeed]
+    // Single fetch of up to pageRaw posts (no adaptive second fetch)
+    const { feed } = await getHomeFeed(agent, { limit: pageRaw })
 
-    if (initialFeed.length === 0) {
+    if (feed.length === 0) {
       return result
-    }
-
-    // Adaptive fetch: check if the initial batch reached the stopTimestamp boundary.
-    // If not, fetch a second batch to try to close the gap.
-    if (initialFeed.length >= pageRaw && cursor) {
-      let reachedBoundary = false
-      if (stopTimestamp) {
-        // Check if any post in the initial batch is at or before the stop boundary
-        for (const post of initialFeed) {
-          const ts = getFeedViewPostTimestamp(post).getTime()
-          if (ts <= stopTimestamp) {
-            reachedBoundary = true
-            break
-          }
-        }
-      }
-      if (!reachedBoundary) {
-        // Also check cache-hit rate as a secondary signal
-        let cachedInSample = 0
-        for (const post of initialFeed) {
-          if (cachedPostIds.has(getPostUniqueId(post))) {
-            cachedInSample++
-          }
-        }
-        if (stopTimestamp || cachedInSample > initialFeed.length / 2) {
-          log.verbose('Probe', `Fetching additional batch (stopBoundary=${stopTimestamp ? 'not reached' : 'none'}, cacheHits=${cachedInSample}/${initialFeed.length})`)
-          const { feed: moreFeed } = await getHomeFeed(agent, { limit: pageRaw, cursor })
-          feed = [...feed, ...moreFeed]
-        }
-      }
     }
 
     result.rawPostCount = feed.length
@@ -236,29 +210,54 @@ export async function probeForNewPosts(
       return false
     }
 
-    // Separate posts into same-day and next-day buckets
+    // Pre-fetch summaries for the day of the newest batch post (single IndexedDB query)
+    // Used for overlap detection: finding cached posts with known curationNumbers
+    const newestBatchDate = new Date(result.rawNewestTimestamp)
+    const newestBatchDayStart = getLocalMidnight(newestBatchDate, settings?.timezone)
+    const newestBatchDayEnd = getNextLocalMidnight(newestBatchDayStart, settings?.timezone)
+    const daySummaries = await getPostSummariesInRange(newestBatchDayStart.getTime(), newestBatchDayEnd.getTime())
+    const summaryMap = new Map<string, PostSummary>()
+    for (const s of daySummaries) {
+      summaryMap.set(s.uniqueId, s)
+    }
+
+    // Categorize posts: incremental (newer than stop) and all non-cached same-day
     const sameDayPosts: { post: AppBskyFeedDefs.FeedViewPost; timestamp: number }[] = []
     const nextDayPosts: { post: AppBskyFeedDefs.FeedViewPost; timestamp: number }[] = []
+    const allNonCachedSameDay: { post: AppBskyFeedDefs.FeedViewPost; timestamp: number }[] = []
 
     let reachedStopBoundary = false
+    let lastPostNumber: number | undefined
 
     for (const post of feed) {
-      // Get post unique ID and skip if already in cache
       const postUniqueId = getPostUniqueId(post)
+      const postTimestamp = getFeedViewPostTimestamp(post).getTime()
+
+      // Check cached posts for overlap detection before skipping
       if (cachedPostIds.has(postUniqueId)) {
+        // Look for the newest overlapping displayable post with a curationNumber
+        if (lastPostNumber === undefined) {
+          const summary = summaryMap.get(postUniqueId)
+          if (summary && isStatusShow(summary.curation_status) &&
+              summary.curationNumber != null && summary.curationNumber > 0) {
+            lastPostNumber = summary.curationNumber
+            result.isOverlappingBatch = true
+            log.verbose('Probe', `Overlap detected: post ${postUniqueId} has curationNumber=${lastPostNumber}`)
+          }
+        }
         continue
       }
 
-      // Get post timestamp (use repost time for reposts)
-      const postTimestamp = getFeedViewPostTimestamp(post).getTime()
-
-      // Stop if we've reached the boundary from prior probes
-      if (stopTimestamp && postTimestamp <= stopTimestamp) {
-        reachedStopBoundary = true
-        continue  // Continue to check remaining posts for raw timestamp tracking
+      // Collect ALL non-cached same-day posts (regardless of stopTimestamp, for retention)
+      if (postTimestamp < nextDayMidnightMs) {
+        allNonCachedSameDay.push({ post, timestamp: postTimestamp })
       }
 
-      // Categorize by midnight boundary
+      // Collect only newer-than-stop posts for incremental counting
+      if (stopTimestamp && postTimestamp <= stopTimestamp) {
+        reachedStopBoundary = true
+        continue
+      }
       if (postTimestamp < nextDayMidnightMs) {
         sameDayPosts.push({ post, timestamp: postTimestamp })
       } else {
@@ -266,16 +265,37 @@ export async function probeForNewPosts(
       }
     }
 
-    // Phase 1: Process same-day posts first (before next day's midnight)
-    for (const { post, timestamp } of sameDayPosts) {
-      await processPost(post, timestamp)
-    }
-
-    // Phase 2: If no displayable posts in same day, process next-day posts
-    if (result.filteredPostCount === 0 && nextDayPosts.length > 0) {
-      log.verbose('Probe', `No same-day posts available, processing ${nextDayPosts.length} next-day posts`)
-      for (const { post, timestamp } of nextDayPosts) {
+    // Curate based on overlap detection
+    if (result.isOverlappingBatch && lastPostNumber !== undefined) {
+      // Overlapping batch: curate ALL non-cached same-day posts (for retention)
+      for (const { post, timestamp } of allNonCachedSameDay) {
         await processPost(post, timestamp)
+      }
+
+      // retentionDisplayableCount = total displayable from full batch
+      result.retentionDisplayableCount = result.filteredPostCount
+
+      // Recompute filteredPostCount/totalPostCount for incremental accumulation only
+      if (stopTimestamp) {
+        result.filteredPostCount = secondaryEntries
+          .filter(e => e.entry.postTimestamp > stopTimestamp && isStatusShow(e.summary.curation_status)).length
+        result.totalPostCount = secondaryEntries
+          .filter(e => e.entry.postTimestamp > stopTimestamp).length
+      }
+
+      result.nonOverlappingEntries = secondaryEntries
+      result.lastPostNumber = lastPostNumber
+      log.verbose('Probe', `Overlapping batch: lastPostNumber=${lastPostNumber}, ${secondaryEntries.length} entries, retentionDisplayable=${result.retentionDisplayableCount}, incrementalFiltered=${result.filteredPostCount}`)
+    } else {
+      // Non-overlapping: curate only incremental posts (existing behavior)
+      for (const { post, timestamp } of sameDayPosts) {
+        await processPost(post, timestamp)
+      }
+      if (result.filteredPostCount === 0 && nextDayPosts.length > 0) {
+        log.verbose('Probe', `No same-day posts available, processing ${nextDayPosts.length} next-day posts`)
+        for (const { post, timestamp } of nextDayPosts) {
+          await processPost(post, timestamp)
+        }
       }
     }
 
@@ -300,7 +320,7 @@ export async function probeForNewPosts(
       log.verbose('Probe', `Gap detected: probe didn't reach stopTimestamp ${new Date(stopTimestamp).toLocaleTimeString()}`)
     }
 
-    // Check page availability
+    // Check page availability (based on incremental counts)
     const pageSize = settings?.feedPageLength || 25
     result.hasFullPage = result.filteredPostCount >= pageSize
     result.hasMultiplePages = result.filteredPostCount > pageSize

@@ -27,24 +27,36 @@ let initialPagePosts: CurationFeedViewPost[] | null = null
 
 // Persists retained secondary cache across component remounts.
 // Used for faster "Next Page" — avoids re-fetching when cache is fresh.
+// partPagePostCount: 0 for idle-time fetches, >0 for probe partial page completion
 let retainedSecondaryCache: {
   entries: SecondaryEntry[]
   fetchedAt: number
   newestTimestamp: number | null
+  partPagePostCount: number
 } | null = null
 
 export function getRetainedSecondaryCache() { return retainedSecondaryCache }
-export function setRetainedSecondaryCache(cache: typeof retainedSecondaryCache) { retainedSecondaryCache = cache }
+export function setRetainedSecondaryCache(cache: typeof retainedSecondaryCache) {
+  retainedSecondaryCache = cache
+  if (cache) {
+    const displayable = cache.entries.filter(e => isStatusShow(e.summary.curation_status)).length
+    log.debug('Retained Cache', `Created: raw=${cache.entries.length}, displayable=${displayable}, partPagePostCount=${cache.partPagePostCount}`)
+  }
+}
 export function clearRetainedSecondaryCache() { retainedSecondaryCache = null }
 
-/** Check if the retained secondary cache is valid (fresh and has at least a full page of displayable posts). */
+/** Check if the retained secondary cache is valid (fresh and has enough displayable posts).
+ *  For probe-retained caches (partPagePostCount > 0), uses that as the minimum threshold.
+ *  For fetch-retained caches (partPagePostCount === 0), requires a full page of displayable posts. */
 export async function isRetainedCacheValid(): Promise<boolean> {
   const cached = retainedSecondaryCache
   if (!cached) return false
   const pagedSettings = await getPagedUpdatesSettings()
   const cacheAge = clientNow() - cached.fetchedAt
-  return cacheAge < pagedSettings.fullPageWaitMinutes * 60 * 1000
-    && cached.entries.filter(e => isStatusShow(e.summary.curation_status)).length >= pagedSettings.pageSize
+  if (cacheAge >= pagedSettings.fullPageWaitMinutes * 60 * 1000) return false
+  const displayable = cached.entries.filter(e => isStatusShow(e.summary.curation_status)).length
+  const minRequired = cached.partPagePostCount > 0 ? cached.partPagePostCount : pagedSettings.pageSize
+  return displayable >= minRequired
 }
 
 interface UseFeedPipelineParams {
@@ -1938,17 +1950,13 @@ export function useFeedPipeline({
 
       probeInProgressRef.current = clientNow()
       try {
-        const [, currentProbs] = await getFilter() || [null, null]
-        const currentFilterFrac = currentProbs ? computeFilterFrac(currentProbs) : 0.5
-
         const pagedSettings = await getPagedUpdatesSettings()
         const pageSize = pagedSettings.pageSize
-        const varFactor = pagedSettings.varFactor
 
-        const pageRaw = calculatePageRaw(pageSize * 3, currentFilterFrac, varFactor)
+        const pageRaw = 100  // Single fetch of max batch size
 
         const currentBoundary = probeBoundaryTimestampRef.current
-        log.verbose('Paged Updates/Probe', `Probing for new posts (filterFrac=${currentFilterFrac.toFixed(2)}, pageRaw=${pageRaw}, newestDisplayed=${new Date(currentTimestamp).toLocaleTimeString()}, stopBoundary=${currentBoundary ? new Date(currentBoundary).toLocaleTimeString() : 'none'}, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'})...`)
+        log.verbose('Paged Updates/Probe', `Probing for new posts (pageRaw=${pageRaw}, newestDisplayed=${new Date(currentTimestamp).toLocaleTimeString()}, stopBoundary=${currentBoundary ? new Date(currentBoundary).toLocaleTimeString() : 'none'}, oldestDisplayed=${oldestDisplayedPostTimestamp ? new Date(oldestDisplayedPostTimestamp).toLocaleTimeString() : 'null'})...`)
 
         const probeResult = await probeForNewPosts(
           agent,
@@ -1967,6 +1975,62 @@ export function useFeedPipeline({
 
         const rawNewestTime = probeResult.rawNewestTimestamp > 0 ? new Date(probeResult.rawNewestTimestamp).toLocaleTimeString() : 'N/A'
         const rawOldestTime = probeResult.rawOldestTimestamp < Number.MAX_SAFE_INTEGER ? new Date(probeResult.rawOldestTimestamp).toLocaleTimeString() : 'N/A'
+
+        log.verbose('Paged Updates/Probe', `Probe result: ${probeResult.filteredPostCount} new displayable (${probeResult.totalPostCount} processed, ${probeResult.rawPostCount} raw, rawNewest=${rawNewestTime}, rawOldest=${rawOldestTime}, gap=${probeResult.hasGap}, overlap=${probeResult.isOverlappingBatch}, lastPostNumber=${probeResult.lastPostNumber ?? 'none'})`)
+
+        // Check if probe results should be retained in secondary cache
+        if (probeResult.isOverlappingBatch && probeResult.lastPostNumber != null && probeResult.lastPostNumber > 0
+            && probeResult.nonOverlappingEntries && probeResult.nonOverlappingEntries.length > 0
+            && probeResult.retentionDisplayableCount != null) {
+
+          const remainder = probeResult.lastPostNumber % pageSize
+          const postsNeededForPage = remainder !== 0 ? (pageSize - remainder) : pageSize
+
+          const displayableCount = probeResult.retentionDisplayableCount
+
+          if (displayableCount >= postsNeededForPage) {
+            // RETAIN probe results in secondary cache
+            setRetainedSecondaryCache({
+              entries: probeResult.nonOverlappingEntries,
+              fetchedAt: clientNow(),
+              newestTimestamp: probeResult.newestProbeTimestamp > 0
+                ? probeResult.newestProbeTimestamp : null,
+              partPagePostCount: postsNeededForPage < pageSize ? postsNeededForPage : 0,
+            })
+
+            // Update boundary
+            if (probeResult.rawNewestTimestamp > 0) {
+              probeBoundaryTimestampRef.current = Math.max(
+                probeBoundaryTimestampRef.current ?? 0,
+                probeResult.rawNewestTimestamp
+              )
+            }
+
+            // Set button state
+            const isPartialPage = remainder !== 0
+            setNextPageReady(true)
+            setPostsNeededForPage(isPartialPage ? postsNeededForPage : null)
+            setNewPostsCount(displayableCount)
+            setPartialPageCount(displayableCount)
+            setShowNewPostsButton(true)
+            setIdleTimerTriggered(true)
+            if (displayableCount > postsNeededForPage) {
+              setMultiPageCount(displayableCount)
+            }
+
+            // Reset accumulated counts (cache is authoritative)
+            unprocessedRawCountRef.current = 0
+            unprocessedShowCountRef.current = 0
+            probeHasGapRef.current = probeResult.hasGap
+
+            log.debug('Paged Updates', `Retained probe results: ${displayableCount} displayable, ${probeResult.nonOverlappingEntries.length} entries, postsNeededForPage=${postsNeededForPage}, partialPage=${isPartialPage}`)
+            return  // Skip normal accumulation path
+          } else {
+            log.verbose('Paged Updates', `Not retaining: ${displayableCount} displayable < ${postsNeededForPage} needed for page completion`)
+          }
+        }
+
+        // Non-retention path: accumulate counts across probes
 
         // Update probe boundary to newest raw post seen
         if (probeResult.rawNewestTimestamp > 0) {
@@ -1987,7 +2051,7 @@ export function useFeedPipeline({
 
         const effectiveCount = unprocessedShowCountRef.current
 
-        log.verbose('Paged Updates/Probe', `Probe result: ${probeResult.filteredPostCount} new displayable (${probeResult.totalPostCount} processed, ${probeResult.rawPostCount} raw, rawNewest=${rawNewestTime}, rawOldest=${rawOldestTime}, gap=${probeResult.hasGap}), accumulated: ${effectiveCount} show, ${unprocessedRawCountRef.current} raw`)
+        log.verbose('Paged Updates/Probe', `Accumulated: ${effectiveCount} show, ${unprocessedRawCountRef.current} raw`)
 
         probeExpectedCountRef.current = effectiveCount
 

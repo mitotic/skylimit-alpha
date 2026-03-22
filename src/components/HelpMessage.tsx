@@ -61,18 +61,18 @@ export default function HelpMessage({ showInitWarning, readOnlyNote, showTitle =
 
   return (
     <>
+      {showInitWarning && (
+        <p className="text-red-600 dark:text-red-400 mb-2">
+          {introMessage.initWarning}
+          {readOnlyNote && ` ${readOnlyNote}`}
+        </p>
+      )}
       {showTitle && <p className="font-bold mb-1">{introMessage.header}</p>}
       <ul className="list-disc list-inside mt-1 space-y-1">
         {introMessage.bullets.map((bullet, i) => (
           <li key={i}>{renderFormattedText(bullet, navigate)}</li>
         ))}
       </ul>
-      {showInitWarning && (
-        <p className="text-red-600 dark:text-red-400 mt-2">
-          {introMessage.initWarning}
-          {readOnlyNote && ` ${readOnlyNote}`}
-        </p>
-      )}
     </>
   )
 }
