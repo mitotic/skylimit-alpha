@@ -1,9 +1,10 @@
 # Skylimit: A curating web client for Bluesky with fine-grained controls to mimic the newspaper experience
 
 
-Skylimit is a working *proof-of-concept* software that implements a client-side algorithm for the [Bluesky](https://bsky.app/) microblogging network.
+## Note: This alpha code is FROZEN. Use the released version [mitotic/skylimit]( https://github.com/mitotic/skylimit) instead.
 
-**Note: This is raw alpha-quality software with many bugs. It is meant to demonstrate the potential for the algorithm and is not yet ready for routine use.**
+
+Skylimit is a working *proof-of-concept* software that implements a client-side algorithm for the [Bluesky](https://bsky.app/) microblogging network.
 
 The goal of many social media platforms is to maximize your screen time. Skylimit is a curation algorithm designed to optimize your limited screen time. It attempts to answer the following question: *If I decide to limit myself to viewing, say, 500 posts per day (on average), what is the best way to manage my Following Feed?*
 
